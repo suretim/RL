@@ -1,0 +1,22 @@
+# environment.yml
+#conda env create -f environment.yml --prefix C:\conda_envs\tf_hub_env
+#conda remove --prefix E:\conda_envs\tf_hub_env --all
+
+name: tf_hub_env
+channels:
+  - conda-forge  # 必须放在第一位
+  - defaults
+dependencies:
+  - python=3.10
+  - h5py        # 新增这一行，用 conda 安装 h5py
+  - pip  # 通过pip安装tensorflow-hub
+  - pip:
+    - numpy==1.23.5
+    - pillow==9.5.0  # 通过conda安装（推荐）
+    - tensorflow==2.12.0
+    - keras==2.12.0
+    - tensorboard==2.12.0
+    - tensorflow-hub==0.13.0  # 使用pip安装的版本
+    - protobuf~=3.20.0
+  #- cudatoolkit=11.8  # 如果你有支持的 NVIDIA GPU，可以启用 CUDA 支持
+

@@ -1,0 +1,7 @@
+flwr==1.8.0
+grpcio==1.62.1
+grpcio-tools==1.62.1
+protobuf==4.25.3
+paho-mqtt==1.6.1
+tensorflow==2.13.0
+numpy==1.23.5

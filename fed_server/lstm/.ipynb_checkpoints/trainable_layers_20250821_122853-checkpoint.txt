@@ -1,0 +1,7 @@
+⚙️ Encoder mode: last_n, last_n=1
+
+Layer 08: lstm_encoder         ✅ trainable
+Layer 09: hvac_dense           ✅ trainable
+Layer 11: meta_dense_64        ✅ trainable
+Layer 12: meta_dense_32        ✅ trainable
+Layer 13: meta_out             ✅ trainable

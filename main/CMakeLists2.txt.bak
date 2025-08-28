@@ -1,0 +1,117 @@
+
+ 
+if(1)
+    idf_component_register(SRCS "main.c" INCLUDE_DIRS ".")
+endif()
+
+
+if(0) 
+
+    set(PROTO_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../proto")
+    set(PROTO_PB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../components/nanopb")
+
+    set(PROTO_SRCS ${PROTO_SRC_DIR}/model.pb.c ) 
+    set(PROTO_HDRS ${PROTO_SRC_DIR}/model.pb.h )
+      
+    idf_component_register(
+        PRIV_INCLUDE_DIRS "." "${PROTO_PB_DIR}" "${PROTO_SRC_DIR}"        
+        #for http_web
+        #SRCS  "main_grpc_client.cpp" "http_web.cpp" "img_inference.cc" "config_wifi.cc" 
+        SRCS  
+            "main_grpc_client.cpp" 
+            "model_pb_handler.cc" 
+            ${PROTO_SRCS} 
+            
+            "config_web.cpp" 
+            "config_wifi.cc"
+            "config_mqtt.cc" 
+                       
+            
+            #"cin_web.cc"
+            #"video_stream_optimized.cc"
+            #"websocket_optimized.cc"
+            #"wifi_optimized.cc"            
+            #"config_stream.cc" 
+
+            "img_inference.cc" 
+            "config_camera.cc" 
+            
+            
+            
+        EMBED_FILES 
+            "web_content/index_http.html" 
+            "web_content/index_socket.html" 
+            "web_content/index_ecm.html"
+            "fed_server/vit/student_fp32.tflite" 
+            
+          
+        #PRIV_REQUIRES mqtt nvs_flash esp_psram esp_http_server console esp_netif esp_http_server esp_wifi esp32-camera esp-tflite-micro esp_timer cjson lwip esp_eth driver
+        PRIV_REQUIRES 
+            mqtt 
+            nanopb 
+            nvs_flash 
+            esp_psram 
+            console 
+            esp_netif 
+            esp_http_server 
+            esp_wifi 
+            esp32-camera 
+            tflite-micro 
+            json
+        
+    ) 
+endif()
+
+if(1)
+    
+      
+    set(TFLITE_META_SRCS "../fed_server/lstm/meta_lstm_classifier.tflite"   )
+     
+
+    idf_component_register( 
+        SRCS 
+            "main_lll.cpp" 
+            ${PROTO_SRCS}
+            "sensor_module.cc"
+            "model_pb_handler.cc"   
+            "config_mqtt.cc" 
+            "config_wifi.cc"   
+            "classifier_storage.cc"  
+            "infer_esp32_lstm_lll.cc"
+
+         
+
+        INCLUDE_DIRS "."   
+ 
+ 
+ 
+        PRIV_INCLUDE_DIRS 
+            "." 
+            ${PROTO_PB_DIR}  
+            ${PROTO_SRC_DIR}     
+        EMBED_FILES          
+            ${TFLITE_META_SRCS}             
+         
+        PRIV_REQUIRES 
+            
+            tflite-micro 
+            nvs_flash
+            esp_psram
+            esp_wifi
+            esp_netif
+            mqtt
+            nanopb
+            console
+            json 
+        )
+endif()
+
+#"spiffs"
+#$env:IDF_COMPONENT_MANAGER="enabled"
+#https://components.espressif.com/api/
+#git clone https://github.com/nanopb/nanopb.git
+#Get-Process | Where-Object {$_.ProcessName -like "*emqx*"}
+#protoc --proto_path=. --nanopb_out=build proto/model.proto
+#C:\mqttserver\emqx-5.0.26-windows-amd64\erts-12.3.2.11\bin\erl.exe
+#netstat -ano | findstr :1883
+#python ./nanopb_generator.py model.proto

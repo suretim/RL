@@ -1,0 +1,19 @@
+FROM nvidia/cuda:11.8.0-base-ubuntu22.04
+
+# Install Python
+RUN apt-get update && \
+    apt-get install -y python3.10 python3-pip && \
+    rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements
+COPY requirements.txt .
+
+# Install packages
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install tensorflow[and-cuda]==2.12.0
+
+# Copy application code
+COPY . .

@@ -1,0 +1,11 @@
+
+#pip install tensorflow==2.12.0
+#pip uninstall tensorflow keras -y
+#pip cache purge
+#pip install --user tensorflow==2.12.0 keras==2.12.0
+#python -m venv tf_env
+#source tf_env/bin/activate  # Linux/Mac
+#tf_env\Scripts\activate     # Windows
+#pip install tensorflow==2.12.0 tensorflow-hub==0.13.0 keras==2.12.0 numpy==1.23.5 tensorboard==2.12.0
+#pip install tensorflow==2.12.0 keras==2.12.0 numpy==1.23.5 tensorboard==2.12.0 --force-reinstall
+#Remove-Item -Recurse -Force C:\Users\YourName\miniconda3\envs\tf_env

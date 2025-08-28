@@ -1,0 +1,4 @@
+⚙️ Encoder mode: finetune, last_n=N/A
+
+Layer 02: lstm_14              ✅ trainable
+Layer 03: dense_70             ✅ trainable

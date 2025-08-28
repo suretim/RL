@@ -1,0 +1,6 @@
+⚙️ Encoder mode: finetune, last_n=N/A
+
+Layer 00: input_27             ✅ trainable
+Layer 01: lambda_91            ✅ trainable
+Layer 02: lstm_13              ✅ trainable
+Layer 03: dense_65             ✅ trainable

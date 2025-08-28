@@ -1,0 +1,40 @@
+ 
+#conda info --envs
+#conda env create -f environment_myenv.yml -prefix E:\path\to\envs\tf_hub_env
+#conda env create -f environment_myenv.yml 
+#conda create --name myenv --file spec-file.txt
+#conda env update -f environment_myenv.yml --prune
+
+conda env create -f environment_myenv.yml
+conda env remove --name myenv2 -y
+conda activate myenv2
+
+#conda remove --prefix D:\conda_envs\tf_hub_env --all
+#conda list
+#conda list --explicit > spec-file.txt
+#conda env export > environment.yml
+
+#conda install -c conda-forge typing_extensions=4.8.0 --force-reinstall
+
+
+conda activate myenv2
+
+# 强制升级到兼容版本
+conda install -c conda-forge typing_extensions=4.8.0 --force-reinstall
+
+# 重新安装关键依赖
+conda install -c conda-forge ipython=8.12.0 jupyter_client=8.6.0 --force-reinstall
+2. 重建 Jupyter 内核配置
+bash
+# 清除所有旧内核配置
+jupyter kernelspec remove myenv2 -f 2>/dev/null || true
+
+# 重新安装内核
+python -m ipykernel install --user --name=myenv2 --display-name "Python (myenv2)"
+3. 验证修复
+bash
+# 检查内核列表
+jupyter kernelspec list
+
+# 测试导入
+python -c "from typing_extensions import TypeAliasType; print('Success!')"

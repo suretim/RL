@@ -1,0 +1,21 @@
+////////////////////////////initial usage////////////////////////////
+1. git clone --single-branch -b master http://192.168.1.215/firmware/controller/v3.5              // clone branch master
+   git clone --single-branch -b i10-stage3 http://192.168.1.215/firmware/controller/v3.5    // clone  branch i10-stage3
+2. input user name and password
+3. enter clone directory and right click the mouse to enter git cmd mode
+
+
+
+///////////////////////////////////daily usage/////////////////////////////////////
+1.  git diff          // optional,  check modification between lastest files and local respo
+2.  git add .        // if code has been changed，add to local respo
+3.  git log          //  optional, view commit history logs 
+2.  git commit -m 'v3.5 20230804 ML'    //  if code was tested ok , commit to local respo
+3.  git tag V5                                         //  essential remark weekly
+4.  git push http://192.168.1.215/firmware/controller/v3.5   // commit to remote server weekly
+5.  git pull http://192.168.1.215/firmware/controller/v3.5   // download update from remote server to local
+6.  git reset --hard  e1466cc1<harsh-code>  //  reset to local
+6.  git push origin master -f   //  push to remote from local
+///////////////////////////////////////////////////////////////////////////////////
+1. git commit --amend    // edit commited message
+2. git commit --amend --no-edit   // append new changes to last commit

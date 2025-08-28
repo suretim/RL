@@ -1,0 +1,16 @@
+jupytext --to notebook your_script.py
+jupytext --set-formats ipynb,py your_notebook.ipynb
+
+conda activate myenv
+conda install ipykernel -y
+conda install ipython -y
+conda install jupyter_client -y
+python -m ipykernel install --name=myenv2 --display-name "myenv2" --sys-prefix
+jupyter kernelspec list
+start-notebook.sh --NotebookApp.token='' --NotebookApp.allow_root=True
+
+docker run -dit --user root -p 8888:8888 -v C:/tim:/home/jovyan/work jupyter/base-notebook start-notebook.sh --NotebookApp.token='' --NotebookApp.allow_root=True
+docker run -dit --user root -p 8888:8888 -v C:/tim:/home/jovyan/work jupyter/base-notebook start-notebook.sh --NotebookApp.token='' --NotebookApp.allow_root=True --NotebookApp.ip='0.0.0.0'
+Write-Host "Jupyter Notebook http://localhost:$port"
+docker run -dit --user root --network host -v C:/tim:/home/jovyan/work jupyter/base-notebook start-notebook.sh --NotebookApp.token='' --NotebookApp.allow_root=True --NotebookApp.ip='0.0.0.0'
+docker exec -dit --user root jupyter_env /bin/bash  start-notebook.sh --NotebookApp.token='' --NotebookApp.allow_root=True

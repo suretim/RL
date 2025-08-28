@@ -1,0 +1,101 @@
+—————————————————————————————————————————
+变更人       ：charles
+变更日期    ：2024-01-18
+变更内容    ：更改SDK文件 Espressif\frameworks\esp-idf-v4.4.5\components\bt\common\btc\profile\esp\blufi\bluedroid_host\esp_blufi.c  line 390:
+                    void esp_blufi_send_encap(void *arg)
+修改前：    if (esp_ble_get_cur_sendable_packets_num(BTC_GATT_GET_CONN_ID(blufi_env.conn_id)) > 0) {        
+修改后：        if (esp_ble_get_sendable_packets_num() > 0) {
+变更原因    ：修改设备蓝牙切换Wifi时候，偶尔出现切换不成功，串口一直打印“esp_blufi_send_encap wait to send blufi custom data”，必须断电才能正常网络连接的问题。
+固件版本号 ：12.0.77
+————————————————————————————————————————
+变更人       ：Peter
+变更日期    ：2024-02-21
+变更内容    ：sdkconfig
+	1，idle 任务堆栈增大：1537 增大到 2048   	（SDK Configuration 搜索 idle， 配置选项：configMINIMAL_STACK_SIZE (Idle task stack size)  ）
+	2，ipc 任务堆栈增大：1024 增大到 2048 	（SDK Configuration 搜索 ipc，配置选项： Inter-Processor Call (IPC) task stack size  ）
+	3，uart ISR 代码放入RAM 		（SDK Configuration 搜索 uart，配置选项：RAM Place UART ISR function into IRAM  ） 
+变更原因    ：wifi OTA 异常
+固件版本号 ：12.1.6
+————————————————————————————————————————
+变更人       Jim
+变更日期    ：2024-03-01
+变更内容    ：sdkconfig
+	1，开启外部RAM (PSRAM)  	
+		1-（SDK Configuration 搜索 PSRAM, 配置选项：(Support for external, SPI-connected RAM)打勾  ）
+		2-（Mode (QUAD/OCT) of SPI RAM chip in use：选择Quad Mode SRAM）
+		3- (Type of SPIRAM chip in use: 选择Auto-Detect)
+		4- (Allow external memory as an argument to xTaskCreateStatic : 勾选)
+		5- (Set RAM clock speed - 选择 80Mhz clock speed)
+		6- (Initialize SPI RAM during startup : 勾选)
+		7- (SPI RAM access method : 选择 Make RAM allocatable using heap_caps_malloc(..., MALLOC_CAP_SPIRAM) )
+		8- (Try to allocate memories of WiFi and LWIP in SPIRAM firstly. If failed, allocate internal memory : 勾选)
+		9- (Allow .bss segment placed in external memory : 勾选)
+变更原因    ：系统堆内存不够，开启外部SRAM
+固件版本号 ：12.1.7
+————————————————————————————————————————
+变更人       Jim
+变更日期    ：2024-03-08
+变更内容    ：sdkconfig
+	1，SDK Configuration 中：
+		(BT/BLE will first malloc the memory from the PSRAM 打勾 )
+		(Use dynamic memory allocation in BT/BLE stack 打勾 )
+
+变更原因    ：系统堆内存不够,进一步节省空间
+固件版本号 ：12.1.8
+————————————————————————————————————————
+变更人       Hardy
+变更日期    ：2024-08-08
+变更内容    ：sdkconfig
+	1，SDK Configuration 中：
+		(Component config -> Core dump（None/UART/Flash） 选择Flash )
+		(Enable coredump logs for debugging  取消勾选 )
+		(Core dump data format(ELF/binary) 选择ELF)
+		(Maximum number of tasks(默认64) 改为32)
+		(Reserved stack size(默认1280) 该为1500)
+
+变更原因    ：配合固件埋点，在系统崩溃时可以及时发现问题及排查原因。
+固件版本号 ：12.2.14
+————————————————————————————————————————
+变更人       Hardy
+变更日期    ：2024-08-20
+变更内容    ：sdkconfig
+	1，SDK Configuration 中：
+		(SPI Configuration -> 勾选 Place transmitting functions of SPI master into IRAM )
+		(SPI Configuration -> 勾选 Place SPI master ISR function into IRAM )
+		(UART Configuration -> 勾选 Place UART ISR function into IRAM )
+		(TWAI Configuration -> 勾选 Place TWAI ISR function into IRAM )
+		(ESP System Settings -> Interrupt watchdog timeout (ms) 输入数值 3000 )
+变更原因    ：优化系统的反应速度。
+固件版本号 ：12.3.0
+————————————————————————————————————————
+变更人       Hardy
+变更日期    ：2024-09-03
+变更内容    ：sdkconfig
+	1，SDK Configuration 中：
+		(Component config -> Core dump（None/UART/Flash）-> 选择 None )
+
+变更原因    ：支持没有为 core dump 修改分区表的设备进行OTA。
+固件版本号 ：12.3.0
+————————————————————————————————————————
+变更人       Hardy
+变更日期    ：2024-09-06
+变更内容    ：sdkconfig
+	1，SDK Configuration 中：
+		(Component config -> Core dump（None/UART/Flash）-> 选择 Flash )
+		(Core dump data format(ELF/binary) 选择ELF)
+		(Enable coredump logs for debugging  取消勾选 )
+		(Maximum number of tasks(默认64) 改为32)
+变更原因    ：固件对没有Core dump分区的设备做了兼容，都可以进行OTA升级。
+固件版本号 ：12.3.0
+————————————————————————————————————————
+变更人       Jim
+变更日期    ：2025-01-07
+变更内容    ：libbtdm_app.a
+为解决蓝牙异常断联后，下次连接异常的问题
+需要更换库文件
+使用 fde9328.zip\fde9328\esp32s3\libbtdm_app.a	(文件可在V3.5协作开发群里找到)
+替换
+...\esp-idf-v5.1.2\components\bt\controller\lib_esp32c3_family\esp32s3\libbtdm_app.a
+然后删除编译信息，重新编译即可
+固件版本：12.4.14
+————————————————————————————————————————

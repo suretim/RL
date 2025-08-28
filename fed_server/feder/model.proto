@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+enum ParamType {
+  UNKNOWN = 0;
+  ENCODER_WEIGHT = 1;
+  ENCODER_BIAS = 2;
+  CLASSIFIER_WEIGHT = 3;
+  CLASSIFIER_BIAS = 4;
+  FULL_MODEL = 5;
+}
+
+message ModelParams {
+  ParamType param_type = 1;
+  repeated float values = 2;
+  int32 client_id = 3;
+}
+
+message ServerResponse {
+  string message = 1;
+  bool update_successful = 2;
+  int64 update_timestamp = 3;
+}
+
+service FederatedLearning {
+  rpc UploadModelParams(ModelParams) returns (ServerResponse);
+  rpc GetUpdateStatus(ModelParams) returns (ServerResponse);
+}
