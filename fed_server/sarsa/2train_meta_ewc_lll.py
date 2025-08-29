@@ -22,7 +22,6 @@ from utils_fisher import *
 # =============================
 
 
-META_OUT_TF="meta_model_lstm.tflite"
 
 ENCODER_MODE = "freeze"  # one of {"finetune","freeze","last_n"}
 LAST_N = 1
@@ -39,7 +38,6 @@ def serv_pipline(tflite_out,num_classes=3,seq_len=100, num_feats=7,feature_dim=6
     model = MetaModel(num_classes=num_classes,seq_len=seq_len, num_feats=num_feats,feature_dim=feature_dim)
     # ===== Load data =====
     X_unlabeled, X_labeled, y_labeled, num_feats = load_csv_data(load_glob,seq_len)
-    NUM_FEATS = num_feats  # sync global for model input shapes
 
     # ===== Build encoder =====
     lstm_encoder = model.build_lstm_encoder()
@@ -175,5 +173,5 @@ if __name__ == "__main__":
     LOAD_DIR = args.load_dir
     LAST_N = args.last_n
     META_OUT_TF=args.meta_out_tf
-    #serv_train_tf(META_OUT_TF,num_classes=3,seq_len=100, num_feats=7,feature_dim=64)
-    serv_pipline(META_OUT_TF, num_classes=3,seq_len=100, num_feats=7,feature_dim=64)
+    #serv_train_tf(META_OUT_TF,num_classes=NUM_CLASSES,seq_len=SEQ_LEN, num_feats=NUM_FEATURES,feature_dim=FEATURE_DIM)
+    serv_pipline(META_OUT_TF, num_classes=NUM_CLASSES,seq_len=SEQ_LEN, num_feats=NUM_FEATURES,feature_dim=FEATURE_DIM)

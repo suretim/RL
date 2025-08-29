@@ -1,7 +1,7 @@
  
 # TFLite 模型文件
  
-set(TFLITE_META_SRCS "../../fed_server/lstm/meta_lstm_classifier.tflite")
+set(TFLITE_META_SRCS "../../fed_server/meta_model.tflite")
  
   
 

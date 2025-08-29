@@ -1,8 +1,9 @@
 
 DATA_DIR  = "..\..\..\data\sarsa"
+META_OUT_TF="..\meta_model.tflite"
 
-NUM_FILES = 100
-SEQ_LEN = 100
+NUM_FILES = 200
+SEQ_LEN = 10
 NOISE_STD = 0.5
 NUM_SWITCH = 4
 NUM_CLASSES=3

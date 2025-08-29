@@ -72,8 +72,8 @@ extern "C" {
 //extern const unsigned char lstm_encoder_contrastive_tflite[];
 //extern const unsigned int lstm_encoder_contrastive_tflite_len;
 
-extern const unsigned char meta_lstm_classifier_tflite[];
-extern const unsigned int meta_lstm_classifier_tflite_len;
+extern const unsigned char meta_model_tflite[];
+extern const unsigned int meta_model_tflite_len;
 
 extern float *fisher_matrix;
 extern float *theta ; 
@@ -480,7 +480,7 @@ void parse_ewc_assets() {
 //TfLiteStatus setup(void) {
 TfLiteStatus run_inference(float* input_seq, int seq_len, int num_feats, float* out_logits) {
      
-    model = tflite::GetModel(meta_lstm_classifier_tflite);
+    model = tflite::GetModel(meta_model_tflite);
     if (model->version() != TFLITE_SCHEMA_VERSION) {
       MicroPrintf("Model provided is schema version %d not equal to supported "
                   "version %d.", model->version(), TFLITE_SCHEMA_VERSION);
@@ -601,21 +601,24 @@ void lll_tensor_run(void)
         read_all_sensor();
         if(cnt==SEQ_LEN)
         {
+            ESP_LOGI(TAG, "run_inference %d",cnt);
             if( kTfLiteError ==  run_inference(input_seq, SEQ_LEN, FEATURE_DIM, logits) )
             {
                 vTaskDelay(pdMS_TO_TICKS(10));
                 return; 
             }
+            ESP_LOGI(TAG, "run_inference logits %f,%f,%f",logits[0],logits[1],logits[2]);
             cnt=0;
         }
         input_seq[cnt*FEATURE_DIM + 0] = (float)bp_pid_th.t_feed;
         input_seq[cnt*FEATURE_DIM + 1] = (float)bp_pid_th.h_feed;
         input_seq[cnt*FEATURE_DIM + 2] = (float)bp_pid_th.l_feed;
-        input_seq[cnt*FEATURE_DIM + 3] = (float)bp_pid_th.c_feed;
-        input_seq[cnt*FEATURE_DIM + 4] = (float)bp_pid_th.du_gain[0]+rand() % 10;
+        input_seq[cnt*FEATURE_DIM + 3] = (float)bp_pid_th.du_gain[0]+rand() % 10;
+        input_seq[cnt*FEATURE_DIM + 4] = (float)bp_pid_th.du_gain[1]+rand() % 10;
         input_seq[cnt*FEATURE_DIM + 5] = (float)bp_pid_th.du_gain[2]+rand() % 10;
-        input_seq[cnt*FEATURE_DIM + 6] = (float)bp_pid_th.du_gain[4]+rand() % 10;
-        
+        input_seq[cnt*FEATURE_DIM + 6] = (float)bp_pid_th.du_gain[3]+rand() % 10;
+        ESP_LOGI(TAG, "Set up 2 input tensor %d",cnt);
+        cnt++;
         
       vTaskDelay(pdMS_TO_TICKS(1000));  // 60000 每60秒输出一次
       //  vTaskDelay(30000 / portTICK_PERIOD_MS);

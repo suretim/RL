@@ -16,7 +16,7 @@
 #endif
 
 #ifndef SEQ_LEN 
-#define SEQ_LEN 10 
+#define SEQ_LEN 10
 #endif
 extern float classifier_weights[FEATURE_DIM * NUM_CLASSES];
 extern float classifier_bias[NUM_CLASSES];

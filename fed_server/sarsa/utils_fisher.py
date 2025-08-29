@@ -12,7 +12,7 @@ Meta-learning pipeline with HVAC-aware features and flowering-period focus.
 - V1.1 (cleaned & runnable)
 """
 from utils_module import *
-
+from global_hyparm import *
 import glob
 import json
 import datetime
@@ -31,8 +31,6 @@ from tensorflow.keras import layers, models
 
 
 
-#NUM_FEATS = 7
-
 ENCODER_MODE = "freeze"  # one of {"finetune","freeze","last_n"}
 LAST_N = 1
 
@@ -45,14 +43,11 @@ CONT_IDX = [0, 1, 2]   # temp, humid, light
 HVAC_IDX = [3, 4, 5, 6]  # ac, heater, dehum, hum
 REPLAY_CAPACITY = 1000
 
-#SEQ_LEN = 10
-#FEATURE_DIM = 64
 BATCH_SIZE = 32
-EPOCHS_CONTRASTIVE = 2 #10
-EPOCHS_META = 2 #20
+EPOCHS_CONTRASTIVE =  10
+EPOCHS_META =  20
 INNER_LR = 1e-2
 META_LR = 1e-3
-#NUM_CLASSES = 3
 
 REPLAY_WEIGHT = 0.3
 NUM_CLASSES_OLD = 2
@@ -106,7 +101,7 @@ class NTXentLoss(tf.keras.losses.Loss):
 # ------------------------------------------------------------
 
 class MetaModel:
-    def __init__(self,num_classes=3, lambda_ewc=0.4,seq_len=100,num_feats=7, feature_dim: int = 64):
+    def __init__(self,num_classes=NUM_CLASSES, lambda_ewc=0.4,seq_len=SEQ_LEN,num_feats=NUM_FEATURES, feature_dim: int = FEATURE_DIM):
         self.feature_dim = feature_dim
         self.seq_len = seq_len
         self.num_feats = num_feats
@@ -470,5 +465,12 @@ class MetaModel:
         tflite_model = converter.convert()
         with open(out_path, "wb") as f: f.write(tflite_model)
         print("Saved TFLite:", out_path)
+        try:
+            # 尝试加载和解释模型
+            interpreter = tf.lite.Interpreter(model_path=out_path)
+            interpreter.allocate_tensors()  # 这一步也会进行内存分配，可能能发现问题
+            print("模型加载成功。")
+        except Exception as e:
+            print(f"模型文件无效或损坏: {e}")
 
 
