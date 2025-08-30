@@ -9,17 +9,15 @@
 
 #include "esp_log.h"
 #include <esp_task_wdt.h>
-
-//#include "classifier_storage.h"
-#include "config_mqtt.h" 
-#include "config_wifi.h" 
-
+ 
+#include "config_mqtt.h"  
+#include "infer_esp32_lstm_lll.h"
+#include "ml_pid.h"
 static const char *TAG = "main      ";
-
+#define PID_RULE_EN
 
 SemaphoreHandle_t mutex_mainTask;
-EventGroupHandle_t main_eventGroup; 
-//extern void publish_feature_vector(int label,int type );   
+EventGroupHandle_t main_eventGroup;    
 
 void main_creat_objs(void)
 {
@@ -30,33 +28,45 @@ void main_creat_objs(void)
 void main_task_suspend(void) { xSemaphoreTake(mutex_mainTask, portMAX_DELAY); }
 
 void main_task_resume(void) { xSemaphoreGive(mutex_mainTask); }
-
+#define CHECK_ERROR(expr, message) \
+    do { \
+        esp_err_t __err = (expr); \
+        if (__err != ESP_OK) { \
+            ESP_LOGE("MAIN", "%s: 0x%x", message, __err); \
+            /* 可以添加恢復邏輯 */ \
+        } \
+    } while (0)
 void main_task(void *pvParameters)
 {
 	EventBits_t bits = 0;
-
-	//uint8_t cnt = 0;
     static uint16_t flag_100ms=0;
     extern void gpio_init(void);
-    extern void gpio_sw_cfg_all(void);
-	 gpio_init();
+    extern void gpio_sw_cfg_all(void); 
+	gpio_init();
     gpio_sw_cfg_all();
+    
 	while (1)
-	{
- 
-        flag_100ms++;
-        if (flag_100ms>=100)
+	{   
+        bits = xEventGroupWaitBits(main_eventGroup, BIT0 | BIT1, pdTRUE, pdFALSE, portMAX_DELAY); 
+		xSemaphoreTake(mutex_mainTask, portMAX_DELAY);
+		flag_100ms++;
+          
+        if (flag_100ms>=1000)
         {
             flag_100ms = 0;	
-            lll_tensor_run(); 
-        } 
-
-		xSemaphoreGive(mutex_mainTask);
-
+            CHECK_ERROR(lll_tensor_run(), "Tensor run failed");
+            // lll_tensor_run(); 
+        }  
+         
+        //#if ((_TYPE_of(VER_HARDWARE) == _TYPE_(_OUTLET)))
+		//	switch_sync_sta();
+		//#endif
+		//}
 		vTaskDelay(pdMS_TO_TICKS(1)); 
-	}
 
-	vTaskDelete(NULL);
+		xSemaphoreGive(mutex_mainTask);  
+	} 
+	//vTaskDelete(NULL);
 }
 
 
@@ -73,20 +83,22 @@ void periodic_task(void *pvParameter) {
 #define TASK_STACK_MQTT         (5 * 1024)  //约3K
 void app_main(void) {
  
- main_creat_objs(); 
+    main_creat_objs(); 
+if(1)    
+{
     init_classifier_from_header();
 
     initialize_nvs_robust();
-#if 1    
-    wifi_init_apsta();  
-#else    
-   	xTaskCreate(wifi_task, 			TASK_NAME_WIFI, 	TASK_STACK_WIFI, 	NULL, TASK_PRIO_WIFI, 	NULL);
-#endif   
-    start_mqtt_client(NULL);
-    //xTaskCreate(start_mqtt_client,  TASK_NAME_MQTT, TASK_STACK_MQTT, 	NULL, TASK_PRIO_MQTT, 	NULL);
-    // 初始化 SPIFFS
+    
+    //wifi_init_apsta();  
+     
+   	//xTaskCreate(wifi_task, 			TASK_NAME_WIFI, 	TASK_STACK_WIFI, 	NULL, TASK_PRIO_WIFI, 	NULL);
+    
+    //start_mqtt_client(NULL);
+
+    //xTaskCreate(&periodic_task, "periodic_task", 8192, NULL, 5, NULL);
+}     
     xTaskCreate(main_task, 			TASK_NAME_MAIN, 	TASK_STACK_MAIN, 	NULL, TASK_PRIO_MAIN, 	NULL);
-    xTaskCreate(&periodic_task, "periodic_task", 8192, NULL, 5, NULL);
      
  
    

@@ -148,8 +148,7 @@ static void _Init(void)
     //IIC2_init();  // for zone sht3c, ex-humid sensor sht40 and etc.
 
 	ReadAdvance();	// outlet 时， ReadAllParam 中有处理 ADV ， 所以先读ADV
-	ReadAllParam();
-	// ReadAdvance();
+	ReadAllParam(); 
 	InitRunData(); // 读取 设备已经运行的时间 sysClk1s 以及 定时模式的剩余时间
 	
 	if (!rtc_init_check())
@@ -171,7 +170,8 @@ static void _Init(void)
 	led_init();	
 	Power_On_Test_outlet();
 	ocDetect_Init();
-	Enter_start();	
+	//tim modify
+	//Enter_start();	
 #endif	
 
 	InitHistoryLog();
@@ -475,7 +475,7 @@ void main_task(void *pvParameters)
 				lll_tensor_run();	
 				//ai_check_plug_in(1);   // called per sec
 				// ESP_LOGW(TAG, "heap free=%ld, min=%ld",esp_get_free_heap_size(),esp_get_minimum_free_heap_size() );
-				// ESP_LOGW(TAG, "inter heap free=%ld, min=%d",esp_get_free_internal_heap_size(), heap_caps_get_minimum_free_size( MALLOC_CAP_8BIT | MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL ) );
+				//ESP_LOGW(TAG, "inter heap free=%ld, min=%d",esp_get_free_internal_heap_size(), heap_caps_get_minimum_free_size( MALLOC_CAP_8BIT | MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL ) );
 				// heap_caps_print_heap_info( MALLOC_CAP_SPIRAM );
 				// heap_caps_print_heap_info( MALLOC_CAP_INTERNAL );
 		    }

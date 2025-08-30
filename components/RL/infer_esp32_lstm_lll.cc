@@ -47,7 +47,8 @@ extern "C" {
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h> 
-#include "sensor_module.h"
+#include "sensor_module.h" 
+
 
 
 
@@ -590,41 +591,86 @@ float input_seq[SEQ_LEN * FEATURE_DIM] = {25.0};  // 从传感器读取
 float logits[NUM_CLASSES];
 
  #include "ml_pid.h"
+pid_run_output_st ml_pid_out_speed;
 
 //u_int8_t get_tensor_state(void);
-void lll_tensor_run(void) 
+esp_err_t  lll_tensor_run(void) 
 {
-     static int cnt=0;
+    // int16_t sensor_val_list[ENV_CNT];
+	// uint8_t cur_load_type[PORT_CNT];
+	// uint8_t port_dev_origin[PORT_CNT];
 
+	// pid_run_output_st pid_run_output;
+	// pid_param_get(ai_setting, cur_load_type, port_dev_origin, sensor_val_list, &pid_run_input );
+	// pid_run_output = pid_run_rule( &pid_run_input );
+	// pid_rule_output_set_speed(pid_run_output, cur_load_type, output_port_list );
+
+    // extern void pid_param_get(ai_setting_t *ai_setting, uint8_t* load_type_list, uint8_t* dev_origin_list, int16_t* env_value_list, pid_run_input_st* param);
+     
+     
+    read_all_sensor();
+    pid_run_input_st pid_run_input = {0};
+    // pid_param_get(&g_ai_setting, NULL, NULL, NULL, &pid_run_input );
+    pid_run_input.dev_type[0] = loadType_heater;
+    pid_run_input.is_switch[0] = 1;
+    pid_run_input.env_en_bit  = 0xf;
+    pid_run_input.ml_run_sta  = 1;
+    pid_run_input.env_target[ENV_TEMP]=32.0;
+    pid_run_input.env_target[ENV_HUMID]=32.0;
+    pid_run_input.env_target[ENV_LIGHT]=320;
+    ml_pid_out_speed= pid_run_rule( &pid_run_input );
+    devs_type_list[1].real_type = loadType_heater;
+    devs_type_list[2].real_type = loadType_A_C;
+    devs_type_list[3].real_type = loadType_humi;
+    devs_type_list[4].real_type = loadType_dehumi;
+    int h_idx=-1;
+    uint8_t geer[6];
+    for(int port=1;port<9;port++)
+    {
+        switch(  devs_type_list[port].real_type  ) 
+        {
+            case loadType_heater:	h_idx=DEV_TU;  break;
+            case loadType_A_C:		h_idx=DEV_TD;  break;
+            case loadType_humi:		h_idx=DEV_HU;  break;
+            case loadType_dehumi:	h_idx=DEV_HD;  break;
+            case loadType_inlinefan:h_idx=(bp_pid_th.v_outside- bp_pid_th.v_feed)>=0?DEV_VU:DEV_VD; break;
+            case loadType_fan:      h_idx=(bp_pid_th.v_outside- bp_pid_th.v_feed)>=0?DEV_VU:DEV_VD;   break;
+            default:               break;
+        }
+        if(h_idx>=0)
+            geer[h_idx] = ml_pid_out_speed.speed[port];
+    }
+    return ESP_OK;
+     static int cnt=0; 
      //while (true)
      //{ 
-        read_all_sensor();
+        //
         if(cnt==SEQ_LEN)
         {
-            ESP_LOGI(TAG, "run_inference %d",cnt);
+            //ESP_LOGI(TAG, "run_inference %d",cnt);
             if( kTfLiteError ==  run_inference(input_seq, SEQ_LEN, FEATURE_DIM, logits) )
             {
                 vTaskDelay(pdMS_TO_TICKS(10));
-                return; 
+                return ESP_FAIL;  //kTfLiteOK
             }
-            ESP_LOGI(TAG, "run_inference logits %f,%f,%f",logits[0],logits[1],logits[2]);
+            //ESP_LOGI(TAG, "run_inference logits %f,%f,%f",logits[0],logits[1],logits[2]);
             cnt=0;
         }
         input_seq[cnt*FEATURE_DIM + 0] = (float)bp_pid_th.t_feed;
         input_seq[cnt*FEATURE_DIM + 1] = (float)bp_pid_th.h_feed;
         input_seq[cnt*FEATURE_DIM + 2] = (float)bp_pid_th.l_feed;
-        input_seq[cnt*FEATURE_DIM + 3] = (float)bp_pid_th.du_gain[0]+rand() % 10;
-        input_seq[cnt*FEATURE_DIM + 4] = (float)bp_pid_th.du_gain[1]+rand() % 10;
-        input_seq[cnt*FEATURE_DIM + 5] = (float)bp_pid_th.du_gain[2]+rand() % 10;
-        input_seq[cnt*FEATURE_DIM + 6] = (float)bp_pid_th.du_gain[3]+rand() % 10;
-        ESP_LOGI(TAG, "Set up 2 input tensor %d",cnt);
+        input_seq[cnt*FEATURE_DIM + 3] = (float)geer[0];
+        input_seq[cnt*FEATURE_DIM + 4] = (float)geer[1];
+        input_seq[cnt*FEATURE_DIM + 5] = (float)geer[2];
+        input_seq[cnt*FEATURE_DIM + 6] = (float)geer[3];//+rand() % 10;
+        //ESP_LOGI(TAG, "Set up 2 input tensor %d",cnt);
         cnt++;
         
       vTaskDelay(pdMS_TO_TICKS(1000));  // 60000 每60秒输出一次
       //  vTaskDelay(30000 / portTICK_PERIOD_MS);
     //}  
     //reset_tensor();
-    return;
+    return ESP_OK;
 }
 
 #ifdef __cplusplus
