@@ -60,74 +60,70 @@ def encode_sequence(encoder, X_seq):
 # --------- Helper: 按时间步编码（不改 encoder 结构） ---------
 
 
-def encode_per_timestep(encoder, X_seq,seq_len):
+import numpy as np
+
+import numpy as np
+
+
+def encode_per_timestep(encoder, X_seq, seq_len=10, step_size=30):
     """
-    将 [T, F] 的连续特征序列逐时间步送入 encoder（使用长度为1的序列），
-    返回 [T, FEATURE_DIM] 的 latent 序列。
-    这样避免修改现有的 LSTM encoder（其最终输出为全局 embedding）。
+    使用滑动窗口创建子序列，并根据给定步长处理序列。
+    该方法返回 [T, FEATURE_DIM] 的 latent 序列。
     """
     T = X_seq.shape[0]
-    latents = []
-    for t in range(T):
-        #x = X_seq[t:t+1][np.newaxis, :, :]  # (1, 1, F)
 
+    # 确保 seq_len 小于等于 T
+    assert seq_len <= T, "seq_len must be less than or equal to the number of timesteps in the sequence."
 
-        #x = np.zeros((1, seq_len, 7), dtype=np.float32)
-        #x[0, -X_seq.shape[0]:, :] = X_seq  # 将你的原始序列放到最后
+    # 使用滑动窗口生成所有子序列
+    # 生成一个形状为 (T-seq_len+1, seq_len, F) 的子序列数组
+    all_windows = np.lib.stride_tricks.sliding_window_view(X_seq, window_shape=(seq_len, X_seq.shape[1]))
 
-        #X_seq_cut = X_seq[-seq_len:]  # 只取最后 seq_len 个时间步
-        #x = np.zeros((1, seq_len, 7), dtype=np.float32)
-        #x[0, :, :] = X_seq_cut
+    # 步长设置为 `step_size`
+    # 这里选择从所有窗口中按步长选取子序列
+    all_windows = all_windows[::step_size]
 
-        # 截断或 pad 到 seq_len
-        T = X_seq.shape[0]
-        if T >= seq_len:
-            X_seq_cut = X_seq[-seq_len:]
-        else:
-            pad = np.zeros((seq_len - T, 7), dtype=X_seq.dtype)
-            X_seq_cut = np.vstack([pad, X_seq])
-        # 扩展 batch 维度
-        x = np.expand_dims(X_seq_cut, axis=0).astype(np.float32)  # (1, seq_len, 7)
+    # 形状变为 (num_windows, seq_len, F)，我们需要将其扩展为批次维度
+    all_windows = np.expand_dims(all_windows, axis=0)  # (1, num_windows, seq_len, F)
 
-        # 计算 hvac_dense 输出
-        #latents = encoder(x).numpy()
-        #print("hvac_dense output shape:", latents.shape)  # 应该是 (1,8) 或 (B,8)
-        #print(latents)
-        z = encoder(x).numpy()[0]  # (FEATURE_DIM,)
-        latents.append(z)
-    return np.stack(latents, axis=0)  # (T, FEATURE_DIM)
+    # 使用 encoder 一次性处理所有的子序列
+    latents = encoder(all_windows.astype(np.float32)).numpy()  # (num_windows, FEATURE_DIM)
 
+    # 创建一个零矩阵，用来存储最终的 latents 序列
+    latents_full = np.zeros((T, latents.shape[-1]), dtype=np.float32)
 
+    # 填充 latent 序列
+    for t in range(len(latents)):
+        latents_full[t * step_size: t * step_size + seq_len] = latents[t]
 
+    return latents_full
 
-
-
-def rollout_meta_sarsa(meta_model, steps=30, epsilon=0.1):
+def rollout_meta_sarsa(meta_model, q_net, X_train, X_val=None, seq_len=10, steps=30, epsilon=0.1):
     """
-    X_seq: [T, F] 连续特征序列 (temp, humid, light, ac, heater, dehum, hum)
-    labels: 可选，用于计算 reward
+    使用元学习的 Sarsa 算法模拟回合。
     """
-    # FIX: 不使用整体 embedding；按时间步编码
-    s_latent_seq = encode_per_timestep(meta_model, X_train)  # [T, FEATURE_DIM]
+    # 获取潜在特征序列，按时间步编码
+    s_latent_seq = encode_per_timestep(meta_model, X_train, seq_len, steps)  # [T, FEATURE_DIM]
 
     rewards_list = []
     actions_list = []
 
-    for t in range(steps):
-        # Q值近似：用当前 latent 的 Q 值 + 小噪声
+    for t in range(min(steps, X_train.shape[0] - 1)):
+        # 计算 Q 值并添加探索噪声
         q_vals = q_net.predict(s_latent_seq[t:t+1], verbose=0)[0]
         q_vals = q_vals + np.random.randn(NUM_ACTIONS) * 0.01  # exploration noise
 
-        # ε-greedy
+        # 选择动作 (ε-greedy 策略)
         if np.random.rand() < epsilon:
             a = np.random.randint(NUM_ACTIONS)
         else:
             a = int(np.argmax(q_vals))
 
+        # 将动作转换为 bit 数组
         bits = np.array([(a >> i) & 1 for i in range(NUM_SWITCH)], dtype=np.float32)
         actions_list.append(bits)
 
-        # reward 计算
+        # 计算奖励
         if X_val is not None:
             r = compute_reward_batch(
                 np.array([X_val[min(t, len(X_val) - 1)]]),
@@ -137,13 +133,16 @@ def rollout_meta_sarsa(meta_model, steps=30, epsilon=0.1):
             r = 0.0
         rewards_list.append(r)
 
-        # 更新状态：把动作 bits 写回 HVAC 列（影响下一步原始特征）
+        # 更新环境状态：动作影响 HVAC 列，修改 X_train
         if t + 1 < X_train.shape[0]:
             X_train[t + 1, 3:3 + NUM_SWITCH] = bits
-            # 同步下一步 latent
-            s_latent_seq[t + 1] = encode_per_timestep(meta_model, X_train[t + 1:t + 2],100)[0]
+            # 更新潜在特征
+            s_latent_seq[t + 1] = encode_per_timestep(meta_model, X_train[t + 1:t + 2], seq_len)[0]
+
     print("Actions:", actions_list)
     print("Rewards:", rewards_list)
+
+    return actions_list, rewards_list
 
 
 # ------ Service (orchestrates the pipeline) ------

@@ -57,43 +57,38 @@ class QModel:
 
     # --------- Helper: 按时间步编码（不改 encoder 结构） ---------
 
-
-    def encode_per_timestep(self,encoder, X_seq,seq_len,fea_dim):
+    def encode_per_timestep(encoder, X_seq, seq_len=10, step_size=30):
         """
-        将 [T, F] 的连续特征序列逐时间步送入 encoder（使用长度为1的序列），
-        返回 [T, FEATURE_DIM] 的 latent 序列。
-        这样避免修改现有的 LSTM encoder（其最终输出为全局 embedding）。
+        使用滑动窗口创建子序列，并根据给定步长处理序列。
+        该方法返回 [T, FEATURE_DIM] 的 latent 序列。
         """
         T = X_seq.shape[0]
-        latents = []
-        for t in range(T):
-            #x = X_seq[t:t+1][np.newaxis, :, :]  # (1, 1, F)
 
+        # 确保 seq_len 小于等于 T
+        assert seq_len <= T, "seq_len must be less than or equal to the number of timesteps in the sequence."
 
-            #x = np.zeros((1, seq_len, 7), dtype=np.float32)
-            #x[0, -X_seq.shape[0]:, :] = X_seq  # 将你的原始序列放到最后
+        # 使用滑动窗口生成所有子序列
+        # 生成一个形状为 (T-seq_len+1, seq_len, F) 的子序列数组
+        all_windows = np.lib.stride_tricks.sliding_window_view(X_seq, window_shape=(seq_len, X_seq.shape[1]))
 
-            #X_seq_cut = X_seq[-seq_len:]  # 只取最后 seq_len 个时间步
-            #x = np.zeros((1, seq_len, 7), dtype=np.float32)
-            #x[0, :, :] = X_seq_cut
+        # 步长设置为 `step_size`
+        # 这里选择从所有窗口中按步长选取子序列
+        all_windows = all_windows[::step_size]
 
-            # 截断或 pad 到 seq_len
-            T = X_seq.shape[0]
-            if T >= seq_len:
-                X_seq_cut = X_seq[-seq_len:]
-            else:
-                pad = np.zeros((seq_len - T, fea_dim), dtype=X_seq.dtype)
-                X_seq_cut = np.vstack([pad, X_seq])
-            # 扩展 batch 维度
-            x = np.expand_dims(X_seq_cut, axis=0).astype(np.float32)  # (1, seq_len, 7)
+        # 形状变为 (num_windows, seq_len, F)，我们需要将其扩展为批次维度
+        all_windows = np.expand_dims(all_windows, axis=0)  # (1, num_windows, seq_len, F)
 
-            # 计算 hvac_dense 输出
-            #latents = encoder(x).numpy()
-            #print("hvac_dense output shape:", latents.shape)  # 应该是 (1,8) 或 (B,8)
-            #print(latents)
-            z = encoder(x).numpy()[0]  # (FEATURE_DIM,)
-            latents.append(z)
-        return np.stack(latents, axis=0)  # (T, FEATURE_DIM)
+        # 使用 encoder 一次性处理所有的子序列
+        latents = encoder(all_windows.astype(np.float32)).numpy()  # (num_windows, FEATURE_DIM)
+
+        # 创建一个零矩阵，用来存储最终的 latents 序列
+        latents_full = np.zeros((T, latents.shape[-1]), dtype=np.float32)
+
+        # 填充 latent 序列
+        for t in range(len(latents)):
+            latents_full[t * step_size: t * step_size + seq_len] = latents[t]
+
+        return latents_full
 
     def rollout_meta_sarsa(self,X_train,X_val,encoder,seq_len,fea_dim, steps=30, epsilon=0.1):
         """

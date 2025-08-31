@@ -1,6 +1,6 @@
 
-DATA_DIR  = "..\..\..\data\sarsa"
-META_OUT_TF="..\meta_model.tflite"
+DATA_DIR  = "../../../data/sarsa"
+META_OUT_TF="../meta_model.tflite"
 
 NUM_FILES = 200
 SEQ_LEN = 10
