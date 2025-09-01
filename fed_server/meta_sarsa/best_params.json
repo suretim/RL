@@ -1,0 +1,5 @@
+{
+    "learning_rate": 0.1,
+    "gamma": 0.9,
+    "initial_epsilon": 0.3
+}

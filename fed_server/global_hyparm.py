@@ -1,0 +1,12 @@
+
+DATA_DIR  = "../../../data/sarsa"
+META_OUT_TF="../meta_model.tflite"
+
+NUM_FILES = 100
+SEQ_LEN = 10
+BSEQ_LEN= SEQ_LEN*4
+NOISE_STD = 0.5
+NUM_SWITCH = 4
+NUM_CLASSES=3
+NUM_FEATURES=7
+FEATURE_DIM=64

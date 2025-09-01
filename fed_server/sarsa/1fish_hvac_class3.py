@@ -11,7 +11,7 @@ def main():
     #save_glob =os.path.join(DATA_DIR, f"*.csv") # "../../../../data/sarsa/*.csv"
 
     for i in range(NUM_FILES):
-        df = generate_plant_sequence(DATA_DIR,SEQ_LEN, NOISE_STD)
+        df = generate_plant_sequence(DATA_DIR,BSEQ_LEN, NOISE_STD)
         file_path = os.path.join(DATA_DIR, f"plant_seq_with_hvac_fail_{i}.csv")
         df.to_csv(file_path, index=False)
         print(f"Saved {file_path}, shape: {df.shape}")

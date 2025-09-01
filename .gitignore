@@ -8,6 +8,7 @@ build/
 best_mode/
 saved_model_best/
 components/*
+<<<<<<< HEAD
 !components/RL/
 !components/RL/**
 !components/ml/ml_pid.c
@@ -15,7 +16,11 @@ components/*
 !components/ml/ml_rule.c
 !components/ml/ml_rule.h
 
+=======
+>>>>>>> f53b98552ebe63a8abeae52a08aaf0ff2dcaa9bd
 managed_components/
+!components/RL/
+!components/RL/**
 # sdkconfig 文件涉及到底层的硬件资源，必须谨慎变更，如需提交变更，要做好变更记录（sdkconfig-log.txt）再提交
 # 有些ESP-IDF环境会在编译后自动修改sdkconfig，提交新的代码前，需手动忽略sdkconfg的变更
 # sdkconfig
