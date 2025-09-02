@@ -1,14 +1,15 @@
 import tensorflow as tf
 import numpy as np
+import os
 # -----------------------------
 # 3sarsa_controller_full_fixed.py
 # -----------------------------
 from tensorflow.keras import layers, models, optimizers
+from tensorflow import keras
 from sklearn.model_selection import train_test_split
-
+from utils_module import load_all_csvs
 from global_hyparm import *
-from lstm.train_meta_s_flwr import q_net
-
+import pandas as pd
 # ------------------ 配置 ------------------
 
 ENCODER_LATENT_DIM = 16
@@ -26,19 +27,15 @@ EPS_END = 0.1
 EPS_DECAY = 0.995
 ACTION_COST = 0.05
 
-from utils_fisher import *
+#from utils_fisher import *
 
-# ------------------ 混合精度 ------------------
-from tensorflow.keras import mixed_precision
-policy = mixed_precision.Policy('float32') #mixed_float16
-mixed_precision.set_global_policy(policy)
-
-eps = EPS_START
-files = [os.path.join(DATA_DIR, f) for f in os.listdir(DATA_DIR) if f.endswith(".csv")]
 
 class QModel:
     def __init__(self):
-        self.q_net = self.build_q_network()
+        self.q_net = self.build_q_network(dtype=tf.float32)
+        self.q_optimizer = optimizers.Adam(LR_Q)
+        self.mse_loss = tf.keras.losses.MeanSquaredError()
+
 
 
     def encode_sequence(self,encoder, X_seq):
@@ -56,8 +53,8 @@ class QModel:
         return z   # shape: (batch, FEATURE_DIM)
 
     # --------- Helper: 按时间步编码（不改 encoder 结构） ---------
-
-    def encode_per_timestep(encoder, X_seq, seq_len=10, step_size=30):
+    #@staticmethod
+    def encode_timestep(self,encoder, X_seq, seq_len=10, step_size=30):
         """
         使用滑动窗口创建子序列，并根据给定步长处理序列。
         该方法返回 [T, FEATURE_DIM] 的 latent 序列。
@@ -96,7 +93,7 @@ class QModel:
         labels: 可选，用于计算 reward
         """
         # FIX: 不使用整体 embedding；按时间步编码
-        s_latent_seq = self.encode_per_timestep(encoder, X_train,seq_len,fea_dim)  # [T, FEATURE_DIM]
+        s_latent_seq = self.encode_timestep(encoder, X_train,seq_len=seq_len)  # [T, FEATURE_DIM]
 
         rewards_list = []
         actions_list = []
@@ -135,12 +132,12 @@ class QModel:
 
 
     # ------------------ 定义 Q 网络 ------------------
-    def build_q_network(self,latent_dim=ENCODER_LATENT_DIM, num_actions=NUM_ACTIONS):
-        inp = layers.Input(shape=(latent_dim,))
+    def build_q_network(self,latent_dim=ENCODER_LATENT_DIM, num_actions=NUM_ACTIONS,dtype=tf.float32):
+        inp = layers.Input(shape=(latent_dim,),dtype=tf.float32)
         x = inp
         for h in Q_HIDDEN:
-            x = layers.Dense(h, activation="relu")(x)
-        out = layers.Dense(num_actions, activation="linear")(x)
+            x = layers.Dense(h, activation="relu",dtype=tf.float32)(x)
+        out = layers.Dense(num_actions, activation="linear",dtype=tf.float32)(x)
         return models.Model(inp, out)
 
     # ------------------ Helper ------------------
@@ -164,123 +161,57 @@ class QModel:
         rewards -= ACTION_COST * np.sum(actions_bits, axis=1)
         return rewards.astype(np.float32)
 
-
+    def ensure_index_vector(self,x):
+        """
+        將索引向量保證為 1D tensor [batch_size]
+        """
+        x = tf.convert_to_tensor(x, dtype=tf.int32)
+        x = tf.reshape(x, [-1])  # 保證 1D
+        return x
+    def ensure_vector(self, x, dtype=tf.float32):
+        x = tf.convert_to_tensor(x, dtype=dtype)
+        if len(x.shape) == 1:
+            x = tf.expand_dims(x, axis=0)
+        return x
     # ------------------ tf.function SARSA 更新 ------------------
     @tf.function
-    def sarsa_batch_update(self,s_latent, actions, s_next_latent, rewards):
-        batch_idx = tf.range(tf.shape(actions)[0], dtype=tf.int32)
-        # Before tf.stack, check if batch is empty
-        if batch_idx.shape[0] == 0:
-            print("Warning: Empty batch detected!")
-            # Return early or handle empty case
-            return None  # or appropriate return value
+    def sarsa_batch_update(self, s_latent, a, r, s_next_latent, a_next, gamma=0.99, alpha=0.1):
+        s_latent = self.ensure_vector(s_latent, dtype=tf.float32)  # 狀態向量
+        s_next_latent = self.ensure_vector(s_next_latent, dtype=tf.float32)
+        r = self.ensure_vector(r, dtype=tf.float32)  # reward
+        a = self.ensure_index_vector(x=a)
+        a_next = self.ensure_index_vector(x=a_next)
+        q_values = self.q_net(s_latent, training=True)
+        q_next_values = self.q_net(s_next_latent, training=False)
+        batch_size = tf.shape(s_latent)[0]
+        # 確保索引是 1D
+        a = tf.reshape(a, [-1])  # shape [batch_size]
+        a_next = tf.reshape(a_next, [-1])  # shape [batch_size]
 
+        # indices shape [batch_size, 2]
+        indices = tf.stack([tf.range(batch_size), a], axis=1)  # shape [batch_size, 2]
+
+        q_s_a = tf.gather_nd(q_values, indices)  # shape [batch_size]
+        q_s_next_a_next = tf.gather_nd(q_next_values, tf.stack([tf.range(batch_size), a_next], axis=1))
+        q_s_next_a_next = tf.cast(q_s_next_a_next, tf.float32)
+        r = tf.cast(r, tf.float32)
+        # TD 目標
+        target_updates = r + gamma * q_s_next_a_next  # shape [batch_size]
+        # SARSA 更新：確保 1D
+        updates = q_s_a + alpha * (target_updates - q_s_a)  # shape [batch_size]
+        # TensorScatter 更新
+        updates = tf.reshape(updates, [-1])  # [batch_size]
+        target_q = tf.tensor_scatter_nd_update(q_values, indices, updates)
         with tf.GradientTape() as tape:
-            q_pred_all = q_net(s_latent, training=True)  # shape (batch, num_actions)
-            q_pred = tf.gather_nd(q_pred_all, tf.stack([batch_idx, actions], axis=1))
-
-            q_next_all = q_net(s_next_latent, training=False)
-            next_actions = tf.argmax(q_next_all, axis=1, output_type=tf.int32)
-
-
-            if batch_idx.shape[0] != next_actions.shape[0]:
-                print(f"Shape mismatch: batch_idx {batch_idx.shape}, next_actions {next_actions.shape}")
-                # Use the smaller size
-                min_size = min(batch_idx.shape[0], next_actions.shape[0])
-                batch_idx = batch_idx[:min_size]
-                next_actions = next_actions[:min_size]
-
-            q_next = tf.gather_nd(q_next_all, tf.stack([batch_idx, next_actions], axis=1))
-
-
-            #q_next = tf.gather_nd(q_next_all, tf.stack([batch_idx, next_actions], axis=1))
-
-            # 转成同一 dtype
-            rewards = tf.cast(rewards, q_next.dtype)
-
-            target = rewards + GAMMA * q_next
-            mse_loss = tf.keras.losses.MeanSquaredError()
-            loss = mse_loss(tf.expand_dims(target, 1), tf.expand_dims(q_pred, 1))
-
-        grads = tape.gradient(loss, q_net.trainable_variables)
-        q_optimizer = optimizers.Adam(LR_Q)
-        q_optimizer.apply_gradients(zip(grads, q_net.trainable_variables))
+            pred_q = self.q_net(s_latent, training=True)
+            loss = self.mse_loss(target_q, pred_q)
+        grads = tape.gradient(loss, self.q_net.trainable_variables)
+        self.q_optimizer.apply_gradients(zip(grads, self.q_net.trainable_variables))
         return loss
 
 
-    # ------------------ 完全批量化 SARSA 训练 ------------------
-    def sarsa_full_batch_robust(self,encoder,seq_len,num_feats):
-        global eps
-
-        for ep in range(1, SARSA_EPISODES + 1):
-            df = pd.read_csv(np.random.choice(files))
-            T = len(df)
-            total_reward = 0.0
-
-            for start_idx in range(0, T - 1, BATCH_MAX):
-                end_idx = min(start_idx + seq_len + 1, T)
-                raw_seq = df.iloc[start_idx:end_idx][["temp", "humid", "light", "ac", "heater", "dehum", "hum"]].values.astype(np.float32)
-                raw_seq[:, 0] /= 40.0
-                raw_seq[:, 1] /= 100.0
-                raw_seq[:, 2] /= 1000.0
-                labels = df.iloc[start_idx:end_idx]["label"].values.astype(np.int32)
-                batch_len = raw_seq.shape[0]
-                if batch_len < seq_len:
-                    continue
-
-                # FIX: 按时间步编码，得到 [seq_len, FEATURE_DIM]
-                s_latent_seq = self.encode_per_timestep(encoder, raw_seq,seq_len,num_feats)
-                # Debug the input shape
-                #print(f"Input shape: {s_latent_seq[:-1].shape}")
-                #print(f"Expected input shape: {q_net.input_shape}")
-
-                # Minimal fix - just ensure q_pred is always defined
-                try:
-                    q_pred = self.q_net.predict(s_latent_seq[:-1], verbose=0)
-                except:
-                    # Create dummy predictions with correct shape
-                    q_pred = np.zeros((len(s_latent_seq) - 1, NUM_ACTIONS))
-
-                #noise = np.random.randn(*q_pred.shape) * 0.01
-                #q_pred  = q_pred + noise
-                # 预测 Q 值 + 噪声（匹配形状）
-                #q_pred = self.q_net.predict(s_latent_seq[:-1], verbose=0)  # (seq_len-1, NUM_ACTIONS)
-                noise = np.random.randn(*q_pred.shape) * 0.01  # FIX: 广播为同形状
-                q_vals_seq = q_pred + noise
-
-                actions = self.select_action_batch(q_vals_seq, eps)
-                actions_bits = np.array([self.action_int_to_bits(a) for a in actions])
-                raw_next_seq = raw_seq[1:].copy()
-                # Before assignment, check if actions_bits is empty
-                if actions_bits.size == 0:
-                    print("Warning: actions_bits is empty!")
-                    # Handle empty case - either skip or use default values
-                    actions_bits = np.zeros((raw_next_seq.shape[0], NUM_SWITCH))  # Fill with zeros
-                    # OR skip the assignment entirely if appropriate
-                    # continue
-
-                raw_next_seq[:, 3:3 + NUM_SWITCH] = actions_bits
-
-                #
-                #raw_next_seq[:, 3:3 + NUM_SWITCH] = actions_bits
-                s_next_latent_seq = self.encode_per_timestep(encoder, raw_next_seq,seq_len,num_feats)
-
-                rewards = self.compute_reward_batch(labels[1:], actions_bits)
-                total_reward += np.sum(rewards)
-
-                self.sarsa_batch_update(
-                    tf.convert_to_tensor(s_latent_seq[:-1], dtype=tf.float32),
-                    tf.convert_to_tensor(actions, tf.int32),
-                    tf.convert_to_tensor(s_next_latent_seq, dtype=tf.float32),
-                    tf.convert_to_tensor(rewards, tf.float32),
-                )
-
-            eps = max(EPS_END, eps * EPS_DECAY)
-            if ep % 10 == 0 or ep == 1:
-                print(f"Episode {ep}/{SARSA_EPISODES}  eps={eps:.3f}  total_reward={total_reward:.3f}")
-
 # ------------------ 测试 rollout ------------------
-def test_rollout(qmodel,encoder, steps=30):
+def test_rollout(qmodel,encoder,files, steps=30):
         df = pd.read_csv(np.random.choice(files))
 
         # 起始状态（第一行 -> (1,1,F)）
@@ -295,7 +226,7 @@ def test_rollout(qmodel,encoder, steps=30):
 
             s_latent = encoder(next_row[np.newaxis, np.newaxis, :]).numpy()[0]  # (FEATURE_DIM,)
 
-            qv = q_net.predict(s_latent.reshape(1, -1), verbose=0)[0]
+            qv = qmodel.q_net.predict(s_latent.reshape(1, -1), verbose=0)[0]
             a = int(np.argmax(qv))
             bits = qmodel.action_int_to_bits(a)
 
@@ -314,10 +245,6 @@ def test_rollout(qmodel,encoder, steps=30):
             print(f"t={t:02d} action={a:02d} bits={bits.tolist()} reward={r:.3f} label_next={label_next}")
             #s_latent = next_lat
 
-# ------------------ 载入 CSV 预训练 encoder ------------------
-def load_all_csvs(data_dir):
-    dfs = [pd.read_csv(os.path.join(data_dir, f)) for f in os.listdir(data_dir) if f.endswith(".csv")]
-    return pd.concat(dfs, axis=0).reset_index(drop=True)
 
 def save_sarsa_tflite(q_net):
     # 在训练服务器上转换模型
@@ -330,14 +257,22 @@ def save_sarsa_tflite(q_net):
     tflite_model = converter.convert()
 
     # 保存模型
-    with open('../hvac_controller.tflite', 'wb') as f:
+    with open('hvac_controller.tflite', 'wb') as f:
         f.write(tflite_model)
     q_net.save("hvac_controller.h5")
     print(f"Model size: {len(tflite_model)} bytes")
 # ------------------ 主程序 ------------------
+'''
 def main():
-    global NUM_CLASSES, SEQ_LEN, NUM_FEATURES, FEATURE_DIM
-    meta_model = keras.models.load_model("meta_model.h5")
+    # ------------------ 混合精度 ------------------
+    from tensorflow.keras import mixed_precision
+    policy = mixed_precision.Policy('float32')  # mixed_float16
+    mixed_precision.set_global_policy(policy)
+
+    eps = EPS_START
+    files = [os.path.join(DATA_DIR, f) for f in os.listdir(DATA_DIR) if f.endswith(".csv")]
+
+    meta_model = keras.models.load_model("sarsa/meta_model.h5")
     # ===== Meta model =====
     # meta_model = TFLiteModelWrapper("tflite_model_path")
     # Inspect model
@@ -362,5 +297,6 @@ def main():
     X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.15, random_state=42, stratify=y)
     qmodel.rollout_meta_sarsa(X_train, X_val, encoder, SEQ_LEN, NUM_FEATURES, steps=30, epsilon=0.1)
 
-if __name__ == "__main__":
-    main()
+#if __name__ == "__main__":
+#    main()
+'''

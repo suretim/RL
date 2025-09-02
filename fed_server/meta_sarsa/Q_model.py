@@ -4,6 +4,7 @@ from tensorflow.keras import optimizers
 
 from sklearn.model_selection import train_test_split
 
+from utils_QModel import QModel
 # 依赖：NUM_SWITCH, DATA_DIR, SEQ_LEN, NUM_FEATURES 等
 from utils_fisher import *                 # 如果无需本文件的函数，可以移除这行
 from plant_analysis import *
@@ -60,7 +61,7 @@ import time
 from datetime import datetime
 import matplotlib.pyplot as plt
 
-class QModel:
+class QModel_aug(QModel):
     def __init__(self, state_size=3, action_size=16, learning_rate=0.1, gamma=0.9,
                  epsilon=0.3, config_file="best_params.json"):
         self.latent_dim=ENCODER_LATENT_DIM
@@ -125,7 +126,10 @@ class QModel:
         self.episode_start_time = time.time()
 
         print(f"✅ QModel 初始化完成: 動作數={action_size}, 參數={params}")
-
+        super().__init__()
+        self.meta_model = keras.models.load_model("meta_model.h5")
+        self.hvac_dense_layer = self.meta_model.get_layer("hvac_dense")  # lstm_encoder classifier
+        self.encoder = keras.models.Model(inputs=self.meta_model.input, outputs=self.hvac_dense_layer.output)
     def start_episode(self):
         """開始新的訓練回合"""
         self.current_episode += 1
@@ -679,7 +683,7 @@ class QModel:
         """
         return encoder(X_seq).numpy().astype(np.float32)
 
-    def encode_per_timestep(self, encoder, raw, seq_len=None, step_size=1):
+    def encode_per_timestep_aug(self, encoder, raw, seq_len=None, step_size=1):
         """
         Args:
             encoder: 模型 (輸入 [B, seq_len, F] -> 輸出 latent)
@@ -991,32 +995,11 @@ def save_sarsa_tflite(q_net):
 
 # ============== 主程序 ==============
 def main():
-    # 载入 meta encoder：取名为 "hvac_dense" 的那层的输出
-    meta_model = keras.models.load_model("../sarsa/meta_model.h5")
-    meta_model.summary()
-    hvac_dense_layer = meta_model.get_layer("hvac_dense")
-    #inputs = tf.keras.Input(shape=(None, 7))  # None = 任意長度序列
-    #x = tf.keras.layers.LSTM(64)(inputs)  # LSTM 可以處理可變長度
-    #encoder = tf.keras.Model(inputs, x)
-
-    encoder = keras.models.Model(inputs=meta_model.input, outputs=hvac_dense_layer.output)
-
-    qmodel = QModel(  action_size=NUM_ACTIONS)
+    qmodel = QModel_aug(action_size=NUM_ACTIONS)
     # 训练
     #qmodel.sarsa_full_batch_robust(encoder, seq_len=SEQ_LEN, step_size=1)
     #save_sarsa_tflite(qmodel.q_net)
 
-    # Sanity rollout（可选）
-    '''
-    df_all = load_all_csvs(DATA_DIR)
-    X = df_all[["temp", "humid", "light", "ac", "heater", "dehum", "hum"]].values.astype(np.float32)
-    y = df_all["label"].values.astype(np.int32) if "label" in df_all.columns else np.zeros((len(df_all),), dtype=np.int32)
-    X[:, 0] /= 40.0
-    X[:, 1] /= 100.0
-    X[:, 2] /= 1000.0
-    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.15, random_state=42, stratify=y if y.sum() else None)
-    qmodel.rollout_meta_sarsa(X_train, X_val, encoder, seq_len=SEQ_LEN, steps=30, step_size=1, epsilon=0.1)
-    '''
     # 基本版本
     #results = test_rollout(qmodel, encoder, steps=30, save_path="my_rollout_results.csv")
 
@@ -1026,8 +1009,8 @@ def main():
     #debugger = RL_Debugger()
     from util_plant_env import PlantGrowthEnv
     env=PlantGrowthEnv()
-    #hyperparameter_tuning(qmodel,  encoder, env )
-    run_comprehensive_debug(qmodel, encoder, env, files)
+    hyperparameter_tuning(qmodel,   env )
+    #run_comprehensive_debug(qmodel, qmodel.encoder, env, files)
     # 使用示例
     #files = ["your_data_file1.csv", "your_data_file2.csv"]  # 你的文件列表
     #debugger = DataDrivenDebugger(files)

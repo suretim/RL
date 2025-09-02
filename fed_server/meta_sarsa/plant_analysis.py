@@ -207,7 +207,7 @@ class SarsaAgent:
 
 
 
-def hyperparameter_tuning(qmodel,encoder, env ):
+def hyperparameter_tuning(qmodel, env ):
     """
     更高效的Sarsa超参数调试
     """
@@ -237,7 +237,7 @@ def hyperparameter_tuning(qmodel,encoder, env ):
                 temp_model.epsilon_decay = 0.995
                 temp_model.epsilon_min = 0.01
 
-                performance = test_hyperparameter_set(temp_model, encoder, env, episodes=15)
+                performance = test_hyperparameter_set(temp_model, qmodel.encoder, env, episodes=15)
 
                 if performance > best_performance:
                     best_performance = performance
@@ -635,6 +635,64 @@ def check_q_value_sanity(qmodel, encoder):
 
     return results
 
+import csv
+
+class TrainingMonitor:
+    def __init__(self, save_path=None):
+        self.episodes = []
+        self.rewards = []
+        self.avg_qs = []
+        self.save_path = save_path
+
+    def record_episode(self, episode, reward, avg_q):
+        """记录一次训练的结果"""
+        self.episodes.append(episode)
+        self.rewards.append(reward)
+        self.avg_qs.append(avg_q)
+
+        print(f"[Monitor] Episode {episode} | Reward={reward:.2f} | AvgQ={avg_q:.2f}")
+
+    def save_to_csv(self, filename=None):
+        """保存结果到 CSV 文件"""
+        if filename is None:
+            if self.save_path:
+                filename = self.save_path
+            else:
+                filename = "training_log.csv"
+
+        with open(filename, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Episode", "Reward", "AvgQ"])
+            for e, r, q in zip(self.episodes, self.rewards, self.avg_qs):
+                writer.writerow([e, r, q])
+        print(f"[Monitor] Results saved to {filename}")
+
+    def plot(self, show=True, save_path=None):
+        """绘制 reward 和 avg_q 曲线"""
+        plt.figure(figsize=(10, 5))
+
+        plt.subplot(1, 2, 1)
+        plt.plot(self.episodes, self.rewards, label="Reward")
+        plt.xlabel("Episode")
+        plt.ylabel("Reward")
+        plt.title("Reward per Episode")
+        plt.grid(True)
+        plt.legend()
+
+        plt.subplot(1, 2, 2)
+        plt.plot(self.episodes, self.avg_qs, label="Avg Q-value", color="orange")
+        plt.xlabel("Episode")
+        plt.ylabel("Avg Q")
+        plt.title("Average Q per Episode")
+        plt.grid(True)
+        plt.legend()
+
+        plt.tight_layout()
+        if save_path:
+            plt.savefig(save_path)
+            print(f"[Monitor] Plot saved to {save_path}")
+        if show:
+            plt.show()
 
 def diagnostic_training(model, encoder, env, monitor, episodes=50):
     """诊断训练过程 - 修復NoneType錯誤版本"""
@@ -944,6 +1002,8 @@ def run_comprehensive_debug(qmodel, encoder, env, data_files):
 
     # 3. 进行短期训练并监控
     print("\n进行诊断训练...")
+    monitor = TrainingMonitor(save_path="training_results.csv")
+
     diagnostic_training(qmodel, encoder, env, monitor, episodes=50)
 
     # 4. 分析结果

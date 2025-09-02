@@ -345,6 +345,10 @@ def generate_plant_sequence(save_dir, seq_len, noise_std, insect_prob=0.5, equip
     })
 
     return df
+# ------------------ 载入 CSV 预训练 encoder ------------------
+def load_all_csvs(data_dir):
+    dfs = [pd.read_csv(os.path.join(data_dir, f)) for f in os.listdir(data_dir) if f.endswith(".csv")]
+    return pd.concat(dfs, axis=0).reset_index(drop=True)
 
 def load_csvs(data_dir,seq_len,num_features):
     X_labeled_list, y_labeled_list, X_unlabeled_list = [], [], []
@@ -430,4 +434,20 @@ def sample_tasks(X: np.ndarray, y: np.ndarray, num_tasks ,
         X_query, y_query = X[idx[support_size:]], y[idx[support_size:]]
         tasks.append((X_support, y_support, X_query, y_query))
     return tasks
+
+
+class TFLiteModelWrapper:
+    def __init__(self, tflite_model_path):
+        self.interpreter = tf.lite.Interpreter(model_path=tflite_model_path)
+        self.interpreter.allocate_tensors()
+        self.input_details = self.interpreter.get_input_details()
+        self.output_details = self.interpreter.get_output_details()
+
+    def predict(self, x):
+        # Ensure input is float32
+        x = np.array(x, dtype=np.float32)
+        self.interpreter.set_tensor(self.input_details[0]['index'], x)
+        self.interpreter.invoke()
+        output_data = self.interpreter.get_tensor(self.output_details[0]['index'])
+        return output_data
 

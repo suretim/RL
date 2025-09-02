@@ -11,7 +11,7 @@ Meta-learning pipeline with HVAC-aware features and flowering-period focus.
 - Includes Fisher matrix computation and loading for EWC
 - V1.1 (cleaned & runnable)
 """
-from global_hyparm import *
+#from global_hyparm import *
 
 import os
 
@@ -21,6 +21,7 @@ from typing import List, Tuple
 import random
 import tensorflow as tf
 from tensorflow.keras import layers, models
+
 
 
 
@@ -49,6 +50,63 @@ EPOCHS_OLD = 5
 EPOCHS_NEW = 5
 LAMBDA_EWC = 1.0
 FLOWERING_WEIGHT = 2.0  # gradient boost upper bound for flowering-focus
+
+
+def AutoSliceHVAC(hvac_diff):
+    ndim = hvac_diff.shape.rank  # 注意：Tensor.shape.rank 返回静态 rank
+    if ndim == 2:  # [B, F]
+        return layers.Lambda(lambda z: z[:, 0:4], name="hvac_slice")(hvac_diff)
+    elif ndim == 3:  # [B, T, F]
+        return layers.Lambda(lambda z: z[:, :, 0:4], name="hvac_slice")(hvac_diff)
+    else:
+        raise ValueError(f"Unexpected input rank {ndim} for hvac_diff")
+from tensorflow.keras import layers
+import tensorflow as tf
+
+# ----------------------------
+# AutoHvacBlock 类定义
+# ----------------------------
+class AutoHvacBlock(layers.Layer):
+    """
+    自动 slice HVAC 特征并计算 toggle rate
+    输入: [B, F] 或 [B, T, F]
+    输出: [B, 4] toggle rate
+    """
+    def __init__(self, name="auto_hvac_block"):
+        super().__init__(name=name)
+
+    def call(self, inputs):
+        z = inputs
+        ndim = tf.rank(z)
+
+        # 打印输入 shape
+        z = tf.print("[AutoHvacBlock] Input shape:", tf.shape(z), "Rank:", ndim) or z
+
+        # slice HVAC 特征
+        def slice_2d():
+            slice_out = z[:, 0:4]  # [B,4]
+            tf.print("[AutoHvacBlock] Slice2D shape:", tf.shape(slice_out))
+            toggle_rate = slice_out  # 2D 无时间维，直接使用
+            return toggle_rate
+
+        def slice_3d():
+            slice_out = z[:, :, 0:4]  # [B,T,4]
+            tf.print("[AutoHvacBlock] Slice3D shape:", tf.shape(slice_out))
+            # 计算 toggle rate: 差分 + 平均
+            diff = tf.abs(slice_out[:, 1:, :] - slice_out[:, :-1, :])  # [B, T-1, 4]
+            tf.print("[AutoHvacBlock] Diff shape:", tf.shape(diff))
+            toggle_rate = tf.reduce_mean(diff, axis=1)  # 对时间维求平均 [B,4]
+            tf.print("[AutoHvacBlock] ToggleRate shape:", tf.shape(toggle_rate))
+            return toggle_rate
+
+        return tf.case(
+            {
+                tf.equal(ndim, 2): slice_2d,
+                tf.equal(ndim, 3): slice_3d,
+            },
+            default=lambda: tf.print("[AutoHvacBlock] ERROR: Unexpected rank", ndim) or z
+        )
+
 
 class ReplayBuffer:
     def __init__(self, capacity: int = REPLAY_CAPACITY):
@@ -94,23 +152,56 @@ class NTXentLoss(tf.keras.losses.Loss):
 # ------------------------------------------------------------
 
 class MetaModel:
-    def __init__(self,num_classes=NUM_CLASSES, lambda_ewc=0.4,seq_len=SEQ_LEN,num_feats=NUM_FEATURES, feature_dim: int = FEATURE_DIM):
+    def __init__(self,trainable=False,num_classes=3, lambda_ewc=0.4,seq_len=10,num_feats=7, feature_dim: int = 64):
         self.feature_dim = feature_dim
         self.seq_len = seq_len
         self.num_feats = num_feats
         self.lambda_ewc = lambda_ewc
         self.num_classes = num_classes
-
-
         self.old_params = None
         self.fisher = None
-        self.encoder = self.build_lstm_encoder()
-        self.model = self.build_meta_model(self.encoder)
-        self.classifier = self.build_classifier(self.encoder,seq_len,num_feats, num_classes)
         self.old_params = None
         self.fisher = None
+        if trainable is True:
+            self.encoder = self.build_lstm_encoder()
+            self.model = self.build_meta_model(self.encoder)
+            self.classifier = self.build_classifier(self.encoder, seq_len, num_feats, num_classes)
 
-    def build_lstm_encoder0(self):
+        else:
+            self.encoder = None
+            self.model = None
+            self.classifier =None
+
+
+
+    # ------ Classifier with HVAC features ------
+    def build_meta_model(self, encoder: tf.keras.Model ):
+        inp = layers.Input(shape=(self.seq_len, self.num_feats), name="meta_input")
+        z_enc = encoder(inp)  # [B, FEATURE_DIM]
+
+        # HVAC slice
+        hvac = layers.Lambda(lambda z: z[:, :, 3:7], name="hvac_slice")(inp)  # [B,T,4]
+        hvac_mean = layers.Lambda(lambda z: tf.reduce_mean(z, axis=1), name="hvac_mean")(hvac)  # [B,4]
+
+        # Toggle rate via abs(diff)
+        hvac_shift = layers.Lambda(lambda z: z[:, 1:, :], name="hvac_shift")(hvac)  # [B,T-1,4]
+        hvac_prev  = layers.Lambda(lambda z: z[:, :-1, :], name="hvac_prev")(hvac)  # [B,T-1,4]
+        hvac_diff  = layers.Lambda(lambda t: tf.abs(t[0] - t[1]), name="hvac_diff")([hvac_shift, hvac_prev])  # [B,T-1,4]
+        #hvac_toggle_rate = AutoHvacBlock(name="hvac_block")(hvac_diff)
+        hvac_toggle_rate = layers.Lambda(lambda z: tf.reduce_mean(z, axis=1), name="hvac_toggle_rate")(hvac_diff)    # [B,4]
+
+
+        hvac_feat = layers.Concatenate(name="hvac_concat")([hvac_mean, hvac_toggle_rate])  # [B,8]
+        hvac_feat = layers.Dense(16, activation="relu", name="hvac_dense")(hvac_feat)
+
+        x = layers.Concatenate(name="encoder_hvac_concat")([z_enc, hvac_feat])
+        x = layers.Dense(64, activation="relu", name="meta_dense_64")(x)
+        x = layers.Dense(32, activation="relu", name="meta_dense_32")(x)
+        out = layers.Dense(self.num_classes, activation="softmax", name="meta_out")(x)
+
+        return models.Model(inp, out, name="meta_lstm_classifier")
+
+    def build_lstm_encodergpu(self):
         inp = layers.Input(shape=(self.seq_len, self.num_feats))
 
         # 第一层 LSTM (返回序列, cuDNN friendly)
@@ -140,6 +231,17 @@ class MetaModel:
 
     def build_lstm_encoder(self ):
         inp = layers.Input(shape=(self.seq_len, self.num_feats), dtype=tf.float32)
+        # ----------------------------
+        # 提取 HVAC toggle rate
+        # 假设 HVAC 特征是前4个维度
+        #hvac_toggle_rate = AutoHvacBlock(name="hvac_block")(inp)  # [B,4]
+
+        # ----------------------------
+        # 可以选择把 toggle_rate 拼接到每个时间步或者直接与其他特征一起编码
+        # 这里简化：扩展到时间维再拼接
+        #toggle_expanded = layers.RepeatVector(self.seq_len)(hvac_toggle_rate)  # [B, seq_len, 4]
+        #x_combined = layers.Concatenate(axis=-1)([inp, toggle_expanded])  # [B, seq_len, num_feats+4]
+
         # LSTM 展开，unroll=True
         x = layers.LSTM(self.feature_dim, return_sequences=True, unroll=True)(inp)
         x = layers.LSTM(self.feature_dim, unroll=True)(x)
@@ -183,42 +285,6 @@ class MetaModel:
 
 
 
-    # ------ Classifier with HVAC features ------
-    def build_meta_model(self, encoder: tf.keras.Model ):
-        inp = layers.Input(shape=(self.seq_len, self.num_feats), name="meta_input")
-        z_enc = encoder(inp)  # [B, FEATURE_DIM]
-
-        # HVAC slice
-        hvac = layers.Lambda(lambda z: z[:, :, 3:7], name="hvac_slice")(inp)  # [B,T,4]
-        hvac_mean = layers.Lambda(lambda z: tf.reduce_mean(z, axis=1), name="hvac_mean")(hvac)  # [B,4]
-
-        # Toggle rate via abs(diff)
-        hvac_shift = layers.Lambda(lambda z: z[:, 1:, :], name="hvac_shift")(hvac)  # [B,T-1,4]
-        hvac_prev  = layers.Lambda(lambda z: z[:, :-1, :], name="hvac_prev")(hvac)  # [B,T-1,4]
-        hvac_diff  = layers.Lambda(lambda t: tf.abs(t[0] - t[1]), name="hvac_diff")([hvac_shift, hvac_prev])  # [B,T-1,4]
-        hvac_toggle_rate = layers.Lambda(lambda z: tf.reduce_mean(z, axis=1), name="hvac_toggle_rate")(hvac_diff)    # [B,4]
-
-        hvac_feat = layers.Concatenate(name="hvac_concat")([hvac_mean, hvac_toggle_rate])  # [B,8]
-        hvac_feat = layers.Dense(16, activation="relu", name="hvac_dense")(hvac_feat)
-
-        x = layers.Concatenate(name="encoder_hvac_concat")([z_enc, hvac_feat])
-        x = layers.Dense(64, activation="relu", name="meta_dense_64")(x)
-        x = layers.Dense(32, activation="relu", name="meta_dense_32")(x)
-        out = layers.Dense(self.num_classes, activation="softmax", name="meta_out")(x)
-
-        return models.Model(inp, out, name="meta_lstm_classifier")
-
-    # ------ Inner update (FOMAML) ------
-    @staticmethod
-    def inner_update(model: tf.keras.Model, X_support: np.ndarray, y_support: np.ndarray, lr_inner: float = INNER_LR):
-        with tf.GradientTape() as tape:
-            preds_support = model(X_support, training=True)
-            loss_support = tf.reduce_mean(tf.keras.losses.sparse_categorical_crossentropy(y_support, preds_support))
-        grads_inner = tape.gradient(loss_support, model.trainable_variables)
-        # Replace None grads if any
-        grads_inner = [g if g is not None else tf.zeros_like(v) for g, v in zip(grads_inner, model.trainable_variables)]
-        updated_vars = [w - lr_inner * g for w, g in zip(model.trainable_variables, grads_inner)]
-        return updated_vars
 
     # ------ Fisher Matrix for EWC ------
     @staticmethod
@@ -236,23 +302,6 @@ class MetaModel:
             grads = [g if g is not None else tf.zeros_like(v) for g, v in zip(grads, model.trainable_variables)]
             fisher = [f + tf.square(g) for f, g in zip(fisher, grads)]
         return [f / max(1, len(X_sample)) for f in fisher]
-
-    # ------ Flowering period helpers ------
-    @staticmethod
-    def is_flowering_seq(x_seq: np.ndarray, light_idx: int = 2, th_light: float = 550.0) -> bool:
-        light_mean = float(np.mean(x_seq[:, light_idx]))
-        return light_mean >= th_light
-
-    @staticmethod
-    def hvac_toggle_score(x_seq: np.ndarray, hvac_slice=slice(3, 7), th_toggle: float = 0.15):
-        hv = x_seq[:, hvac_slice]  # [T,4]
-        if hv.shape[0] < 2:
-            return 0.0, False
-        diff = np.abs(hv[1:] - hv[:-1])   # [T-1,4]
-        rate = float(diff.mean())
-        return rate, rate >= th_toggle
-
-
 
     @staticmethod
     def compute_fisher_matrix(model, X, y, num_samples=200, batch_size=16):
@@ -295,6 +344,40 @@ class MetaModel:
         fisher = [f / float(max(count, 1)) for f in fisher]
         return fisher
 
+    # ------ Flowering period helpers ------
+    @staticmethod
+    def is_flowering_seq(x_seq: np.ndarray, light_idx: int = 2, th_light: float = 550.0) -> bool:
+        light_mean = float(np.mean(x_seq[:, light_idx]))
+        return light_mean >= th_light
+
+    @staticmethod
+    def hvac_toggle_score(x_seq: np.ndarray, hvac_slice=slice(3, 7), th_toggle: float = 0.15):
+        hv = x_seq[:, hvac_slice]  # [T,4]
+        if hv.shape[0] < 2:
+            return 0.0, False
+        diff = np.abs(hv[1:] - hv[:-1])   # [T-1,4]
+        rate = float(diff.mean())
+        return rate, rate >= th_toggle
+
+
+    # ------ Inner update (FOMAML) ------
+    @staticmethod
+    def inner_update(model: tf.keras.Model, X_support: np.ndarray, y_support: np.ndarray,
+                     lr_inner: float = INNER_LR):
+        with tf.GradientTape() as tape:
+            preds_support = model(X_support, training=True)
+            loss_support = tf.reduce_mean(tf.keras.losses.sparse_categorical_crossentropy(y_support, preds_support))
+        grads_inner = tape.gradient(loss_support, model.trainable_variables)
+        # Replace None grads if any
+        grads_inner = [g if g is not None else tf.zeros_like(v) for g, v in
+                       zip(grads_inner, model.trainable_variables)]
+        updated_vars = [w - lr_inner * g for w, g in zip(model.trainable_variables, grads_inner)]
+        return updated_vars
+
+    #@tf.function(input_signature=[
+    #    tf.TensorSpec(shape=[None, SEQ_LEN, NUM_FEATURES], dtype=tf.float32),
+    #    tf.TensorSpec(shape=[None], dtype=tf.int32)
+    #])
     def outer_update_with_lll(
             self,
             memory,

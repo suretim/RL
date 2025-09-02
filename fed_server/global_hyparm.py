@@ -1,7 +1,4 @@
 
-DATA_DIR  = "../../../data/sarsa"
-META_OUT_TF="../meta_model.tflite"
-
 NUM_FILES = 100
 SEQ_LEN = 10
 BSEQ_LEN= SEQ_LEN*4

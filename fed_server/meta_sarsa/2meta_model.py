@@ -12,8 +12,12 @@ import pandas as pd
 import tensorflow as tf
 from tensorflow.keras import layers, models
 from global_hyparm import *
+from utils_module import sample_tasks,load_csv_data
+from utils_fisher import NTXentLoss, ReplayBuffer, MetaModel
+import argparse
 # ---------------- Hyperparameters ----------------
-
+ENCODER_MODE = "freeze"  # one of {"finetune","freeze","last_n"}
+LAST_N = 1
 STEP_SIZE = 1
 
 BATCH_SIZE = 32
@@ -27,72 +31,15 @@ LAMBDA_EWC = 0.4
 CONT_IDX = [0,1,2]  # temp, humid, light
 HVAC_IDX = [3,4,5,6] # ac, heater, dehum, hum
 
-# ---------------- Replay Buffer ----------------
-class ReplayBuffer:
-    def __init__(self, capacity=REPLAY_CAPACITY):
-        self.buffer = []
-        self.capacity = capacity
-        self.n_seen = 0
-    def add(self, X, y):
-        for xi, yi in zip(X, y):
-            self.n_seen += 1
-            if len(self.buffer) < self.capacity:
-                self.buffer.append((xi, yi))
-            else:
-                r = np.random.randint(0, self.n_seen)
-                if r < self.capacity:
-                    self.buffer[r] = (xi, yi)
-    def sample(self, batch_size):
-        batch_size = min(batch_size, len(self.buffer))
-        idxs = np.random.choice(len(self.buffer), batch_size, replace=False)
-        X_s, y_s = zip(*[self.buffer[i] for i in idxs])
-        return np.array(X_s), np.array(y_s)
-
-# ---------------- Contrastive Loss ----------------
-class NTXentLoss(tf.keras.losses.Loss):
-    def __init__(self, temperature=0.2):
-        super().__init__()
-        self.temperature = temperature
-    def call(self, z_i, z_j):
-        z_i = tf.math.l2_normalize(z_i, axis=1)
-        z_j = tf.math.l2_normalize(z_j, axis=1)
-        logits = tf.matmul(z_i, z_j, transpose_b=True) / self.temperature
-        labels = tf.range(tf.shape(z_i)[0])
-        loss_i = tf.keras.losses.sparse_categorical_crossentropy(labels, logits, from_logits=True)
-        loss_j = tf.keras.losses.sparse_categorical_crossentropy(labels, tf.transpose(logits), from_logits=True)
-        return tf.reduce_mean(loss_i + loss_j)
-
 # ---------------- Meta Model ----------------
-class MetaModel:
-    def __init__(self, num_classes=3):
+class MetaModel_aug(MetaModel):
+    def __init__(self, num_classes=3, seq_len=SEQ_LEN, num_feats=NUM_FEATURES, feature_dim=FEATURE_DIM):
+        super().__init__(num_classes=num_classes, seq_len=seq_len, num_feats=num_feats, feature_dim=feature_dim)
         self.num_classes = num_classes
-        self.encoder = self.build_lstm_encoder()
-        self.model = self.build_meta_model(self.encoder)
+        #self.encoder = self.build_lstm_encoder()
+        #self.model = self.build_meta_model(self.encoder)
         self.fisher = None
         self.old_params = None
-
-    def build_lstm_encoder(self):
-        inp = layers.Input(shape=(SEQ_LEN, NUM_FEATURES))
-        x = layers.LSTM(FEATURE_DIM, return_sequences=True, unroll=True)(inp)
-        x = layers.LSTM(FEATURE_DIM, unroll=True)(x)
-        out = layers.Dense(FEATURE_DIM, activation='relu')(x)
-        return models.Model(inp, out, name="lstm_encoder")
-
-    def build_meta_model(self, encoder):
-        inp = layers.Input(shape=(SEQ_LEN, NUM_FEATURES))
-        z_enc = encoder(inp)
-        # HVAC features
-        hvac = inp[:,:,3:7]
-        hvac_mean = tf.reduce_mean(hvac, axis=1)
-        hvac_diff = tf.abs(hvac[:,1:,:] - hvac[:,:-1,:])
-        hvac_toggle = tf.reduce_mean(hvac_diff, axis=1)
-        hvac_feat = layers.Concatenate()([hvac_mean, hvac_toggle])
-        hvac_feat = layers.Dense(16, activation='relu', name="hvac_dense")(hvac_feat)
-        x = layers.Concatenate()([z_enc, hvac_feat])
-        x = layers.Dense(64, activation='relu', name="meta_dense_64")(x)
-        x = layers.Dense(32, activation='relu', name="meta_dense_32")(x)
-        out = layers.Dense(self.num_classes, activation='softmax', name="meta_out")(x)
-        return models.Model(inp, out, name="meta_lstm_classifier")
 
     # -------- Contrastive Pairs --------
     @staticmethod
@@ -136,55 +83,96 @@ class MetaModel:
                 starts.append(start)
         return np.stack(s_latent), starts
 
-    # -------- Save TFLite --------
-    @staticmethod
-    def save_tflite(model, out_path):
-        converter = tf.lite.TFLiteConverter.from_keras_model(model)
-        converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS]
-        tflite_model = converter.convert()
-        with open(out_path,"wb") as f: f.write(tflite_model)
-        print("Saved TFLite:", out_path)
+
 
 # ---------------- Example Training Pipeline ----------------
-def train_pipeline(csv_dir, tflite_out="meta_model.tflite"):
-    files = glob.glob(os.path.join(csv_dir,"*.csv"))
-    # Load CSVs
-    X_all, y_all = [], []
-    for f in files:
-        df = pd.read_csv(f)
-        X_all.append(df.iloc[:,:7].values)
-        y_all.append(df['label'].values)
-    # Flatten
-    X_all = [x.astype(np.float32) for x in X_all]
-    y_all = [y.astype(np.int32) for y in y_all]
+def train_pipeline(csv_dir, tflite_out=META_OUT_TF):
+    # ===== Load data =====
+    load_glob = os.path.join(LOAD_DIR, f"*.csv")
+    X_unlabeled, X_labeled, y_labeled, num_feats = load_csv_data(load_glob, SEQ_LEN)
 
-    meta_model = MetaModel(num_classes=3)
+    model = MetaModel_aug(num_classes=3)
     optimizer = tf.keras.optimizers.Adam(META_LR)
 
     # -------- Contrastive Pretrain --------
-    anchors, positives = MetaModel.make_contrastive_pairs(X_all)
+    anchors, positives = MetaModel_aug.make_contrastive_pairs(X_labeled)
     dataset = tf.data.Dataset.from_tensor_slices((anchors, positives)).shuffle(2048).batch(BATCH_SIZE)
     ntxent = NTXentLoss()
     for ep in range(EPOCHS_CONTRASTIVE):
         for a,p in dataset:
             with tf.GradientTape() as tape:
-                za = meta_model.encoder(a, training=True)
-                zp = meta_model.encoder(p, training=True)
+                za = model.encoder(a, training=True)
+                zp = model.encoder(p, training=True)
                 loss = ntxent(za,zp)
-            grads = tape.gradient(loss, meta_model.encoder.trainable_variables)
-            grads = [g if g is not None else tf.zeros_like(v) for g,v in zip(grads,meta_model.encoder.trainable_variables)]
-            optimizer.apply_gradients(zip(grads, meta_model.encoder.trainable_variables))
+            grads = tape.gradient(loss, model.encoder.trainable_variables)
+            grads = [g if g is not None else tf.zeros_like(v) for g,v in zip(grads,model.encoder.trainable_variables)]
+            optimizer.apply_gradients(zip(grads, model.encoder.trainable_variables))
         print(f"[Contrastive] Epoch {ep+1}/{EPOCHS_CONTRASTIVE}, loss={float(loss.numpy()):.4f}")
 
     # -------- 可以加 FOMAML / Replay / EWC --------
     # 這裡省略，可套用你現有 outer_update_with_lll 函數
+    # ===== Meta model =====
+    #meta_model = model.build_meta_model(lstm_encoder)
+    meta_encoder=model.model
+    lstm_encoder=model.encoder
+    meta_optimizer = tf.keras.optimizers.Adam(META_LR)
+    model.set_trainable_layers(lstm_encoder, meta_encoder, ENCODER_MODE, LAST_N)
 
+    memory = ReplayBuffer(capacity=REPLAY_CAPACITY)
+    prev_weights = None
+    fisher_matrix = None
+
+    if X_labeled.size > 0:
+        fisher_matrix = model.compute_fisher_matrix(meta_encoder, X_labeled, y_labeled)
+        for ep in range(EPOCHS_META):
+            tasks = sample_tasks(X_labeled, y_labeled,num_tasks=5)
+            loss, acc, prev_weights = model.outer_update_with_lll(
+                memory=memory,
+                meta_model=meta_encoder,
+                meta_optimizer=meta_optimizer,
+                tasks=tasks,
+                lr_inner=INNER_LR,
+                prev_weights=prev_weights,
+                fisher_matrix=fisher_matrix,
+            )
+            print(f"[Meta ] Epoch {ep + 1}/{EPOCHS_META}, loss={loss:.4f}, acc={acc:.4f}")
+    else:
+        print("Skip meta-learning: no labeled data.")
+    # ===== Save assets =====
+    if fisher_matrix is not None:
+        model.save_fisher_and_weights(model=meta_encoder, fisher_matrix=fisher_matrix)
+    if X_labeled.size > 0:
+        model.save_tflite(meta_encoder, tflite_out)
+        model.encoder.save("encoder.h5")
+        model.classifier.save("classifier.h5")
+        model.model.save("meta_model.h5")
+        model.model.summary()
+        print("save meta tflite Done.")
+
+    # quick forward test
+    dummy_x = np.random.rand(1, SEQ_LEN,NUM_FEATURES).astype(np.float32)
+    dummy_y = lstm_encoder(dummy_x)
+    print("✅ Forward test shape:", dummy_y.shape)
     # -------- Save TFLite / h5 --------
-    meta_model.model.save("meta_model.h5")
-    MetaModel.save_tflite(meta_model.model, tflite_out)
+    model.model.save("meta_model.h5")
+    MetaModel.save_tflite(model.model, tflite_out)
 
     print("✅ Pipeline 完成")
 
-# ---------------- Main ----------------
+
 if __name__ == "__main__":
-    train_pipeline(DATA_DIR, tflite_out="meta_model.tflite")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--encoder_mode", type=str, default=ENCODER_MODE, choices=["finetune", "freeze", "last_n"])
+    parser.add_argument("--load_dir", type=str, default=DATA_DIR)
+    parser.add_argument("--meta_out_tf", type=str, default=META_OUT_TF)
+    parser.add_argument("--last_n", type=int, default=LAST_N)
+    args, _ = parser.parse_known_args()
+
+    ENCODER_MODE = args.encoder_mode
+    LOAD_DIR = args.load_dir
+    LAST_N = args.last_n
+    META_OUT_TF=args.meta_out_tf
+    train_pipeline(DATA_DIR, tflite_out=META_OUT_TF)
+    #serv_train_tf(META_OUT_TF,num_classes=NUM_CLASSES,seq_len=SEQ_LEN, num_feats=NUM_FEATURES,feature_dim=FEATURE_DIM)
+    #serv_pipline(META_OUT_TF, num_classes=NUM_CLASSES,seq_len=SEQ_LEN, num_feats=NUM_FEATURES,feature_dim=FEATURE_DIM)
+

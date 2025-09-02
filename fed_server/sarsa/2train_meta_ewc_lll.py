@@ -14,8 +14,9 @@ from tensorflow.keras import layers, models, optimizers
 import argparse
 from tensorflow.keras.optimizers import legacy
 from global_hyparm import *
-
+from utils_module import *
 from utils_fisher import *
+
 # ---------------- Hyperparameters ----------------
 # =============================
 # Hyperparameters
@@ -34,9 +35,10 @@ def serv_pipline(tflite_out,num_classes=3,seq_len=100, num_feats=7,feature_dim=6
     #ENCODER_MODE = encoder_mode
     #LAST_N = last_n
     #DATA_GLOB = data_glob
-    load_glob = os.path.join(LOAD_DIR, f"*.csv")
+
     model = MetaModel(num_classes=num_classes,seq_len=seq_len, num_feats=num_feats,feature_dim=feature_dim)
     # ===== Load data =====
+    load_glob = os.path.join(LOAD_DIR, f"*.csv")
     X_unlabeled, X_labeled, y_labeled, num_feats = load_csv_data(load_glob,seq_len)
 
     # ===== Build encoder =====
@@ -84,7 +86,6 @@ def serv_pipline(tflite_out,num_classes=3,seq_len=100, num_feats=7,feature_dim=6
             print(f"[Meta ] Epoch {ep + 1}/{EPOCHS_META}, loss={loss:.4f}, acc={acc:.4f}")
     else:
         print("Skip meta-learning: no labeled data.")
-
     # ===== Save assets =====
     if fisher_matrix is not None:
         model.save_fisher_and_weights(model=meta_model, fisher_matrix=fisher_matrix)

@@ -24,7 +24,8 @@ docker images
 #docker run --gpus all -it tensorflow/tensorflow:2.12.0-gpu python -c "import tensorflow as tf; print(tf.config.list_physical_devices('GPU'))"
 docker run --gpus all -it tensorflow/tensorflow:2.12.0-gpu
 docker run -it --gpus all -v C:\tim:/workspace tensorflow/tensorflow:2.12.0-gpu bash
-docker exe -it --gpus all hardcore_wilson bash
+docker run -it --gpus all -v D:\RL:/workspace tensorflow/tensorflow:2.12.0-gpu bash
+docker exec -it hardcore_wilson bash
 docker ps
 docker stop a1b2c3d4e5f6  # 使用容器ID或名称
 docker rm a1b2c3d4e5f6  # 使用容器ID或名称
