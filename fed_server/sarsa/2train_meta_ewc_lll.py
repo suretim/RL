@@ -10,6 +10,11 @@ End-to-end LSTM Meta-learning + EWC + Replay pipeline.
 - TFLite export
 """
 
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../')))  # RL 根目录
+DATA_DIR  = "../../../data/sarsa"
+META_OUT_TF="../meta_model.tflite"
 from tensorflow.keras import layers, models, optimizers
 import argparse
 from tensorflow.keras.optimizers import legacy

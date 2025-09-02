@@ -4,71 +4,140 @@ import glob
 import pandas as pd
 import numpy as np
 from typing import Tuple
+
+ 
+import tensorflow as tf
+
 #NUM_TASKS = 5
 SUPPORT_SIZE = 10
 QUERY_SIZE = 20
+# ---------- 1. Encoder ----------
+def build_hvac_encoder(seq_len=20, n_features=3, latent_dim=64):
+    inp = tf.keras.Input(shape=(seq_len, n_features))
+    x = tf.keras.layers.LSTM(64, return_sequences=True)(inp)
+    x = tf.keras.layers.LSTM(64)(x)
+    x = tf.keras.layers.Dense(latent_dim)(x)
+    x = tf.math.l2_normalize(x, axis=-1)
+    return tf.keras.Model(inp, x, name="encoder")
 
+# ---------- 2. Prototype Classifier ----------
+class PrototypeClassifier(tf.keras.Model):
+    def __init__(self, n_classes, latent_dim, tau=0.1):
+        super().__init__()
+        self.prototypes = tf.Variable(tf.random.normal([n_classes, latent_dim]), trainable=False)
+        self.tau = tau
 
-# -------------------------------
-# Reward 计算函数
-# -------------------------------
-def compute_reward_sequence(labels, actions_bits,
-                            healthy_state=0,
-                            energy_penalty=0.1,
-                            match_bonus=0.5,
-                            switch_penalty_per_toggle=0.2,
-                            prev_actions=None):
-    labels = np.asarray(labels)
-    actions_bits = np.asarray(actions_bits)
-    T = labels.shape[0]
+    def call(self, z):
+        z = tf.math.l2_normalize(z, axis=-1)
+        protos = tf.math.l2_normalize(self.prototypes, axis=-1)
+        sim = tf.matmul(z, protos, transpose_b=True) / self.tau
+        return tf.nn.softmax(sim, axis=-1)
 
-    health_state = labels[:, 0]
-    hvac_targets = labels[:, 1:3]
+    def update_prototypes(self, features, labels):
+        for k in range(self.prototypes.shape[0]):
+            mask = tf.where(labels == k)
+            if tf.size(mask) > 0:
+                mean_vec = tf.reduce_mean(tf.gather(features, mask[:,0]), axis=0)
+                self.prototypes[k].assign(mean_vec)
 
-    health_score = np.where(health_state == healthy_state, 1.0, -1.0)
-    energy_cost = energy_penalty * np.sum(actions_bits, axis=1)
-    match_score = np.sum((hvac_targets == 1) & (actions_bits == 1), axis=1) * match_bonus
+# ---------- 3. VPD 计算 ----------
+def calc_vpd(temp, rh):
+    es = 0.6108 * np.exp(17.27*temp / (temp+237.3))
+    ea = es * rh
+    return es - ea
 
-    toggles = np.zeros(T, dtype=float)
-    if prev_actions is not None:
-        toggles[0] = np.sum(np.abs(actions_bits[0] - prev_actions))
-    if T >= 2:
-        diffs = np.abs(actions_bits[1:] - actions_bits[:-1])
-        toggles[1:] = np.sum(diffs, axis=1)
-    switch_penalty = switch_penalty_per_toggle * toggles
-
-    return health_score - energy_cost + match_score - switch_penalty
-
-# -------------------------------
-# 模拟环境
-# -------------------------------
+# ---------- 4. 环境类 ----------
 class PlantHVACEnv:
-    def __init__(self, seq_len=20):
+    def __init__(self, seq_len=20, n_features=3, temp_init=25.0, humid_init=0.5, latent_dim=64):
         self.seq_len = seq_len
+        self.temp_init = temp_init
+        self.humid_init = humid_init
+        self.encoder = build_encoder(seq_len, n_features, latent_dim)
+        self.proto_cls = PrototypeClassifier(n_classes=3, latent_dim=latent_dim)  # seedling, veg, flower
         self.reset()
 
     def reset(self):
-        self.labels_full = np.zeros((self.seq_len+1, 3), dtype=int)
-        self.labels_full[:,0] = np.random.choice([0,1], size=self.seq_len+1)
-        self.labels_full[:,1] = np.random.choice([0,1], size=self.seq_len+1)
-        self.labels_full[:,2] = np.random.choice([0,1], size=self.seq_len+1)
+        self.temp = self.temp_init
+        self.humid = self.humid_init
+        self.health = 0
         self.t = 0
+        self.prev_action = np.zeros(4, dtype=int)
         return self._get_state()
 
     def _get_state(self):
-        return self.labels_full[self.t]
+        return np.array([self.health, self.temp, self.humid], dtype=np.float32)
 
-    def step(self, action, params):
-        next_label = self.labels_full[self.t+1]
-        reward = compute_reward_sequence(
-            labels=np.expand_dims(next_label,0),
-            actions_bits=np.expand_dims(action,0),
-            **params
-        )[0]
+    def step(self, action, seq_input, params):
+        """
+        action: [AC, Humidifier, Heater, Dehumidifier]
+        seq_input: [1, seq_len, n_features] 当前时序序列
+        """
+        ac, humi, heat, dehumi = action
+
+        # --- 环境动力学 ---
+        self.temp += (-0.5 if ac==1 else 0.2) + (0.5 if heat==1 else 0.0)
+        self.humid += (0.05 if humi==1 else -0.02) + (-0.03 if heat==1 else 0.0) + (-0.05 if dehumi==1 else 0.0)
+        self.temp = np.clip(self.temp, 15, 35)
+        self.humid = np.clip(self.humid, 0, 1)
+
+        # 健康判定
+        self.health = 0 if 22<=self.temp<=28 and 0.4<=self.humid<=0.7 else 1
+
+        # --- latent soft label ---
+        z = self.encoder(seq_input, training=False)
+        soft_label = self.proto_cls(z).numpy()[0]  # [seedling, veg, flower]
+        flower_prob = soft_label[2]
+
+        # --- reward ---
+        # 基础 health + 能耗 + 开关惩罚
+        health_reward = 1.0 if self.health==0 else -1.0
+        energy_cost = params.get("energy_penalty",0.1) * np.sum(action)
+        switch_penalty = params.get("switch_penalty_per_toggle",0.2) * np.sum(np.abs(action - self.prev_action))
+
+        # 花期强化 VPD 控制
+        vpd_target = params.get("vpd_target", 1.2)
+        vpd_current = calc_vpd(self.temp, self.humid)
+        vpd_reward = -abs(vpd_current - vpd_target) * params.get("vpd_penalty",2.0)
+
+        reward = health_reward - energy_cost - switch_penalty + flower_prob * vpd_reward
+
+        self.prev_action = action
         self.t += 1
-        done = (self.t >= self.seq_len)
-        return self._get_state(), reward, done
-# -------------------------------
+        done = self.t >= self.seq_len
+
+        info = {
+            "latent_soft_label": soft_label,
+            "flower_prob": flower_prob,
+            "temp": self.temp,
+            "humid": self.humid,
+            "vpd": vpd_current
+        }
+
+        return self._get_state(), reward, done, info
+ 
+ 
+
+def compute_scores(temp, humid):
+    """计算 temp/ humid / vpd 三个健康分数"""
+    # 温度奖励 (目标 25±3)
+    temp_penalty = np.abs(np.clip(temp - 25.0, -3, 3)) / 3.0
+    temp_score = 1.0 - temp_penalty
+
+    # 湿度奖励 (目标 0.55±0.15)
+    humid_penalty = np.abs(np.clip(humid - 0.55, -0.15, 0.15)) / 0.15
+    humid_score = 1.0 - humid_penalty
+
+    # VPD 奖励 (目标 0.5~1.2，中心 0.85)
+    vpd = compute_vpd(temp, humid)
+    vpd_penalty = np.abs(np.clip(vpd - 0.85, -0.35, 0.35)) / 0.35
+    vpd_score = 1.0 - vpd_penalty
+
+    # 综合健康度
+    health_score = (temp_score + humid_score + vpd_score) / 3.0
+    return health_score, temp_score, humid_score, vpd_score, vpd
+
+ 
+
 # Q-learning 智能体
 # -------------------------------
 class QLearningAgent:

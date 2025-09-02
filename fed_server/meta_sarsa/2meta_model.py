@@ -6,23 +6,29 @@ Fixed-window LSTM Meta-learning + EWC + Replay pipeline with HVAC features
 - Sliding windows -> contrastive + FOMAML + EWC
 - Export to .h5 + TFLite
 """
-
-import os, glob, numpy as np
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../')))  # RL 根目录
+from global_hyparm import *
+import glob
+import numpy as np
 import pandas as pd
 import tensorflow as tf
 from tensorflow.keras import layers, models
-from global_hyparm import *
+
 from utils_module import sample_tasks,load_csv_data
 from utils_fisher import NTXentLoss, ReplayBuffer, MetaModel
 import argparse
+DATA_DIR  = "../../../data/sarsa"
+META_OUT_TF="../meta_model.tflite"
 # ---------------- Hyperparameters ----------------
 ENCODER_MODE = "freeze"  # one of {"finetune","freeze","last_n"}
 LAST_N = 1
 STEP_SIZE = 1
 
 BATCH_SIZE = 32
-EPOCHS_CONTRASTIVE = 10
-EPOCHS_META = 20
+EPOCHS_CONTRASTIVE = 1 
+EPOCHS_META = 1
 INNER_LR = 1e-2
 META_LR = 1e-3
 REPLAY_CAPACITY = 1000
@@ -34,7 +40,7 @@ HVAC_IDX = [3,4,5,6] # ac, heater, dehum, hum
 # ---------------- Meta Model ----------------
 class MetaModel_aug(MetaModel):
     def __init__(self, num_classes=3, seq_len=SEQ_LEN, num_feats=NUM_FEATURES, feature_dim=FEATURE_DIM):
-        super().__init__(num_classes=num_classes, seq_len=seq_len, num_feats=num_feats, feature_dim=feature_dim)
+        super().__init__(trainable=True,num_classes=num_classes, seq_len=seq_len, num_feats=num_feats, feature_dim=feature_dim)
         self.num_classes = num_classes
         #self.encoder = self.build_lstm_encoder()
         #self.model = self.build_meta_model(self.encoder)
@@ -141,6 +147,7 @@ def train_pipeline(csv_dir, tflite_out=META_OUT_TF):
     # ===== Save assets =====
     if fisher_matrix is not None:
         model.save_fisher_and_weights(model=meta_encoder, fisher_matrix=fisher_matrix)
+        print("save_fisher_and_weights Done.")
     if X_labeled.size > 0:
         model.save_tflite(meta_encoder, tflite_out)
         model.encoder.save("encoder.h5")

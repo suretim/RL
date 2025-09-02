@@ -1,11 +1,14 @@
+import sys
 import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../')))  # RL 根目录
 import numpy as np
 import pandas as pd
 import argparse
 from utils_module import *
 
 from global_hyparm import *
-
+DATA_DIR  = "../../../data/sarsa"
+META_OUT_TF="../meta_model.tflite"
 def main():
     # ==== 批量生成 ====
     #save_glob =os.path.join(DATA_DIR, f"*.csv") # "../../../../data/sarsa/*.csv"
