@@ -114,6 +114,47 @@ std::vector<int> trainable_tensor_indices;     // 存 dense 層的 tensor index
     
  #include "tensorflow/lite/schema/schema_generated.h"
  
+void PPO_selectAction(float state[3], int action[4]) {
+        float action_probs[4];
+        
+        if (predict(state, action_probs)) {
+            for (int i = 0; i < 4; i++) {
+                // 基于概率采样
+                float rand_val = (float)random(100) / 100.0f;
+                action[i] = (rand_val < action_probs[i]) ? 1 : 0;
+                
+                Serial.printf("Action %d: prob=%.2f, chosen=%d\n", 
+                             i, action_probs[i], action[i]);
+            }
+        } else {
+            // 推理失败，使用默认动作
+            for (int i = 0; i < 4; i++) {
+                action[i] = 0;
+            }
+            Serial.println("Using fallback action");
+        }
+    }
+
+ bool PPO_Predict(float state[3], float action_probs[4]) {
+        // 设置输入数据
+        for (int i = 0; i < 3; i++) {
+            input->data.f[i] = state[i];
+        }
+
+        // 运行推理
+        TfLiteStatus invoke_status = interpreter->Invoke();
+        if (invoke_status != kTfLiteOk) {
+            TF_LITE_REPORT_ERROR(&error_reporter, "Invoke failed");
+            return false;
+        }
+
+        // 获取输出
+        for (int i = 0; i < 4; i++) {
+            action_probs[i] = output->data.f[i];
+        }
+
+        return true;
+    }
 
 // 全局變量
 //trainable_tensor_indices = [0, 1, 2, 3, 6, 13, 14, 15, 16, 17, 18, 19, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 50, 223, 224, 225]; 

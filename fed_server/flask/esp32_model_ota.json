@@ -1,0 +1,245 @@
+{
+  "metadata": {
+    "firmware_version": "1.0.0",
+    "model_type": "TFLite",
+    "input_shape": [
+      5
+    ],
+    "output_shape": [
+      4
+    ],
+    "compression_ratio": 2.1512605042016806,
+    "timestamp": "2025-09-03T19:43:11.869181",
+    "quantization": true,
+    "pruning": true
+  },
+  "model_data_b64": "eJx9VUtoE1EUvUmTNmlDGrHUaKtkUdCF5tNkISYUYltrJWlr+qFIIYxmqoFpWpJJ3QhWBL9VihRXKiKCLhREwYWLgq5ENxUURF0WFLRgBSuIzXjvzJ3JmMa+cDJv3rvvnnM/M+MDgKEDiTBeoAl80ApevHrAhfcOsOEccA1gFrGEsFnRDjFXC1CD9xZaQzxeUxQX28YQjYiCmJ/O5o6nM+K4UJRkw3ZOURQ7zx2IjJgriOn2EJj83SopCl3d5f1gOpubKsoASA8RtvuEvhw834zo7O8b6U4N9vb3pZPdQ/Gu+FAcOVxqLGRXZ7KdyObS+WJOzk6I6WkxX8hO5sBJMaCIJosW713EDcQ850Di8x2Kpm8UoeXKbXB4ELsoGKhV12r5DMX2lZIG9WqGaa8etHisbEO27f5Q2B8EuMMc5C/kD0VoTR9LmJ8viG+IV2xHnJ8b/qyErTsvFxtk76+25uTAm02nz26ff3r7de/cfFISewInVwbPPb9Yqc1HKPb8OHNl9cmH4Y/XRpaHHcsvDwef3d+W37PQ8bN08500ijxjCKptMtGb8nVO5jBvspjxq7E1qcrcRgeRfzevU1+8RbynmjHnhJDN0QlKySmuqQfW58fF6xaG3dQnFLvGCw4Pc9nUX9mmBsq9iuYKaWxWfbqggTV62YeXtWr5qVPzQ0ctJj/A9SJfZj3A9VvCzTHEokXrpRnWcWiNuMHi5XzH2B6Hc8Dkk2wja1pf63HPKNrQeGaiW/F/UBZkcbwoDQh5OStj94qZTkGS9gXZlx7/iyq8duadquB9UMG7g+Oi+aXZ67G9eBULU+H2tHBMnswH9Gc3kBTkZFGKVt3bnxUK8UwGKnQdKa3XZWNdF0y6SE9X6f/5iJ8/GktV1xXcQFcwkBKlYvUdQ7Gul7ivKppe6rFIuRecCdCeRwf3n94L+qB7v/Aw2rqxxpCeH4dRn2b1fbyFnwZt1Km9a9ZhZR0H8U9SNtaxeO9RtGXjGhrvIgdroK9Ci/FVAPW50DVQ7XYjEmU+5wlT7SgOl3HOxu/Ksr5VrqOur/H3Qox6oeLbkf73G6C2uFEbO8/bWPd39Ocu58XtQuWNJn4nlPvsL+m7TEw=",
+  "fisher_matrix": {
+    "dense_20/kernel:0": {
+      "values": [
+        0.0008874341729097068,
+        0.0007403441704809666,
+        0.0007612453191541135,
+        0.0006378438556566834,
+        0.0006644768291153014,
+        0.00035584645229391754,
+        0.0007317407871596515,
+        0.0005223350017331541
+      ],
+      "indices": [
+        [
+          0,
+          1,
+          2,
+          3,
+          3,
+          3,
+          4,
+          4
+        ],
+        [
+          4,
+          4,
+          4,
+          1,
+          4,
+          7,
+          4,
+          7
+        ]
+      ],
+      "shape": [
+        5,
+        8
+      ],
+      "threshold": 0.0003460291249211878
+    },
+    "dense_20/bias:0": {
+      "values": [
+        0.000639328092802316,
+        0.0003369460755493492
+      ],
+      "indices": [
+        [
+          4,
+          7
+        ]
+      ],
+      "shape": [
+        8
+      ],
+      "threshold": 0.0003317088878247887
+    },
+    "dense_21/kernel:0": {
+      "values": [
+        0.0005549764027819037,
+        0.001553838374093175,
+        0.0010896379826590419,
+        0.0006118998280726373,
+        0.0005449396558105946,
+        0.0007375285495072603,
+        0.000988727668300271
+      ],
+      "indices": [
+        [
+          4,
+          4,
+          5,
+          6,
+          6,
+          7,
+          7
+        ],
+        [
+          0,
+          1,
+          1,
+          2,
+          3,
+          0,
+          1
+        ]
+      ],
+      "shape": [
+        8,
+        4
+      ],
+      "threshold": 0.0005445473361760378
+    },
+    "dense_21/bias:0": {
+      "values": [
+        0.0007809503586031497
+      ],
+      "indices": [
+        [
+          1
+        ]
+      ],
+      "shape": [
+        4
+      ],
+      "threshold": 0.0006431716727092863
+    }
+  },
+  "optimal_params": {
+    "dense_20/kernel:0": [
+      [
+        -0.13188713788986206,
+        0.011351585388183594,
+        0.6118297576904297,
+        0.4062236547470093,
+        -0.6622804403305054,
+        -0.2820291221141815,
+        0.5695555210113525,
+        -0.08192121982574463
+      ],
+      [
+        0.05737864971160889,
+        0.2045048475265503,
+        0.12561678886413574,
+        0.4242798089981079,
+        0.15272438526153564,
+        0.3885328769683838,
+        0.534399151802063,
+        0.4388301372528076
+      ],
+      [
+        -0.022319495677947998,
+        -0.6215760111808777,
+        -0.0463903546333313,
+        -0.24938303232192993,
+        -0.5739723443984985,
+        -0.5901389122009277,
+        0.3751415014266968,
+        -0.6428972482681274
+      ],
+      [
+        -0.07815319299697876,
+        0.6165751218795776,
+        0.19181197881698608,
+        0.08911347389221191,
+        -0.3906693160533905,
+        -0.5707535743713379,
+        0.2474435567855835,
+        -0.3333726227283478
+      ],
+      [
+        0.2708618640899658,
+        0.060109496116638184,
+        0.11522990465164185,
+        0.6719729900360107,
+        -0.510479211807251,
+        0.40791821479797363,
+        0.6307275295257568,
+        -0.630821943283081
+      ]
+    ],
+    "dense_20/bias:0": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "dense_21/kernel:0": [
+      [
+        0.17008745670318604,
+        -0.20334339141845703,
+        -0.10318291187286377,
+        0.24047356843948364
+      ],
+      [
+        0.633119523525238,
+        0.45745915174484253,
+        -0.2999471426010132,
+        -0.35425031185150146
+      ],
+      [
+        0.38208144903182983,
+        -0.2001095414161682,
+        0.4379597306251526,
+        0.33160561323165894
+      ],
+      [
+        -0.07649487257003784,
+        -0.595240592956543,
+        0.25644588470458984,
+        -0.06160825490951538
+      ],
+      [
+        -0.6846694946289062,
+        0.46326571702957153,
+        -0.37739837169647217,
+        -0.012593626976013184
+      ],
+      [
+        -0.6191796660423279,
+        -0.10204124450683594,
+        -0.4751552939414978,
+        -0.534372091293335
+      ],
+      [
+        -0.054595351219177246,
+        0.4582468867301941,
+        0.14201951026916504,
+        -0.23330757021903992
+      ],
+      [
+        -0.4142168462276459,
+        0.04314827919006348,
+        0.614084780216217,
+        0.5809153914451599
+      ]
+    ],
+    "dense_21/bias:0": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "crc32": 1296915974
+}

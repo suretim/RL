@@ -52,7 +52,7 @@ class PlantHVACEnv:
         self.seq_len = seq_len
         self.temp_init = temp_init
         self.humid_init = humid_init
-        self.encoder = build_encoder(seq_len, n_features, latent_dim)
+        self.encoder = build_hvac_encoder(seq_len, n_features, latent_dim)
         self.proto_cls = PrototypeClassifier(n_classes=3, latent_dim=latent_dim)  # seedling, veg, flower
         self.reset()
 
@@ -128,7 +128,7 @@ def compute_scores(temp, humid):
     humid_score = 1.0 - humid_penalty
 
     # VPD 奖励 (目标 0.5~1.2，中心 0.85)
-    vpd = compute_vpd(temp, humid)
+    vpd = calc_vpd(temp, humid)
     vpd_penalty = np.abs(np.clip(vpd - 0.85, -0.35, 0.35)) / 0.35
     vpd_score = 1.0 - vpd_penalty
 

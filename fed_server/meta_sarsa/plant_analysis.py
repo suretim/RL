@@ -154,58 +154,6 @@ def create_training_monitor():
 
     return TrainingMonitor()
 
-class SarsaAgent:
-    def __init__(self, state_size, action_size, learning_rate=0.01, gamma=0.99, epsilon=0.1):
-        self.state_size = state_size
-        self.action_size = action_size
-        self.learning_rate = learning_rate # 属性名是 learning_rate
-        self.gamma = gamma                 # 属性名是 gamma
-        self.epsilon = epsilon
-        self.q_table = np.zeros((state_size, action_size)) # 或者其他的Q函数表示
-
-    def choose_action(self, state):
-        """
-        對於表格方法，需要將連續狀態離散化
-        """
-        if np.random.rand() < self.epsilon:
-            return np.random.choice(self.action_size)  # 探索
-
-        else:
-            # 將連續狀態離散化為整數索引
-            discrete_state = self._discretize_state(state)
-            return np.argmax(self.q_table[discrete_state, :])  # 利用
-
-    def _discretize_state(self, state):
-        discrete = 0
-        if isinstance(state, (list, tuple, np.ndarray)):
-            # 如果狀態是數組，處理每個元素
-            for i, value in enumerate(state):
-                if isinstance(value, (list, tuple, np.ndarray)):
-                    # 如果元素本身也是數組，遞歸處理或特殊處理
-                    discrete += int(np.mean(value) * 100) * (10 ** (i * 2))
-                else:
-                    # 單一數值
-                    discrete += int(value * 100) * (10 ** (i * 2))
-        else:
-            # 單一數值狀態
-            discrete = int(state * 100)
-
-        return discrete
-
-
-    def learn(self, state, action, reward, next_state, next_action, done):
-        # Sarsa 更新公式
-        current_q = self.q_table[state, action]
-        if done:
-            target = reward
-        else:
-            # 注意这里是 Q(S', A')，是下一个状态和“实际采取”的下一个动作
-            target = reward + self.gamma * self.q_table[next_state, next_action]
-        # 更新 Q值
-        self.q_table[state, action] += self.learning_rate * (target - current_q)
-
-
-
 
 def hyperparameter_tuning(qmodel, env ):
     """

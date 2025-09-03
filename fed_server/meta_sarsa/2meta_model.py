@@ -27,8 +27,8 @@ LAST_N = 1
 STEP_SIZE = 1
 
 BATCH_SIZE = 32
-EPOCHS_CONTRASTIVE = 1 
-EPOCHS_META = 1
+EPOCHS_CONTRASTIVE = 20
+EPOCHS_META = 100
 INNER_LR = 1e-2
 META_LR = 1e-3
 REPLAY_CAPACITY = 1000
@@ -89,14 +89,15 @@ class MetaModel_aug(MetaModel):
                 starts.append(start)
         return np.stack(s_latent), starts
 
-
-
-# ---------------- Example Training Pipeline ----------------
-def train_pipeline(csv_dir, tflite_out=META_OUT_TF):
+def TakeEnv():
     # ===== Load data =====
     load_glob = os.path.join(LOAD_DIR, f"*.csv")
     X_unlabeled, X_labeled, y_labeled, num_feats = load_csv_data(load_glob, SEQ_LEN)
+    return X_unlabeled, X_labeled, y_labeled, num_feats
 
+# ---------------- Example Training Pipeline ----------------
+def train_pipeline(csv_dir, tflite_out=META_OUT_TF):
+    X_unlabeled, X_labeled, y_labeled, num_feats=TakeEnv()
     model = MetaModel_aug(num_classes=3)
     optimizer = tf.keras.optimizers.Adam(META_LR)
 
