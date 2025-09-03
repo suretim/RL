@@ -6,6 +6,7 @@ set(TFLITE_META_SRCS "../../fed_server/meta_model.tflite")
   
 
 set(APPLICATION_SRCS
+    "hvac_q_agent.cc"
     "sensor_module.cc"
     "model_pb_handler.cc"
     "config_mqtt.cc"
@@ -29,6 +30,9 @@ idf_component_register(
 
     EMBED_FILES "${TFLITE_META_SRCS}"
     REQUIRES
+        spiffs
+        esp_http_client
+        mbedtls
         ml
         func
         nanopb
@@ -40,7 +44,8 @@ idf_component_register(
         mqtt        
         console
         json
-        esp_timer    
+        esp_timer
+            
 )
 
 # C++ 特定设置

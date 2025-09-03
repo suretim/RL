@@ -38,10 +38,7 @@ def download_update():
     return send_file(ota_package_path, as_attachment=True)
 
 
-@app.route('/')
-def hello():
-    return "Hello World!"
 
 if __name__ == '__main__':
-    app.run(debug=True)
-    #app.run(host='0.0.0.0', port=5000)
+    #app.run(debug=True)
+    app.run(host='0.0.0.0', port=5000)
