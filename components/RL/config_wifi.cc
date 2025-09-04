@@ -88,7 +88,31 @@ static void wifi_apsta_event_handler(void *arg, esp_event_base_t event_base,
     }
 }
 
-void wifi_init(void) 
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// ---------------- WiFi ----------------
+void wifi_init_sta(void) {
+    ESP_LOGI(TAG, "Initializing WiFi...");
+    // NVS init
+
+    // WiFi init
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    esp_wifi_init(&cfg);
+    esp_wifi_set_mode(WIFI_MODE_STA);
+    wifi_config_t sta_config = {};
+    strcpy((char*)sta_config.sta.ssid, WIFI_SSID_STA);
+    strcpy((char*)sta_config.sta.password, WIFI_PASS_STA);
+    esp_wifi_set_config(WIFI_IF_STA, &sta_config);
+    esp_wifi_start();
+    esp_wifi_connect();
+    ESP_LOGI(TAG, "WiFi connecting...");
+}
+
+
+void wifi_init_ap(void) 
 {
     esp_netif_init();
     esp_event_loop_create_default();
@@ -122,10 +146,6 @@ void wifi_init(void)
     ESP_LOGI(TAG, "got ip:" IPSTR "\n", IP2STR(&ip_info.ip));
 }
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 
 void wifi_init_apsta(void) {
     s_wifi_event_group = xEventGroupCreate();
@@ -136,8 +156,9 @@ void wifi_init_apsta(void) {
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
     esp_netif_create_default_wifi_sta();
+    
     esp_netif_create_default_wifi_ap();
-
+ 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
@@ -166,6 +187,8 @@ void wifi_init_apsta(void) {
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));  // AP + STA 模式
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_config));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
+ 
+    
     ESP_ERROR_CHECK(esp_wifi_start());
 
     ESP_LOGI(TAG, "Wi-Fi AP+STA 初始化完成");

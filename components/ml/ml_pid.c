@@ -1523,11 +1523,11 @@ float pid_cal_vpd(float t, float rh)
 /// @return 
 pid_run_output_st pid_run_rule(pid_run_input_st* input)
 {
-		
+	extern pid_run_output_st nn_ppo_infer();	
     short	 dev_type= 0;
-static int init_flag = 0;
+	static int init_flag = 0;
  
-    static pid_run_output_st 		output;
+    static pid_run_output_st  output ;
 	//struct st_bp_pid_th_arg	pid_arg;
 	static unsigned int 	en_bit = 0;
 	//static unsigned int 	feed_idx = 0;
@@ -1630,8 +1630,10 @@ static int init_flag = 0;
 		bp_pid_th.v_feed    = ml_get_cur_vpd()/100.0;//input->env_value_cur[ENV_VPD]/10.0f;
 		bp_pid_th.v_outside = ml_get_outside_vpd()/100.0;//in_side_vpd;
 		ESP_LOGI(TAG,"t_feed %f ", bp_pid_th.t_feed); 
-        output=	bp_pid_th_proc( dev_type,input->dev_type); 
-	
+        pid_run_output_st output1=	bp_pid_th_proc( dev_type,input->dev_type); 
+	    pid_run_output_st output2= nn_ppo_infer() ;
+		for(int i=0;i<4;i++)
+			output.speed[i]=  output1.speed[i]+output2.speed[i];
     }
     return output;
 }

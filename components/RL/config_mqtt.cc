@@ -482,10 +482,11 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
     return;
 }
 
-
 #ifdef __cplusplus
 extern "C" {
 #endif  
+
+
 // ---------------- 启动 MQTT 客户端 ----------------
 void start_mqtt_client (void * pvParameters) { 
     // 构造唯一 client_id，例如：leaf_detector_1234s

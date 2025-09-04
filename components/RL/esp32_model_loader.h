@@ -6,17 +6,19 @@
 #include "esp_spiffs.h"
 #include "nn.h"  // 这里替换成你自己的神经网络实现
 
-class ESP32PPOModel {
+class ESP32EWCModel {
 private:
-    NN actor_network;   // 假設 NN 是你自定義的簡單神經網路類
-    NN critic_network;
+    int input_dim, hidden_dim, action_dim;
+    NN_EWC actor_network;   // 假設 NN 是你自定義的簡單神經網路類
+    NN_EWC critic_network;
 
     std::vector<float> old_actor_weights;
     std::vector<float> old_critic_weights;
 
 public:
-    ESP32PPOModel() {}
-
+    ESP32EWCModel() {}
+    ESP32EWCModel(int input_dim, int hidden_dim, int action_dim)
+        : input_dim(input_dim), hidden_dim(hidden_dim), action_dim(action_dim) {}
     // ==================== dequantize（8-bit -> float） ====================
     std::vector<float> dequantize(const uint8_t* data, size_t size, float min, float max) {
         std::vector<float> result(size);
@@ -25,12 +27,58 @@ public:
         }
         return result;
     }
+    void loadWeightsToNetwork(NN_EWC& network, const uint8_t* otaData, size_t size) {
+        size_t num_weights = size / sizeof(float);
+        const float* floatData = reinterpret_cast<const float*>(otaData);
+        std::vector<float> weights(floatData, floatData + num_weights);
+        network.loadWeights(weights);  // NN 类需要有 loadWeights 方法
+    }
+ 
 
-    // ==================== 從 OTA 數據加載模型 ====================
+    bool downloadModel(const char* url, const char* save_path) {
+        esp_http_client_config_t config = {};
+        config.url = url;
+        config.method = HTTP_METHOD_GET;
+
+        esp_http_client_handle_t client = esp_http_client_init(&config);
+        if (esp_http_client_perform(client) != ESP_OK) {
+            ESP_LOGE("OTA", "HTTP request failed");
+            esp_http_client_cleanup(client);
+            return false;
+        }
+
+        int content_length = esp_http_client_fetch_headers(client);
+        if (content_length <= 0) {
+            ESP_LOGE("OTA", "Invalid content length");
+            esp_http_client_cleanup(client);
+            return false;
+        }
+
+        FILE* f = fopen(save_path, "wb");
+        if (!f) {
+            ESP_LOGE("OTA", "Failed to open file for writing");
+            esp_http_client_cleanup(client);
+            return false;
+        }
+
+        char buffer[1024];
+        int read_len = 0;
+        while ((read_len = esp_http_client_read(client, buffer, sizeof(buffer))) > 0) {
+            fwrite(buffer, 1, read_len, f);
+        }
+        fclose(f);
+        esp_http_client_cleanup(client);
+        ESP_LOGI("OTA", "Download finished: %s", save_path);
+        return true;
+    }
+
+        // ==================== 從 OTA 數據加載模型 ====================
     bool loadModel(const uint8_t* otaData, size_t dataSize) {
         // TODO: 解析 OTA 包格式（可用 msgpack/自定義二進制）
-        loadWeightsToNetwork(actor_network, otaData);
-        loadWeightsToNetwork(critic_network, otaData);
+        //loadWeightsToNetwork(actor_network, otaData);
+        //loadWeightsToNetwork(critic_network, otaData);
+        loadWeightsToNetwork(actor_network, otaData, dataSize/2);
+        loadWeightsToNetwork(critic_network, otaData + dataSize/2, dataSize/2);
 
         // 保存快照，用於 EWC
         old_actor_weights = actor_network.weights;
