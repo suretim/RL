@@ -9,7 +9,7 @@
 #include "esp_netif.h"
 #include "esp_event.h"
 #include "esp_wifi.h"
-
+ 
 #include "ota_model_updater.h"
 #include "esp32_model_loader.h"
 #include "ml_pid.h"
@@ -19,11 +19,16 @@
 
 static const char *TAG = "OTA HVAC";
 // ======= WiFi 與 OTA 配置 ======= 
+#if 1
+const char* check_url = "http://192.168.68.237:5000/api/check-update/device001/1.0.0";
+const char* download_url = "http://192.168.68.237:5000/api/download-update";
+#define OTA_URL "http://192.168.68.237:5000/api/bin-update"
+#else
 const char* check_url = "http://192.168.0.57:5000/api/check-update/device001/1.0.0";
 const char* download_url = "http://192.168.0.57:5000/api/download-update";
+#define OTA_URL "http://192.168.68.237:5000/api/bin-update"
+#endif
 
-
-#define OTA_URL "http://192.168.1.100:5000/api/bin-update"
 #define LOCAL_MODEL_FILE "/spiffs/ppo_model.bin"
  
 #define WIFI_SSID "YourWiFiSSID"
@@ -323,9 +328,70 @@ void wait_for_network_connection() {
     ESP_LOGE(TAG, "Failed to get network connection within 20 seconds");
 }
 
+void debug_current_network_status() {
+    ESP_LOGI(TAG, "=== Current Network Status ===");
+    
+    // Check WiFi connection
+    wifi_ap_record_t ap_info;
+    if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+        ESP_LOGI(TAG, "WiFi: Connected to %s, RSSI: %d dBm", 
+                ap_info.ssid, ap_info.rssi);
+                
+    } else {
+        ESP_LOGI(TAG, "WiFi: Not connected to AP");
+    }
+    
+    // Check IP address
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA");
+    if (netif) {
+        esp_netif_ip_info_t ip_info;
+        if (esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
+            ESP_LOGI(TAG, "IP: " IPSTR, IP2STR(&ip_info.ip));
+            ESP_LOGI(TAG, "GW: " IPSTR, IP2STR(&ip_info.gw));
+        }
+    }
+    
+    ESP_LOGI(TAG, "got_ip flag: %d", got_ip);
+    ESP_LOGI(TAG, "=================================");
+}
+
+
+void print_network_info() {
+    // Check WiFi connection first
+    wifi_ap_record_t ap_info;
+    if (esp_wifi_sta_get_ap_info(&ap_info) != ESP_OK) {
+        ESP_LOGI(TAG, "Not connected to WiFi");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "Connected to: %s", ap_info.ssid);
+    ESP_LOGI(TAG, "RSSI: %d dBm", ap_info.rssi);
+    
+    // Get IP information
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA");
+    if (!netif) {
+        ESP_LOGE(TAG, "WiFi interface not found");
+        return;
+    }
+    
+    esp_netif_ip_info_t ip_info;
+    if (esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
+        if (ip_info.ip.addr == 0) {
+            ESP_LOGI(TAG, "No IP address assigned (DHCP in progress)");
+        } else {
+            ESP_LOGI(TAG, "IP Address: " IPSTR, IP2STR(&ip_info.ip));
+            ESP_LOGI(TAG, "Gateway: " IPSTR, IP2STR(&ip_info.gw));
+            ESP_LOGI(TAG, "Netmask: " IPSTR, IP2STR(&ip_info.netmask));
+        }
+    } else {
+        ESP_LOGE(TAG, "Failed to get IP information");
+    }
+}
 bool check_ota_update() {
     ESP_LOGI(TAG, "Starting OTA check...");
-    
+    register_network_events();
+    //debug_current_network_status();
+    print_network_info();
     // Method 1: Wait for IP event (most reliable)
     if (!wait_for_ip_event(15)) {
         ESP_LOGE(TAG, "No IP address, skipping OTA");
@@ -349,9 +415,6 @@ bool check_ota_update() {
     // Your OTA update code here
     // esp_err_t result = your_ota_function();
 }
-
-
-
 
 extern "C" void wifi_ota_ppo_package(void ) {
 

@@ -25,7 +25,7 @@
 #include "wifi.h"
 #include "tcpClient.h"
 #include "infer_esp32_lstm_lll.h"
-
+#include "plant_make.h"
 
 #define TAG "main      " // 10个字符
 
@@ -573,7 +573,9 @@ wifi_ota_ppo_package();
 	tcp_client_creat_task();
 	tcp_client_creat_rcv_task();
 	xTaskCreate(chgup_load_task, 	TASK_NAME_CHGUPLOAD, TASK_STACK_CHGUPLOAD, NULL, TASK_PRIO_CHGUPLOAD, NULL);
-	
+	 
+	 xTaskCreate(plant_env_make_task,TASK_NAME_COMMDECODE, TASK_STACK_COMMDECODE, NULL, TASK_PRIO_COMMDECODE, NULL);	// 通信数据解析
+
 	// xTaskCreate(comm_decode_task, 	TASK_NAME_COMMDECODE, TASK_STACK_COMMDECODE, NULL, TASK_PRIO_COMMDECODE, NULL);	// 通信数据解析
 	// xTaskCreate(cmd_decode_task, 	TASK_NAME_CMDDECODE, TASK_STACK_CMDDECODE, NULL, TASK_PRIO_CMDDECODE, NULL);	// 通信数据包解析
 
