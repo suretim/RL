@@ -9,8 +9,8 @@
 class ESP32EWCModel {
 private:
     int input_dim, hidden_dim, action_dim;
-    NN_EWC actor_network;   // 假設 NN 是你自定義的簡單神經網路類
-    NN_EWC critic_network;
+    NN actor_network;   // 假設 NN 是你自定義的簡單神經網路類
+    NN critic_network;
 
     std::vector<float> old_actor_weights;
     std::vector<float> old_critic_weights;
@@ -27,7 +27,7 @@ public:
         }
         return result;
     }
-    void loadWeightsToNetwork(NN_EWC& network, const uint8_t* otaData, size_t size) {
+    void loadWeightsToNetwork(NN& network, const uint8_t* otaData, size_t size) {
         size_t num_weights = size / sizeof(float);
         const float* floatData = reinterpret_cast<const float*>(otaData);
         std::vector<float> weights(floatData, floatData + num_weights);
@@ -107,11 +107,13 @@ public:
 
     // ==================== 推理 ====================
     std::vector<float> predict(const std::vector<float>& observation) {
-        return actor_network.forward(observation);
+        //return actor_network.forward(observation);
+        return actor_network.forwardActor(observation);
     }
 
     float predictValue(const std::vector<float>& observation) {
-        return critic_network.forward(observation)[0];
+        //return critic_network.forward(observation)[0];
+        return critic_network.forwardCritic( observation) ;
     }
 
     struct PPOOutput {

@@ -14,15 +14,12 @@
 #include "config_wifi.h"
 
 
-
-#define WIFI_SSID_AP       "ESP32-AP"
-#define WIFI_PASS_AP       "12345678"
  
  
 static EventGroupHandle_t wifi_event_group;
 static EventGroupHandle_t s_wifi_event_group;
 #define WIFI_CONNECTED_BIT BIT0
-
+bool got_ip = false;
 static const char *TAG = "wifi_config";
 
 // ---------------- 等待 WiFi 连接 ----------------
@@ -41,23 +38,27 @@ void wait_for_wifi_connection() {
 }
 
 
-static void wifi_event_handler(void* arg, esp_event_base_t base, int32_t id, void* data) {
+static void wifi_ap_event_handler(void* arg, esp_event_base_t base, int32_t id, void* data) {
     if (id == WIFI_EVENT_AP_START) ESP_LOGI(TAG, "AP启动成功");
     else if (id == WIFI_EVENT_AP_STACONNECTED) ESP_LOGI(TAG, "设备接入");
     else if (id == WIFI_EVENT_AP_STADISCONNECTED) ESP_LOGI(TAG, "设备断开");
 }
 
+ 
 // ---------------- Wi-Fi 事件回调 ----------------
   void wifi_sta_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        ESP_LOGW(TAG, "Disconnected. Retrying...");
+        ESP_LOGW(TAG, "STA Disconnected. Retrying...");
+        vTaskDelay(50000 / portTICK_PERIOD_MS);
+        got_ip = false;
         esp_wifi_connect();
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
-        ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
+        ESP_LOGI(TAG, "STA Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
         xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
+        got_ip = true;
     }
 }
 // Wi-Fi事件处理器
@@ -66,19 +67,21 @@ static void wifi_apsta_event_handler(void *arg, esp_event_base_t event_base,
     if (event_base == WIFI_EVENT) {
         switch (event_id) {
             case WIFI_EVENT_STA_START:
+                ESP_LOGI(TAG, "APSTA WIFI_EVENT_STA_START ");
                 esp_wifi_connect();
                 break;
             case WIFI_EVENT_STA_DISCONNECTED:
-                ESP_LOGI(TAG, "STA Disconnected, retrying...");
+                //ESP_LOGI(TAG, "APSTA Disconnected, retrying...");
                 //vTaskSuspend(tensor_task_handle );
+                vTaskDelay(5000 / portTICK_PERIOD_MS);
                 esp_wifi_connect();
                 break;
             case WIFI_EVENT_AP_STACONNECTED:
-                ESP_LOGI(TAG, "Device connected to AP");
+                ESP_LOGI(TAG, "APSTA Device connected to AP");
                
                 break;
             case WIFI_EVENT_AP_STADISCONNECTED:
-                ESP_LOGI(TAG, "Device disconnected from AP");
+                ESP_LOGI(TAG, "APSTA Device disconnected from AP");
                 break;
         }
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
@@ -88,6 +91,7 @@ static void wifi_apsta_event_handler(void *arg, esp_event_base_t event_base,
     }
 }
 
+ 
 
 #ifdef __cplusplus
 extern "C" {
@@ -96,28 +100,31 @@ extern "C" {
 // ---------------- WiFi ----------------
 void wifi_init_sta(void) {
     ESP_LOGI(TAG, "Initializing WiFi...");
-    // NVS init
-
+    got_ip = false;
+    
     // WiFi init
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     esp_wifi_init(&cfg);
     esp_wifi_set_mode(WIFI_MODE_STA);
+    esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_sta_event_handler, NULL);
+    esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_sta_event_handler, NULL);
     wifi_config_t sta_config = {};
     strcpy((char*)sta_config.sta.ssid, WIFI_SSID_STA);
     strcpy((char*)sta_config.sta.password, WIFI_PASS_STA);
     esp_wifi_set_config(WIFI_IF_STA, &sta_config);
+    esp_wifi_set_max_tx_power(80);  // 设置最大发射功率（单位0.25dBm）
     esp_wifi_start();
     esp_wifi_connect();
+
     ESP_LOGI(TAG, "WiFi connecting...");
 }
 
 
 void wifi_init_ap(void) 
 {
-    esp_netif_init();
-    esp_event_loop_create_default();
+    //esp_netif_init();
+    //esp_event_loop_create_default();
 
-    esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL);
     esp_netif_create_default_wifi_ap();
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -129,7 +136,8 @@ void wifi_init_ap(void)
     ap_config.ap.max_connection = 4;
     ap_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
 
-   
+    esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_ap_event_handler, NULL);
+
     esp_wifi_set_mode(WIFI_MODE_AP);
     esp_wifi_set_config(WIFI_IF_AP, &ap_config);
     
@@ -150,10 +158,7 @@ void wifi_init_ap(void)
 void wifi_init_apsta(void) {
     s_wifi_event_group = xEventGroupCreate();
 
-    // 初始化NVS（必须）
-    ESP_ERROR_CHECK(nvs_flash_init());
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
+   
 
     esp_netif_create_default_wifi_sta();
     
@@ -170,6 +175,7 @@ void wifi_init_apsta(void) {
     strcpy((char *)sta_config.sta.ssid, WIFI_SSID_STA); 
         strcpy((char *)sta_config.sta.password, WIFI_PASS_STA); 
     sta_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+
  
   
     wifi_config_t ap_config= {};
@@ -191,7 +197,7 @@ void wifi_init_apsta(void) {
     
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    ESP_LOGI(TAG, "Wi-Fi AP+STA 初始化完成");
+    ESP_LOGI(TAG, "Wi-Fi AP+STA Initialized Sucessfully");
     
     // 等待连接路由器成功
     EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
@@ -200,9 +206,9 @@ void wifi_init_apsta(void) {
                                            pdFALSE,
                                            portMAX_DELAY);
     if (bits & WIFI_CONNECTED_BIT) {
-        ESP_LOGI(TAG, "连接路由器成功！");
+        ESP_LOGI(TAG, "Router Connected Sucessfully");
     } else {
-        ESP_LOGE(TAG, "连接失败！");
+        ESP_LOGE(TAG, "Router Connection Failed");
     }
     
 }

@@ -11,6 +11,8 @@ components/*
 <<<<<<< HEAD
 !components/RL/
 !components/RL/**
+!components/plant_env/
+!components/plant_env/**
 !components/ml/ml_pid.c
 !components/ml/ml_pid.h
 !components/ml/ml_rule.c

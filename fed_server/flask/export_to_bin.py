@@ -19,7 +19,7 @@ actor_out = tf.keras.layers.Dense(action_dim)(x)
 critic_out = tf.keras.layers.Dense(1)(x)
 
 model = tf.keras.Model(inputs=inputs, outputs=[actor_out, critic_out])
-
+model.summary()
 # 假设这里载入训练好的权重
 # model.load_weights("ppo_model.h5")
 

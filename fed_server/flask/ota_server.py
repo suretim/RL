@@ -1,8 +1,42 @@
 import hashlib
 import os
-from flask import Flask, jsonify, send_file
-
+from flask import Flask, jsonify, send_file, request
+from flask_cors import CORS
+import numpy as np
 app = Flask(__name__)
+
+#set FLASK_APP=D:\RL\RL\fed_server\flask\ota_server.py
+#set FLASK_ENV=development
+#flask run --host=192.168.0.57 --port=5000
+
+
+CORS(app)
+
+# 模拟全局序列数据 (seq_len=20, n_features=3)
+GLOBAL_SEQ = np.random.rand(100, 20, 3).tolist()  # 100 个样本
+
+# 当前分发索引
+current_idx = 0
+
+@app.route('/seq_input', methods=['GET'])
+def get_seq_input():
+    global current_idx
+    t = request.args.get('t', default=0, type=int)
+
+    # 循环分发
+    sample = GLOBAL_SEQ[current_idx % len(GLOBAL_SEQ)]
+    current_idx += 1
+
+    return jsonify(sample)
+
+@app.route('/upload', methods=['POST'])
+def upload_client_data():
+    data = request.json
+    # data 可以包含 client_id, features, labels, model_params 等
+    print("Received from client:", data.keys())
+    return jsonify({'status':'ok'})
+
+
 
 class OTAServer:
     def __init__(self, ota_package_path, latest_version="1.0.0"):
@@ -35,7 +69,7 @@ def check_update(device_id, current_version):
 
 @app.route('/api/download-update')
 def download_update():
-    return send_file(ota_handler.ota_package_path, as_attachment=True)
+    return send_file("esp32_ota_package.json", as_attachment=True)
 
 
 @app.route("/api/bin-update")

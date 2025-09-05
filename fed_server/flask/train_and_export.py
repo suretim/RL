@@ -32,7 +32,7 @@ def train_and_export():
 
 
 # 假设的基类
-class LifelongPPOAgent(LifelongPPOBaseAgent):
+class xLifelongPPOAgent(LifelongPPOBaseAgent):
     def __init__(self, state_dim=5, action_dim=4):
         super().__init__( state_dim=5, action_dim=4)
         self.state_dim = state_dim
@@ -87,7 +87,7 @@ class LifelongPPOAgent(LifelongPPOBaseAgent):
         print(f"Saved model weights to {path}.weights.h5")
 
 
-class TensorFlowESP32BaseExporter:
+class xTensorFlowESP32BaseExporter:
     def __init__(self, policy_model=None):
         self.model = policy_model
         self.converter = None

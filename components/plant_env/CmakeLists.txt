@@ -1,18 +1,25 @@
  
 set(APPLICATION_SRCS
-    "plant_make.cc"
-    "PlantHVACEnv.cc" 
+    "hvac_env/plant_make.cc"
+    "hvac_env/PlantHVACEnv.cc" 
+    "hvac_env/PrototypeClassifierSimple.cc"
+    "hvac_env/HVACEncoder.cc"
+    "fl_client/fl_client.cc"
 )
 
-# 主组件注册
+# 主组件注册 nanopb_generator classifier_params.proto
 idf_component_register(
     SRCS 
         "${APPLICATION_SRCS}"
 
     INCLUDE_DIRS 
         "."  
+        "hvac_env"
+        "fl_client"
  
- 
+    REQUIRES
+        "esp_http_client"
+        "json"
 )
 
 # C++ 特定设置

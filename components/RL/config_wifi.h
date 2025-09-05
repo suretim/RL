@@ -2,10 +2,15 @@
 
 //#include "esp_event.h"
 
-#if 0
+#if 1
   #define MQTT_BROKER_URI "mqtt://192.168.0.57:1883"   
   #define WIFI_SSID_STA      "1573"
   #define WIFI_PASS_STA      "987654321"
+  //#define WIFI_SSID_STA       "ESP32-AP"
+  //#define WIFI_PASS_STA       "12345678"
+  #define WIFI_SSID_AP       "ESP32-AP"
+  #define WIFI_PASS_AP       "12345678"
+
 #else
   #define MQTT_BROKER_URI "mqtt://192.168.68.237:1883"     
   #define WIFI_SSID_STA      "JD803"

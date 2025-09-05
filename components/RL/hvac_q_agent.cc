@@ -9,6 +9,7 @@
 #include "esp_netif.h"
 #include "esp_event.h"
 #include "esp_wifi.h"
+#include "esp_http_client.h"
  
 #include "ota_model_updater.h"
 #include "esp32_model_loader.h"
@@ -19,22 +20,18 @@
 
 static const char *TAG = "OTA HVAC";
 // ======= WiFi 與 OTA 配置 ======= 
-#if 1
-const char* check_url = "http://192.168.68.237:5000/api/check-update/device001/1.0.0";
-const char* download_url = "http://192.168.68.237:5000/api/download-update";
-#define OTA_URL "http://192.168.68.237:5000/api/bin-update"
+#if 0
+    const char* check_url = "http://192.168.68.237:5000/api/check-update/device001/1.0.0";
+    const char* download_url = "http://192.168.68.237:5000/api/download-update";
+    #define OTA_URL "http://192.168.68.237:5000/api/bin-update"
 #else
-const char* check_url = "http://192.168.0.57:5000/api/check-update/device001/1.0.0";
-const char* download_url = "http://192.168.0.57:5000/api/download-update";
-#define OTA_URL "http://192.168.68.237:5000/api/bin-update"
+    const char* check_url = "http://192.168.0.57:5000/api/check-update/device001/1.0.0";
+    const char* download_url = "http://192.168.0.57:5000/api/download-update";
+    #define OTA_URL "http://192.168.0.57:5000/api/bin-update"
 #endif
-
+const char* model_path = "/spiffs/ppo_model.bin";
 #define LOCAL_MODEL_FILE "/spiffs/ppo_model.bin"
- 
-#define WIFI_SSID "YourWiFiSSID"
-#define WIFI_PASS "YourWiFiPassword"
- 
- #include "esp_http_client.h"
+  
 
 static FILE *f_model = NULL;
   
@@ -42,6 +39,7 @@ static FILE *f_model = NULL;
 // 权重向量示例
 std::vector<float> W1, W2, b1, b2, Vw;
 float Vb = 0.0f;
+extern std::vector<float> health_result;
 
 void parse_model_weights(uint8_t *buffer, size_t size) {
     // TODO: 解析 buffer 填充 W1, W2, b1, b2, Vw, Vb
@@ -97,8 +95,9 @@ esp_err_t _http_event_handler0(esp_http_client_event_t *evt) {
 ModelOTAUpdater otaUpdater(check_url, download_url, "/spiffs/model.tflite");
 
 // ======= PPO 模型 =======
-ESP32EWCModel ppoModel;
-  
+ESP32EWCModel ewcppoModel;
+
+
 // ======= 初始化 SPIFFS =======
 extern "C" void init_spiffs(void) {
     esp_vfs_spiffs_conf_t conf = {
@@ -122,14 +121,10 @@ extern "C" void init_spiffs(void) {
         ESP_LOGI(TAG, "SPIFFS total: %d, used: %d", total, used);
     }
 }
-#if 0 
- // ======= 主任務 =======
-//extern "C" void app_main(void) {
+ 
+  
 extern "C" void hvac_agent(void) {
-    //ESP_ERROR_CHECK(nvs_flash_init());
-    //init_spiffs();
-    //wifi_init_sta();
-
+     
     vTaskDelay(pdMS_TO_TICKS(5000)); // 等 WiFi 連線
 
     // ======= OTA 更新模型 =======otaUpdater.downloadModel()
@@ -140,38 +135,62 @@ extern "C" void hvac_agent(void) {
     }
 
     // ======= 從 SPIFFS 加載模型 =======
-    if (ppoModel.loadModelFromSPIFFS("/spiffs/model.tflite")) {
+    if (ewcppoModel.loadModelFromSPIFFS("/spiffs/model.tflite")) {
         ESP_LOGI(TAG, "Model loaded successfully");
     } else {
         ESP_LOGE(TAG, "Failed to load model");
+    } 
+    std::vector<float> observation(5, 0.0f); // 5维状态
+    // 填充实际数据
+    observation[0] = bp_pid_th.t_feed;
+    observation[1] = bp_pid_th.h_feed;
+    observation[2] = bp_pid_th.l_feed;
+    observation[3] = bp_pid_th.c_feed;
+    observation[4] = 0;
+    // ======= 推理 =======
+    std::vector<float> action_probs = ewcppoModel.predict(observation);
+    //std::vector<float> value = ewcppoModel.predictValue(observation);
+    float value = ewcppoModel.predictValue(observation); 
+    // 假设优势函数 = Q(s, a) - V(s)，我们计算优势。
+    std::vector<float> advantages(action_probs.size(), 0.0f);
+    for (size_t i = 0; i < action_probs.size(); ++i) {
+        advantages[i] = action_probs[i] - value ;  // 这里是一个简单的示例，按需调整
     }
 
-    while (1) {
-        //read_all_sensor();
-         
-        std::vector<float> observation(5, 0.0f); // 5维状态
-        // 填充实际数据
-        observation[0] = bp_pid_th.t_feed;
-        observation[1] = bp_pid_th.h_feed;
-        observation[2] = bp_pid_th.l_feed;
-        observation[3] = bp_pid_th.c_feed;
-        observation[4] = 0;
-        // ======= 推理 =======
-        std::vector<float> action_probs = ppoModel.predict(observation);
-        printf("Action probs: ");
-        for (auto v : action_probs) printf("%.3f ", v);
-        printf("\n");
+    printf("Action probs: ");
+    for (auto v : action_probs) printf("%.3f ", v);
+    printf("\n");
 
-        // ======= 持續學習 (EWC) =======
-        std::vector<float> newExperience = observation; // 假設新經驗就是觀測值
-        ppoModel.continualLearningEWC(newExperience);
+    // ======= 持续学习 (EWC) =======
+    std::vector<float> newExperience = observation;  // 假设新经验就是当前观测值
 
-        vTaskDelay(pdMS_TO_TICKS(5000)); // 每 5 秒推理一次
+    static PPOModel ppoModel;  // 只初始化一次，之后重复使用
+    std::vector<float> old_probs = action_probs;  // 示例的旧概率
+
+     
+    // 更新旧动作概率
+    static std::vector<float> old_action_probs = {0.0f, 0.0f, 0.0f};  
+
+    std::vector<float> grads;
+    ppoModel.calculateLossAndGradients(newExperience, old_probs, advantages, health_result, old_action_probs, grads);
+
+
+    ewcppoModel.continualLearningEWC(grads);
+
+    vTaskDelay(pdMS_TO_TICKS(5000)); // 每 5 秒推理一次
+    // 更新旧动作概率以供下一轮使用
+    old_action_probs = action_probs;
+
+    // 可选：打印梯度
+    ESP_LOGI(TAG, "Gradients: ");
+    for (auto& grad : grads) {
+        printf("%.3f ", grad);
     }
+    printf("\n"); 
+ 
+ 
 }
-
-#endif
-
+ 
 
 esp_err_t _http_event_handler(esp_http_client_event_t *evt) {
     switch (evt->event_id) {
@@ -236,206 +255,19 @@ static void download_model_task(void *param) {
 
     vTaskDelete(NULL);
 }
-
-void download_model(void) {
-    // 独立任务下载模型，避免占用控制/推理循环的内部 RAM
-    xTaskCreatePinnedToCore(
+   
+ 
+extern "C" void wifi_ota_ppo_package(void ) {
+ 
+        xTaskCreatePinnedToCore(
         download_model_task,
         "download_model_task",
         8 * 1024,       // 栈大小，可根据实际增加
         NULL,
         tskIDLE_PRIORITY + 1,
         NULL,
-        1);             // 建议放到 Core1，避免和 Wi-Fi 核抢栈
-}
-
-
-bool is_network_connected() {
-    // Check if WiFi is connected to AP
-    wifi_ap_record_t ap_info;
-    if (esp_wifi_sta_get_ap_info(&ap_info) != ESP_OK) {
-        return false; // Not connected to any AP
-    }
-    
-    // Check if we have an IP address
-    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA");
-    if (!netif) {
-        return false;
-    }
-    
-    esp_netif_ip_info_t ip_info;
-    if (esp_netif_get_ip_info(netif, &ip_info) != ESP_OK) {
-        return false;
-    }
-    
-    // Check if we have a valid IP (not 0.0.0.0)
-    return (ip_info.ip.addr != 0);
-}
-
-static bool got_ip = false;
-
-static void wifi_event_handler(void* arg, esp_event_base_t event_base,
-                             int32_t event_id, void* event_data)
-{
-    if (event_id == WIFI_EVENT_STA_START) {
-        esp_wifi_connect();
-    } else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        got_ip = false;
-        ESP_LOGI(TAG, "WiFi disconnected, reconnecting...");
-        vTaskDelay(pdMS_TO_TICKS(2000));
-        esp_wifi_connect();
-    } else if (event_id == IP_EVENT_STA_GOT_IP) {
-        ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
-        ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
-        got_ip = true;
-    }
-}
-
-void register_network_events() {
-    got_ip = false;
-    esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL);
-    esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL);
-}
-
-bool wait_for_ip_event(int timeout_seconds) {
-    ESP_LOGI(TAG, "Waiting for IP event...");
-    
-    for (int i = 0; i < timeout_seconds; i++) {
-        if (got_ip) {
-            ESP_LOGI(TAG, "IP event received!");
-            return true;
-        }
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
-    
-    ESP_LOGE(TAG, "No IP event within %d seconds", timeout_seconds);
-    return false;
-}
-
-
-void wait_for_network_connection() {
-    ESP_LOGI(TAG, "Waiting for network connection...");
-    
-    for (int i = 0; i < 20; i++) { // Wait up to 20 seconds
-        if (is_network_connected()) {
-            ESP_LOGI(TAG, "Network fully connected with IP!");
-            return;
-        }
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        ESP_LOGD(TAG, "Waiting for network... (%d/20)", i + 1);
-    }
-    
-    ESP_LOGE(TAG, "Failed to get network connection within 20 seconds");
-}
-
-void debug_current_network_status() {
-    ESP_LOGI(TAG, "=== Current Network Status ===");
-    
-    // Check WiFi connection
-    wifi_ap_record_t ap_info;
-    if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
-        ESP_LOGI(TAG, "WiFi: Connected to %s, RSSI: %d dBm", 
-                ap_info.ssid, ap_info.rssi);
-                
-    } else {
-        ESP_LOGI(TAG, "WiFi: Not connected to AP");
-    }
-    
-    // Check IP address
-    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA");
-    if (netif) {
-        esp_netif_ip_info_t ip_info;
-        if (esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
-            ESP_LOGI(TAG, "IP: " IPSTR, IP2STR(&ip_info.ip));
-            ESP_LOGI(TAG, "GW: " IPSTR, IP2STR(&ip_info.gw));
-        }
-    }
-    
-    ESP_LOGI(TAG, "got_ip flag: %d", got_ip);
-    ESP_LOGI(TAG, "=================================");
-}
-
-
-void print_network_info() {
-    // Check WiFi connection first
-    wifi_ap_record_t ap_info;
-    if (esp_wifi_sta_get_ap_info(&ap_info) != ESP_OK) {
-        ESP_LOGI(TAG, "Not connected to WiFi");
-        return;
-    }
-    
-    ESP_LOGI(TAG, "Connected to: %s", ap_info.ssid);
-    ESP_LOGI(TAG, "RSSI: %d dBm", ap_info.rssi);
-    
-    // Get IP information
-    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA");
-    if (!netif) {
-        ESP_LOGE(TAG, "WiFi interface not found");
-        return;
-    }
-    
-    esp_netif_ip_info_t ip_info;
-    if (esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
-        if (ip_info.ip.addr == 0) {
-            ESP_LOGI(TAG, "No IP address assigned (DHCP in progress)");
-        } else {
-            ESP_LOGI(TAG, "IP Address: " IPSTR, IP2STR(&ip_info.ip));
-            ESP_LOGI(TAG, "Gateway: " IPSTR, IP2STR(&ip_info.gw));
-            ESP_LOGI(TAG, "Netmask: " IPSTR, IP2STR(&ip_info.netmask));
-        }
-    } else {
-        ESP_LOGE(TAG, "Failed to get IP information");
-    }
-}
-bool check_ota_update() {
-    ESP_LOGI(TAG, "Starting OTA check...");
-    register_network_events();
-    //debug_current_network_status();
-    print_network_info();
-    // Method 1: Wait for IP event (most reliable)
-    if (!wait_for_ip_event(15)) {
-        ESP_LOGE(TAG, "No IP address, skipping OTA");
-        vTaskDelay(5000 / portTICK_PERIOD_MS);
-        return false;
-    }
-    
-    // Method 2: Or use the polling approach
-    // wait_for_network_connection();
-    
-    if (!is_network_connected()) {
-        ESP_LOGE(TAG, "Network not connected after waiting, skipping OTA");
-        vTaskDelay(5000 / portTICK_PERIOD_MS);
-        return false;
-    }
-    
-    ESP_LOGI(TAG, "Network fully connected, attempting OTA update..."); 
-
-        download_model();
-        return true;
-    // Your OTA update code here
-    // esp_err_t result = your_ota_function();
-}
-
-extern "C" void wifi_ota_ppo_package(void ) {
-
-    //const char* model_url = "http://127.0.0.1:5000/api/download-update";
-    ///const char* bin_url = "http://192.168.0.57:5000/api/bin-update/device001/0.0.0";
-    const char* bin_url = "http://192.168.0.57:5000/api/bin-update";
-      
-    const char* model_path = "/spiffs/ppo_model.bin";
-    static int model_version = 0;
-    vTaskDelay(1000 / portTICK_PERIOD_MS); // 等待 WiFi 连接
-    
-    while(1)
-    {
-       
-         if(check_ota_update()==true) {
-             break;
-         }
-        
-    }
-        model_version=1;  
-    return;
+        0);   
+    return   ;
 }
 extern "C" pid_run_output_st nn_ppo_infer() {
 
@@ -461,10 +293,13 @@ extern "C" pid_run_output_st nn_ppo_infer() {
     std::vector<float> state = { bp_pid_th.t_feed, bp_pid_th.h_feed, bp_pid_th.l_feed, bp_pid_th.c_feed, 1.0};
     auto action_probs = ppoNN.forwardActor(state);
     float value = ppoNN.forwardCritic(state);
-    output_speed.speed[0] = action_probs[0]>0.5?1:0;
-    output_speed.speed[1] = action_probs[1]>0.5?1:0;
-    output_speed.speed[2] = action_probs[2]>0.5?1:0;
-    output_speed.speed[3] = action_probs[3]>0.5?1:0;
+    if(value>0.5)
+    {
+        output_speed.speed[0] = action_probs[0]>0.5?1:0;
+        output_speed.speed[1] = action_probs[1]>0.5?1:0;
+        output_speed.speed[2] = action_probs[2]>0.5?1:0;
+        output_speed.speed[3] = action_probs[3]>0.5?1:0;
+    }
     printf("Action probs: ");
     for (auto p : action_probs) printf("%.3f ", p);
     printf("\nCritic value: %.3f\n", value);

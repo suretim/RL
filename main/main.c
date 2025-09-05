@@ -512,6 +512,28 @@ void main_task(void *pvParameters)
 
 	vTaskDelete(NULL);
 }
+ 
+
+
+void plant_env_make_task(void *pvParameters)
+{
+
+	vTaskDelay(3000 / portTICK_PERIOD_MS);
+	wifi_ota_ppo_package();
+          
+	while(1)
+	{
+	       
+        
+	
+		if(plant_env_step() ==0){
+			vTaskDelay(pdMS_TO_TICKS(1000));
+			break;
+		}
+		vTaskDelay(pdMS_TO_TICKS(10000));
+	}
+	
+}
 
 /*
 ****************************************************************************************************
@@ -535,8 +557,10 @@ void app_main(void)
 		ESP_ERROR_CHECK(nvs_flash_erase());
 		ret = nvs_flash_init();
 	}
-	ESP_ERROR_CHECK(ret);
-
+	ESP_ERROR_CHECK(ret); 
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+	 
 	//--------------------------------------------------------------
 	// const esp_partition_t *configured = esp_ota_get_boot_partition();
 	// const esp_partition_t *running = esp_ota_get_running_partition();
@@ -549,30 +573,28 @@ void app_main(void)
 	// ESP_LOGI(TAG, "Running partition type %d subtype %d (offset 0x%08x)\n", running->type, running->subtype, running->address);
 
       
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
     init_spiffs();
 
 	//--------------------------------------------------------------
     ble_creat_event();
     //wifi_creat_event();
-	//wifi_init_apsta();  
-	wifi_init_sta();
+	wifi_init_apsta();  
+	//wifi_init_sta();
     updata_creat_event();
  	main_creat_objs();
-    tcp_client_creat_objs();
-wifi_ota_ppo_package();
-	comm_creat_objs();
+//tcp_client_creat_objs();
+
+//comm_creat_objs();
     //////////////////
 	// xTaskCreate(ble_task, 			TASK_NAME_BLE, 		TASK_STACK_BLE, 	NULL, TASK_PRIO_BLE, 	NULL);
 	//xTaskCreate(wifi_task, 			TASK_NAME_WIFI, 	TASK_STACK_WIFI, 	NULL, TASK_PRIO_WIFI, 	NULL);
-	xTaskCreate(updata_task,		TASK_NAME_UPDATA,	TASK_STACK_UPDATA, 	NULL, TASK_PRIO_UPDATA, NULL);
-	xTaskCreate(main_task, 			TASK_NAME_MAIN, 	TASK_STACK_MAIN, 	NULL, TASK_PRIO_MAIN, 	NULL);
+//xTaskCreate(updata_task,		TASK_NAME_UPDATA,	TASK_STACK_UPDATA, 	NULL, TASK_PRIO_UPDATA, NULL);
+//xTaskCreate(main_task, 			TASK_NAME_MAIN, 	TASK_STACK_MAIN, 	NULL, TASK_PRIO_MAIN, 	NULL);
 	// xTaskCreate(main_monitor_task, 	TASK_NAME_MOMITOR, 	TASK_STACK_MOMITOR, NULL, TASK_PRIO_MOMITOR, NULL);
 
-	tcp_client_creat_task();
-	tcp_client_creat_rcv_task();
-	xTaskCreate(chgup_load_task, 	TASK_NAME_CHGUPLOAD, TASK_STACK_CHGUPLOAD, NULL, TASK_PRIO_CHGUPLOAD, NULL);
+//tcp_client_creat_task();
+//tcp_client_creat_rcv_task();
+//xTaskCreate(chgup_load_task, 	TASK_NAME_CHGUPLOAD, TASK_STACK_CHGUPLOAD, NULL, TASK_PRIO_CHGUPLOAD, NULL);
 	 
 	 xTaskCreate(plant_env_make_task,TASK_NAME_COMMDECODE, TASK_STACK_COMMDECODE, NULL, TASK_PRIO_COMMDECODE, NULL);	// 通信数据解析
 
