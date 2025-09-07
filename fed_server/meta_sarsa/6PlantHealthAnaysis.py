@@ -102,7 +102,7 @@ class Plant_Health_Analysis:
         # 训练
         qmodel.sarsa_full_batch_robust(encoder, seq_len=SEQ_LEN, step_size=1)
         #save_sarsa_tflite(qmodel.q_net)
-        from util_plant_env import PlantGrowthEnv
+        from fed_server.meta_sarsa.util_train_plant_env import PlantGrowthEnv
         env = PlantGrowthEnv()
         hyperparameter_tuning(qmodel,encoder, env)
         """訓練方法"""

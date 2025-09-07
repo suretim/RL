@@ -7,6 +7,9 @@ import tensorflow as tf
 input_dim = 5
 hidden_dim = 32
 action_dim = 4
+from util_hvac_PPO import TensorFlowESP32Exporter
+
+
 
 # 假设你已经有 Keras 模型 (Actor & Critic 共用 encoder)
 inputs = tf.keras.Input(shape=(input_dim,))

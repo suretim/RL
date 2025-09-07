@@ -150,7 +150,7 @@ if __name__ == '__main__':
     print("Dtype:", features.dtype)
     '''
     # 使用示例
-    data_loader = loader(data_dir="..\..\..\..\data", device_id="client_001")
+    data_loader = loader(data_dir="..\..\..\data", device_id="client_001")
     pipeline = LeamPipeline(data_loader=data_loader)
     devices = pipeline.get_available_devices()
     federated_data = pipeline.get_federated_dataset(devices=devices, samples_per_device=500)

@@ -2,8 +2,14 @@
 import tensorflow as tf
 import numpy as np
 
+from util_hvac_PPO import TensorFlowESP32BaseExporter
 
-def create_representative_dataset_from_generator(model, env, num_samples=100):
+def create_representative_dataset_from_ESP32BaseExporter(policy, env, num_samples=1000):
+    """从生成器创建代表性数据集"""
+    exporter = TensorFlowESP32BaseExporter(policy)
+    return exporter.create_representative_dataset(env, num_samples)
+
+def create_representative_dataset_from_modelpredict(model, env, num_samples=100):
     """
     从环境生成器创建代表性数据集
     """

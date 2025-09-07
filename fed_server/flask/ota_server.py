@@ -82,6 +82,10 @@ def bin_update():
         return send_file(ota_handler.ota_package_path, as_attachment=True)
         #return jsonify({"message": "No update available"}), 404
 
+# 提供 OTA JSON
+@app.route("/esp32_ota_package.json")
+def serve_ota_package():
+    return send_file("esp32_ota_package.json", mimetype="application/json")
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)

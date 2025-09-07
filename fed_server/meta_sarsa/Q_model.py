@@ -1007,7 +1007,7 @@ def main():
     #detailed_results = test_rollout_detailed(qmodel, encoder, steps=30, save_path="detailed_rollout_results.csv")
     # 或者单独运行某些调试功能
     #debugger = RL_Debugger()
-    from util_plant_env import PlantGrowthEnv
+    from fed_server.meta_sarsa.util_train_plant_env import PlantGrowthEnv
     env=PlantGrowthEnv()
     hyperparameter_tuning(qmodel,   env )
     #run_comprehensive_debug(qmodel, qmodel.encoder, env, files)

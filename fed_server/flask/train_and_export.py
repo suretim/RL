@@ -2,7 +2,8 @@ import tensorflow as tf
 import numpy as np
 import json
 import os
-from util_hvac_PPO import *
+from tf_utils import create_representative_dataset_from_ESP32BaseExporter
+from util_hvac_PPO import LifelongPPOAgent,LifelongPPOBaseAgent,TensorFlowESP32BaseExporter
 
 
 def train_and_export():
@@ -17,7 +18,7 @@ def train_and_export():
     exporter = TensorFlowESP32BaseExporter(agent.policy)
 
     # 4. 生成代表性数据
-    representative_data = create_representative_dataset_from_generator(
+    representative_data = create_representative_dataset_from_ESP32BaseExporter(
         agent.policy, agent.env, num_samples=1000
     )
 
@@ -31,6 +32,7 @@ def train_and_export():
     )
 
 
+# HEAD
 # 假设的基类
 class xLifelongPPOAgent(LifelongPPOBaseAgent):
     def __init__(self, state_dim=5, action_dim=4):
@@ -170,6 +172,7 @@ def create_representative_dataset_from_generator(policy, env, num_samples=1000):
     exporter = TensorFlowESP32BaseExporter(policy)
     return exporter.create_representative_dataset(env, num_samples)
 
+# cc62673 (flak and esp32 v.1.4)
 
 # 使用示例
 if __name__ == "__main__":

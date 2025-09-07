@@ -1,3 +1,4 @@
+url = "http://192.168.68.237:5000"
 
 NUM_FILES = 100
 SEQ_LEN = 10
