@@ -1,10 +1,17 @@
 import tensorflow as tf
 from tensorflow.keras import layers, Model
 import numpy as np
+import json
+import tensorflow_probability as tfd
 
-
+import datetime
 from collections import deque
 import os
+import tensorflow_model_optimization as tfmot
+import zlib
+import base64
+import gym
+from gym import spaces
 
 from typing import Union
 from typing import Dict
@@ -23,7 +30,7 @@ class LifelongPPOBaseAgent:
         self.value_coef = value_coef
         self.entropy_coef = entropy_coef
         self.ewc_lambda = ewc_lambda  # EWC正则化强度
-
+        self.env=PlantHVACEnv()
         # 构建网络
         self.actor = self._build_actor()
         self.critic = self._build_critic()
@@ -56,10 +63,23 @@ class LifelongPPOBaseAgent:
         action = tf.cast(probs > 0.5, tf.float32)  # 二值化动作
         return action.numpy()[0], probs.numpy()[0]
 
-    def get_action(self, state):
+    def get_action(self, state,return_probs=False):
         """Get action for environment interaction (same as select_action)"""
+
         action, probs = self.select_action(state)
-        return action
+        if return_probs:
+            return action,probs
+        else:
+            return action
+
+    def get_value(self, state):
+        state_tensor = np.expand_dims(state, axis=0)  # (1, state_dim)
+        value = self.critic(state_tensor).numpy()[0, 0]
+        return value
+
+    def _count_params(self, model):
+        """計算模型參數數量"""
+        return sum([tf.keras.backend.count_params(w) for w in model.trainable_weights])
 
     def _compute_ewc_loss(self):
         """ EWC(Elastic Weight Consolidation)Regulation Loss"""
@@ -193,6 +213,102 @@ class LifelongPPOBaseAgent:
         return total_loss
 
     def train_step(self, states, actions, advantages, old_probs, returns, use_ewc=True):
+        """
+        增强的训练步骤，兼容 one-hot actions 和单输出 critic
+        states: [batch_size, state_dim]
+        actions: [batch_size, action_dim] one-hot
+        advantages: [batch_size] 或 [batch_size, action_dim]
+        old_probs: [batch_size, action_dim]
+        returns: [batch_size]
+        """
+        with tf.GradientTape() as tape:
+            # 预测新动作概率和状态值
+            new_probs = self.actor(states, training=True)  # [batch_size, action_dim]
+            new_values = tf.squeeze(self.critic(states, training=True), axis=-1)  # [batch_size]
+
+            # 计算选中动作的概率
+            # actions 是 one-hot，[batch_size, action_dim]
+            selected_new_probs = tf.reduce_sum(new_probs * actions, axis=1)  # [batch_size]
+            selected_old_probs = tf.reduce_sum(old_probs * actions, axis=1)  # [batch_size]
+
+            # 计算 PPO ratio
+            ratio = selected_new_probs / (selected_old_probs + 1e-8)
+            clipped_ratio = tf.clip_by_value(ratio, 1 - self.clip_epsilon, 1 + self.clip_epsilon)
+
+            # 如果 advantages 是 [batch_size, action_dim]，取对应动作
+            if len(advantages.shape) == 2:
+                advantages = tf.reduce_sum(advantages * actions, axis=1)  # [batch_size]
+
+            # PPO policy loss
+            policy_loss = -tf.reduce_mean(tf.minimum(ratio * advantages, clipped_ratio * advantages))
+
+            # value loss
+            value_loss = tf.reduce_mean(tf.square(returns - new_values))
+
+            # entropy bonus
+            entropy = -tf.reduce_mean(
+                new_probs * tf.math.log(new_probs + 1e-8) +
+                (1 - new_probs) * tf.math.log(1 - new_probs + 1e-8)
+            )
+
+            # 基础损失
+            base_loss = policy_loss + self.value_coef * value_loss - self.entropy_coef * entropy
+
+            # EWC正则化
+            ewc_loss = self._compute_ewc_loss() if use_ewc and self.fisher_matrices else 0
+
+            # 总损失
+            total_loss = base_loss + ewc_loss
+
+        # 梯度更新
+        grads = tape.gradient(total_loss, self.actor.trainable_variables + self.critic.trainable_variables)
+        self.optimizer.apply_gradients(
+            zip(grads, self.actor.trainable_variables + self.critic.trainable_variables)
+        )
+
+        return total_loss, policy_loss, value_loss, entropy, ewc_loss
+
+    def train_step_onehot(self, states, actions, advantages, old_probs, returns, use_ewc=True):
+        """
+        states: (batch_size, state_dim)
+        actions: (batch_size, action_dim) one-hot
+        advantages: (batch_size, action_dim)
+        old_probs: (batch_size, action_dim)
+        returns: (batch_size, action_dim)
+        """
+        with tf.GradientTape() as tape:
+            new_probs = self.actor(states, training=True)        # (batch_size, action_dim)
+            new_values = self.critic(states, training=True)      # (batch_size, action_dim)
+
+            # 选择动作对应概率
+            new_action_probs = tf.reduce_sum(new_probs * actions, axis=1)
+            old_action_probs = tf.reduce_sum(old_probs * actions, axis=1)
+            ratio = new_action_probs / (old_action_probs + 1e-8)
+            clipped_ratio = tf.clip_by_value(ratio, 1 - self.clip_epsilon, 1 + self.clip_epsilon)
+
+            # Advantage 只选择对应动作
+            selected_advantages = tf.reduce_sum(advantages * actions, axis=1)
+            policy_loss = -tf.reduce_mean(tf.minimum(ratio * selected_advantages,
+                                                     clipped_ratio * selected_advantages))
+
+            # Value loss 只选择动作对应列
+            selected_values = tf.reduce_sum(new_values * actions, axis=1)
+            selected_returns = tf.reduce_sum(returns * actions, axis=1)
+            value_loss = tf.reduce_mean(tf.square(selected_returns - selected_values))
+
+            entropy = -tf.reduce_mean(tf.reduce_sum(new_probs * tf.math.log(new_probs + 1e-8), axis=1))
+
+            base_loss = policy_loss + self.value_coef * value_loss - self.entropy_coef * entropy
+            ewc_loss = self._compute_ewc_loss() if use_ewc and self.fisher_matrices else 0
+            total_loss = base_loss + ewc_loss
+
+        grads = tape.gradient(total_loss, self.actor.trainable_variables + self.critic.trainable_variables)
+        self.optimizer.apply_gradients(zip(grads, self.actor.trainable_variables + self.critic.trainable_variables))
+        return total_loss, policy_loss, value_loss, entropy, ewc_loss
+
+
+
+    def train_stepV(self, states, actions, advantages, old_probs, returns, use_ewc=True):
         """增强的训练步骤，包含持续学习机制"""
         with tf.GradientTape() as tape:
             # 原始PPO损失
@@ -246,65 +362,7 @@ class LifelongPPOBaseAgent:
         return total_reward
 
 
-# 假设的基类
-class LifelongPPOAgent(LifelongPPOBaseAgent):
-    def __init__(self, state_dim=5, action_dim=4):
-        super().__init__( state_dim=5, action_dim=4)
-        self.state_dim = state_dim
-        self.action_dim = action_dim
-        self.policy = self._build_policy_network()
-        self.env = self._create_env()
-
-    def _build_policy_network(self):
-        """构建策略网络"""
-        inputs = tf.keras.layers.Input(shape=(self.state_dim,))
-        x = tf.keras.layers.Dense(64, activation='relu')(inputs)
-        x = tf.keras.layers.Dense(64, activation='relu')(x)
-
-        # 动作分布参数 - 使用Dense层
-        mean = tf.keras.layers.Dense(self.action_dim)(x)
-        log_std = tf.keras.layers.Dense(self.action_dim)(x)  # 改为Dense层
-
-        return tf.keras.Model(inputs=inputs, outputs=[mean, log_std])
-
-    def _create_env(self):
-        """创建模拟环境"""
-
-        class MockEnv:
-            def __init__(self, state_dim=5, action_dim=4):
-                self.state_dim = state_dim
-                self.action_dim = action_dim
-                self.state = np.zeros(state_dim, dtype=np.float32)
-
-            def reset(self):
-                return np.random.randn(self.state_dim).astype(np.float32)
-
-            def step(self, action):
-                # Your step implementation
-                next_state = np.random.randn(self.state_dim).astype(np.float32)
-                reward = float(np.random.rand())
-                done = np.random.rand() > 0.95
-                return next_state, reward, done, {}
-
-        return MockEnv()
-
-    def learn(self, total_timesteps=1000000):
-        """模拟训练过程"""
-        print(f"Training for {total_timesteps} timesteps...")
-        # 这里简化训练过程
-        
-        for i in range(total_timesteps // 1000):
-            self.train_step()
-            if i % 100 == 0:
-                print(f"Step {i * 1000}/{total_timesteps}")
-
-    def save(self, path):
-        """保存模型"""
-        self.policy.save_weights(path + '.weights.h5')
-        print(f"Saved model weights to {path}.weights.h5")
-
-
-class ESP32PPOAgent(LifelongPPOBaseAgent):
+class LifelongESP32PPOAgent(LifelongPPOBaseAgent):
     """專為ESP32設計的輕量級PPO代理,繼承自LifelongPPOAgent"""
 
     def __init__(self, state_dim=5, action_dim=4,
@@ -426,10 +484,7 @@ class ESP32PPOAgent(LifelongPPOBaseAgent):
 
         return size_info
 
-    def _count_params(self, model):
-        """計算模型參數數量"""
-        return sum([tf.keras.backend.count_params(w) for w in model.trainable_weights])
-
+    
     def predict_with_tflite(self, state, model_type='actor'):
         """使用TFLite模型進行預測"""
         if model_type not in self._tflite_models:
@@ -671,7 +726,7 @@ void loop() {
         return False
 
 
-class ESP32PPOWithFisherAgent(ESP32PPOAgent):
+class ESP32PPOWithFisherAgent(LifelongESP32PPOAgent):
     def __init__(self, state_dim=5, action_dim=4, hidden_units=8, ewc_lambda=500):
         super().__init__(state_dim, action_dim, hidden_units)
         self.ewc_lambda = ewc_lambda
@@ -707,7 +762,7 @@ class ESP32PPOWithFisherAgent(ESP32PPOAgent):
         )
         print(f"✅ Fisher matrix & optimal params saved to {path}")
 
-class OnlineESP32PPOAgent(ESP32PPOAgent):
+class OnlineESP32PPOAgent(LifelongESP32PPOAgent):
     """專為ESP32設計的輕量級PPO代理，支持 online EWC 和 TFLite 導出"""
 
     def __init__(self, state_dim=5, action_dim=4,
@@ -1133,7 +1188,123 @@ class TensorFlowESP32Exporter:
         print(f"JSON size: {os.path.getsize(output_path)} bytes")
         print(f"Binary size: {os.path.getsize(binary_path)} bytes")
 
-class PlantHVACEnv:
+class PlantHVACEnv(gym.Env):
+    """
+    自定義 Plant HVAC 環境
+    狀態 (state_dim=5):
+        [溫度, 濕度, 光照, CO2濃度, 土壤濕度]
+    動作 (action_dim=4):
+        0 = 空調降溫
+        1 = 加濕器增濕
+        2 = 開燈補光
+        3 = 通風降CO2
+
+    獎勵:
+        根據與最佳生長區間的差距給分
+    """
+    def __init__(self):
+        super(PlantHVACEnv, self).__init__()
+
+        # 觀測空間: 連續狀態 (5維)
+        self.observation_space = spaces.Box(
+            low=np.array([0.0, 0.0, 0.0, 200.0, 0.0], dtype=np.float32),
+            high=np.array([50.0, 100.0, 2000.0, 2000.0, 100.0], dtype=np.float32),
+            dtype=np.float32
+        )
+
+        # 動作空間: 4個離散動作
+        self.action_space = spaces.Discrete(4)
+
+        # 初始狀態
+        self.state = None
+        self.reset()
+
+        # 最佳生長區間 (目標區域)
+        self.optimal_ranges = {
+            "temp": (22, 28),      # 溫度 (°C)
+            "humidity": (60, 75),  # 濕度 (%)
+            "light": (400, 800),   # 光照 (lux)
+            "co2": (350, 600),     # CO2 ppm
+            "soil": (40, 60),      # 土壤濕度 (%)
+        }
+
+    def reset(self):
+        """重置環境"""
+        self.state = self.observation_space.sample()
+        return self.state
+
+    def step(self, action):
+        """
+        根據 action 更新狀態
+        """
+        temp, humidity, light, co2, soil = self.state
+
+        # 簡單模擬 HVAC 控制
+        if action == 0:   # 降溫
+            temp -= 1.5
+        elif action == 1: # 加濕
+            humidity += 2.0
+        elif action == 2: # 補光
+            light += 50
+        elif action == 3: # 通風
+            co2 -= 30
+
+        # 加入隨機擾動 (模擬外部環境影響)
+        temp += np.random.uniform(-0.5, 0.5)
+        humidity += np.random.uniform(-1, 1)
+        light += np.random.uniform(-20, 20)
+        co2 += np.random.uniform(-10, 10)
+        soil += np.random.uniform(-1, 1)
+
+        # 更新狀態
+        self.state = np.array([temp, humidity, light, co2, soil], dtype=np.float32)
+
+        # 計算 reward
+        reward = self._calculate_reward()
+
+        # 終止條件：偏離太嚴重
+        done = self._is_done()
+
+        return self.state, reward, done, {}
+
+    def _calculate_reward(self):
+        """根據與最佳生長區間的差距計算 reward"""
+        temp, humidity, light, co2, soil = self.state
+        score = 0
+
+        def range_penalty(value, optimal_range):
+            low, high = optimal_range
+            if value < low:
+                return -(low - value)
+            elif value > high:
+                return -(value - high)
+            else:
+                return +1.0  # 在區間內加分
+
+        score += range_penalty(temp, self.optimal_ranges["temp"])
+        score += range_penalty(humidity, self.optimal_ranges["humidity"])
+        score += range_penalty(light, self.optimal_ranges["light"])
+        score += range_penalty(co2, self.optimal_ranges["co2"])
+        score += range_penalty(soil, self.optimal_ranges["soil"])
+
+        return score
+
+    def _is_done(self):
+        """當狀態超出極限值，結束 episode"""
+        temp, humidity, light, co2, soil = self.state
+        if temp < 0 or temp > 50:
+            return True
+        if humidity < 0 or humidity > 100:
+            return True
+        if light < 0 or light > 2000:
+            return True
+        if co2 < 100 or co2 > 3000:
+            return True
+        if soil < 0 or soil > 100:
+            return True
+        return False
+
+class PlantLLLHVACEnv:
     def __init__(self, seq_len=20, n_features=5, temp_init=25.0, humid_init=0.5,
                  latent_dim=64, mode="growing"):
         self.seq_len = seq_len
@@ -1461,18 +1632,23 @@ class PlantHVACEnv:
 
 
 
-def process_experiences(agent, experiences, gamma=0.99, gae_lambda=0.95):
+def process_experiences(agent,experiences, gamma=0.99, gae_lambda=0.95):
     """
     处理经验并计算advantages和returns
     """
     # 提取数据
-    states = [exp[0] for exp in experiences]
-    actions = [exp[1] for exp in experiences]
-    rewards = [exp[2] for exp in experiences]
-    next_states = [exp[3] for exp in experiences]
-    dones = [exp[4] for exp in experiences]
-    old_probs = [exp[5] for exp in experiences]
-
+    #states = [exp[0] for exp in experiences]
+    #actions = [exp[1] for exp in experiences]
+    #rewards = [exp[2] for exp in experiences]
+    #next_states = [exp[3] for exp in experiences]
+    #dones = [exp[4] for exp in experiences]
+    #old_probs = [exp[5] for exp in experiences]
+    states = [exp["state"] for exp in experiences]
+    actions = [exp["action"] for exp in experiences]
+    rewards = [exp["reward"] for exp in experiences]
+    next_states = [exp["next_state"] for exp in experiences]
+    dones = [exp["done"] for exp in experiences]
+    old_probs = [exp["old_prob"] for exp in experiences]
     # 转换为Tensor
     states = tf.stack(states)
     actions = tf.stack(actions)
@@ -1576,7 +1752,8 @@ def collect_experiences(agent, env, num_episodes=100, max_steps_per_episode=None
 
         while not done and step < max_steps_per_episode:
             # 智能体选择动作
-            action = agent.get_action(state)
+            #action = agent.get_action(state)
+            action, old_prob = agent.get_action(state, return_probs=True)
 
             # 在环境中执行动作
             next_state, reward, done, info = env.step(
@@ -1596,6 +1773,7 @@ def collect_experiences(agent, env, num_episodes=100, max_steps_per_episode=None
             experience = {
                 'state': state.copy(),
                 'action': action,
+                'old_prob': old_prob,
                 'reward': reward,
                 'next_state': next_state.copy(),
                 'done': done,
@@ -1713,38 +1891,25 @@ class CompiledPPOAgent:
 
 
 class PPOBuffer:
-    """PPO经验回放缓冲区"""
-
-    def __init__(self, state_dim, action_dim, buffer_size=2048, gamma=0.99, gae_lambda=0.95):
+    def __init__(self, state_dim, action_dim, buffer_size=512, gamma=0.99):
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.buffer_size = buffer_size
         self.gamma = gamma
-        self.gae_lambda = gae_lambda
 
-        # 初始化所有缓冲区
-        self.states = np.zeros((buffer_size, state_dim))
-        self.actions = np.zeros((buffer_size, action_dim))
-        self.probs = np.zeros((buffer_size, action_dim))
-        self.rewards = np.zeros(buffer_size)
-        self.dones = np.zeros(buffer_size)
-        self.values = np.zeros(buffer_size)
-
-        # 添加advantages和returns缓冲区
-        self.advantages = np.zeros(buffer_size)
-        self.returns = np.zeros(buffer_size)
+        self.states = np.zeros((buffer_size, state_dim), dtype=np.float32)
+        self.actions = np.zeros(buffer_size, dtype=np.int32)  # 存整数动作
+        self.rewards = np.zeros(buffer_size, dtype=np.float32)
+        self.values = np.zeros((buffer_size, action_dim), dtype=np.float32)
+        self.probs = np.zeros((buffer_size, action_dim), dtype=np.float32)
+        self.dones = np.zeros(buffer_size, dtype=np.float32)
 
         self.ptr = 0
-        self.path_start_idx = 0
-        self.num_samples = 0  # 添加样本计数器
+        self.num_samples = 0
 
     def store(self, state, action, prob, reward, done, value):
         """存储经验"""
-        if self.ptr >= self.buffer_size:
-            print("Buffer overflow, overwriting old experiences")
-            self.ptr = 0  # 循环覆盖
-
-        idx = self.ptr
+        idx = self.ptr % self.buffer_size  # 循环覆盖
         self.states[idx] = state
         self.actions[idx] = action
         self.probs[idx] = prob
@@ -1754,102 +1919,37 @@ class PPOBuffer:
         self.ptr += 1
         self.num_samples = min(self.num_samples + 1, self.buffer_size)
 
-    def finish_path(self, last_value=0):
-        """完成一个episode，计算GAE和returns"""
-        if self.ptr == self.path_start_idx:
-            return  # 没有新数据
-
-        path_slice = slice(self.path_start_idx, self.ptr)
-        rewards = np.append(self.rewards[path_slice], last_value)
-        values = np.append(self.values[path_slice], last_value)
-        dones = np.append(self.dones[path_slice], 0)
-
-        # 计算GAE (Generalized Advantage Estimation)
-        deltas = rewards[:-1] + self.gamma * values[1:] * (1 - dones[:-1]) - values[:-1]
-
-        advantages = np.zeros_like(deltas)
-        advantage = 0
-        for t in reversed(range(len(deltas))):
-            advantage = deltas[t] + self.gamma * self.gae_lambda * advantage * (1 - dones[t])
-            advantages[t] = advantage
-
-        # 计算returns
-        returns = advantages + values[:-1]
-
-        # 标准化advantages
-        if len(advantages) > 1:  # 确保有多个样本才能标准化
-            advantages = (advantages - np.mean(advantages)) / (np.std(advantages) + 1e-8)
-
-        # 存储到缓冲区
-        self.advantages[path_slice] = advantages
-        self.returns[path_slice] = returns
-
-        self.path_start_idx = self.ptr
-
-    def get_batch(self, batch_size=64, require_full=False):
-        """获取训练批次"""
-        if require_full:
-            # 只有在需要完整缓冲区时才检查
-            if self.ptr < self.buffer_size:
-                return None
-
-        # 使用当前存储的样本数量
-        available_samples = self.num_samples if self.num_samples > 0 else self.ptr
-
-        if available_samples < batch_size:
-            # 如果样本不足，返回所有可用样本
-            batch_size = available_samples
-            if batch_size == 0:
-                return None
-
-        # 随机选择索引
-        indices = np.random.choice(available_samples, batch_size, replace=False)
-
-        return (
-            tf.convert_to_tensor(self.states[indices], dtype=tf.float32),
-            tf.convert_to_tensor(self.actions[indices], dtype=tf.float32),
-            tf.convert_to_tensor(self.advantages[indices], dtype=tf.float32),
-            tf.convert_to_tensor(self.probs[indices], dtype=tf.float32),
-            tf.convert_to_tensor(self.returns[indices], dtype=tf.float32)
-        )
-
-    def get_all_data(self):
-        """获取所有数据（用于小批量训练）"""
-        available_samples = self.num_samples if self.num_samples > 0 else self.ptr
-        if available_samples == 0:
-            return None
-
-        indices = np.arange(available_samples)
-
-        return (
-            tf.convert_to_tensor(self.states[indices], dtype=tf.float32),
-            tf.convert_to_tensor(self.actions[indices], dtype=tf.float32),
-            tf.convert_to_tensor(self.advantages[indices], dtype=tf.float32),
-            tf.convert_to_tensor(self.probs[indices], dtype=tf.float32),
-            tf.convert_to_tensor(self.returns[indices], dtype=tf.float32)
-        )
-
     def is_full(self):
-        """检查缓冲区是否已满"""
-        return self.ptr >= self.buffer_size
+        return self.num_samples == self.buffer_size
 
-    def has_enough_samples(self, min_samples=64):
-        """检查是否有足够的样本进行训练"""
-        available_samples = self.num_samples if self.num_samples > 0 else self.ptr
-        return available_samples >= min_samples
+    def finish_path(self, last_value=0):
+        """计算 GAE 或 Returns，这里简单使用 returns = rewards + last_value"""
+        self.returns = np.zeros_like(self.rewards)
+        running_return = last_value
+        for t in reversed(range(self.num_samples)):
+            running_return = self.rewards[t] + self.gamma * running_return * (1 - self.dones[t])
+            self.returns[t] = running_return
+
+    def get_batch(self, batch_size=64):
+        """返回 batch，actions 自动返回整数，训练时做 one-hot"""
+        idxs = np.arange(self.num_samples)
+        np.random.shuffle(idxs)
+
+        for start in range(0, self.num_samples, batch_size):
+            end = start + batch_size
+            batch_idx = idxs[start:end]
+
+            states_batch = self.states[batch_idx]
+            actions_batch = self.actions[batch_idx]
+            old_probs_batch = self.probs[batch_idx]
+            returns_batch = self.returns[batch_idx]
+            values_batch = self.values[batch_idx]
+
+            yield states_batch, actions_batch, old_probs_batch, returns_batch, values_batch
 
     def clear(self):
-        """清空缓冲区"""
-        self.ptr, self.path_start_idx = 0, 0
+        self.ptr = 0
         self.num_samples = 0
-        self.states.fill(0)
-        self.actions.fill(0)
-        self.probs.fill(0)
-        self.rewards.fill(0)
-        self.dones.fill(0)
-        self.values.fill(0)
-        self.advantages.fill(0)
-        self.returns.fill(0)
 
 
 class TFLitePPOTrainer:
@@ -1915,11 +2015,11 @@ class TFLitePPOTrainer:
 
 
 # 使用示例
-if __name__ == "__main__":
-    physical_devices = tf.config.list_physical_devices('GPU')
-    if physical_devices:
-        tf.config.experimental.set_memory_growth(physical_devices[0], True)
-    train_LifelongPPOBaseAgent()
+#if __name__ == "__main__":
+#    physical_devices = tf.config.list_physical_devices('GPU')
+#    if physical_devices:
+#        tf.config.experimental.set_memory_growth(physical_devices[0], True)
+#    train_LifelongPPOBaseAgent()
 
 
 

@@ -134,7 +134,7 @@ void ota_task(void *param) {
 extern "C" void app_main() {
     init_spiffs();
 
-    const char *model_url = "http://192.168.68.237:5000/download_tflite";
+    const char *model_url = "http://192.168.0.57:5000/download_tflite";
 
     // 第一次初始化
     if(download_tflite(model_url, model_path) == ESP_OK) {

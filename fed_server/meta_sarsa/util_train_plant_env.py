@@ -27,6 +27,9 @@ class LifelongPPOAgent:
         self.fisher_matrices = {}  # 存储每个任务的Fisher信息矩阵
         self.optimal_params = {}  # 存储每个任务的最优参数
         self.current_task_id = 0
+    def _count_params(self, model):
+        """計算模型參數數量"""
+        return sum([tf.keras.backend.count_params(w) for w in model.trainable_weights])
 
     def _build_actor(self):
         return tf.keras.Sequential([
@@ -435,10 +438,7 @@ class ESP32PPOAgent(LifelongPPOAgent):
 
         return size_info
 
-    def _count_params(self, model):
-        """計算模型參數數量"""
-        return sum([tf.keras.backend.count_params(w) for w in model.trainable_weights])
-
+    
     def predict_with_tflite(self, state, model_type='actor'):
         """使用TFLite模型進行預測"""
         if model_type not in self._tflite_models:
@@ -1550,7 +1550,7 @@ def compute_advantages(rewards, values, next_values, dones, gamma=0.99, gae_lamb
     return tf.convert_to_tensor(advantages, dtype=tf.float32)
 
 
-def collect_experiences(agent, env, num_episodes=100, max_steps_per_episode=None):
+def xcollect_experiences(agent, env, num_episodes=100, max_steps_per_episode=None):
     """
     收集智能体在环境中的经验
 

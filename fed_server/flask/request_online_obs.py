@@ -197,11 +197,10 @@ def worker():
 
 # ========== 主入口 ==========
 if __name__ == "__main__":
-    os.makedirs(MODEL_DIR, exist_ok=True)
-
     # 啟動 worker 線程
     threading.Thread(target=worker, daemon=True).start()
     # 注意: debug 模式請加 use_reloader=False 避免線程重複啟動
     app.run(host="0.0.0.0", port=5000, debug=True, use_reloader=False)
 
+    os.makedirs(MODEL_DIR, exist_ok=True)
 
