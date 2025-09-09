@@ -684,8 +684,11 @@ if __name__ == "__main__":
     print(f"Critic: {agent._count_params(agent.critic)}")
 
     # 導出ESP32所需文件
-    agent.export_for_esp32()
-
+    #agent.export_for_esp32()
+    #agent.save_policy_model("ppo_policy", model_type="actor")
+    #agent.save_policy_model("ppo_policy", model_type="critic")
+    agent.save_policy_model_savedmodel(agent.actor, "ppo_policy", model_type="actor")
+    agent.save_policy_model_savedmodel(agent.critic, "ppo_policy", model_type="critic")
     # 測試推理
     test_state = np.array([0, 25.0, 0.5, 500.0, 600.0], dtype=np.float32)
     action = agent.get_action(test_state)

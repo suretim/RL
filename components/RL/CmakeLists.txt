@@ -11,6 +11,7 @@ set(APPLICATION_SRCS
     "model_pb_handler.cc"
     "config_mqtt.cc"
     "config_wifi.cc"
+    "config_spiffs.cc"
     "classifier_storage.cc"
     "infer_esp32_lstm_lll.cc"
     "model.pb.c"

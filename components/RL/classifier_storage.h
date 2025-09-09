@@ -4,20 +4,44 @@
 #include <stddef.h>
 #include "esp_err.h"
 
+
+
+#define PPO_CASE 1
+#define SARSA_CASE 2
+#define IMG_CASE 3
+#define INFER_CASE PPO_CASE
+
+
 // 全局参数 (需在你的工程中定义实际大小)
-#ifndef FEATURE_DIM
-#define RL_FEATURE_DIM 7
-#define IMG_FEATURE_DIM 64
-#define FEATURE_DIM (RL_FEATURE_DIM)
+ 
+#define PPO_FEATURE_DIM 5
+#define SARSA_FEATURE_DIM 7
+#define IMG_FEATURE_DIM 64 
+ 
+#define SARSA_CLASSES 3
+#define PPO_CLASSES 4
+#define IMG_CLASSES 3
+#define SARSA_SEQ_LEN 10
+#define PPO_SEQ_LEN 1 
+#define IMG_SEQ_LEN 64
+ 
+#if INFER_CASE == PPO_CASE
+  #define FEATURE_DIM (PPO_FEATURE_DIM)
+  #define NUM_CLASSES (PPO_CLASSES)
+  #define SEQ_LEN (PPO_SEQ_LEN)
+#elif INFER_CASE == SARSA_CASE
+  #define FEATURE_DIM (SARSA_FEATURE_DIM)
+  #define NUM_CLASSES (SARSA_CLASSES)
+  #define SEQ_LEN (SARSA_SEQ_LEN)
+#elif INFER_CASE == IMG_CASE
+  #define FEATURE_DIM (IMG_FEATURE_DIM)
+  #define NUM_CLASSES (IMG_CLASSES)
+  #define SEQ_LEN (IMG_SEQ_LEN)
 #endif
+ 
+ 
 
-#ifndef NUM_CLASSES
-#define NUM_CLASSES 3
-#endif
 
-#ifndef SEQ_LEN 
-#define SEQ_LEN 10
-#endif
 extern float classifier_weights[FEATURE_DIM * NUM_CLASSES];
 extern float classifier_bias[NUM_CLASSES];
 

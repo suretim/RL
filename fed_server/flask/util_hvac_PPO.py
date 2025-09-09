@@ -421,6 +421,37 @@ class LifelongESP32PPOAgent(LifelongPPOBaseAgent):
             f.write(self._tflite_models[model_type])
         print(f"TFLite {model_type} model saved to {filepath}")
 
+    def save_policy_model_savedmodel(self, model, model_name, model_type='actor'):
+        """
+        保存 Keras 模型为 SavedModel (.pb) 格式到 save_models 目录
+        """
+        # 目录结构： save_models/<model_name>_<model_type>/
+        save_dir = "saved_models"
+        os.makedirs(save_dir, exist_ok=True)
+
+        model_dir = os.path.join(save_dir, f"{model_name}_{model_type}")
+        model.save(model_dir, save_format='tf')  # 保存为 SavedModel 格式
+
+        print(f"Policy model saved to {model_dir}")
+
+    def save_policy_model(self, model_name, model_type='actor'):
+        """保存TFLite模型到 saved_models 目录"""
+
+        if model_type not in self._tflite_models:
+            self.convert_to_tflite(model_type)
+
+        # 确保 saved_models 目录存在
+        save_dir = "saved_models"
+        os.makedirs(save_dir, exist_ok=True)
+
+        # 文件名规则：<model_name>_<model_type>.tflite
+        filepath = os.path.join(save_dir, f"{model_name}_{model_type}.tflite")
+
+        with open(filepath, 'wb') as f:
+            f.write(self._tflite_models[model_type])
+
+        print(f"TFLite {model_type} model saved to {filepath}")
+
     def load_tflite_model(self, filepath, model_type='actor'):
         """從文件加載TFLite模型"""
         with open(filepath, 'rb') as f:

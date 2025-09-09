@@ -8,6 +8,8 @@ from collections import deque
 import threading
 import time
 import random
+from util_hvac_PPO import TensorFlowESP32BaseExporter
+import tensorflow as tf
 
 import  queue
 #set FLASK_APP=D:\RL\RL\fed_server\flask\ota_server.py
@@ -19,6 +21,26 @@ CORS(app)
 
 
 
+# 全局保存 exporter 和 TFLite 模型
+exporter = None
+tflite_model_bytes = None
+ota_metadata = None
+#POST /init_exporter HTTP/1.1
+@app.route("/init_exporter", methods=["POST"])
+def init_exporter():
+    global exporter
+    print("Flask /init_exporter called!")
+    data = request.json
+    print("Received JSON:", data)
+    model_path = data.get("model_path")
+    print("Model path:", model_path)
+
+    if not model_path:
+        return jsonify({"error": "model_path required"}), 400
+
+    policy_model = tf.keras.models.load_model(model_path)
+    exporter = TensorFlowESP32BaseExporter(policy_model)
+    return jsonify({"status": "exporter initialized"})
 # 模擬環境數據生成
 def simulate_env_data():
     while True:
@@ -91,7 +113,7 @@ def serve_ota_package():
 
 
 # 模型存放路徑
-MODEL_DIR = "../esp32_model"
+MODEL_DIR = "esp32_model"
 ACTOR_MODEL = "actor.tflite"
 CRITIC_MODEL = "critic.tflite"
 

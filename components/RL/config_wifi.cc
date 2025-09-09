@@ -49,6 +49,7 @@ static void wifi_ap_event_handler(void* arg, esp_event_base_t base, int32_t id, 
   void wifi_sta_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
+        esp_wifi_set_max_tx_power(80);  // safe here
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         ESP_LOGW(TAG, "STA Disconnected. Retrying...");
         vTaskDelay(50000 / portTICK_PERIOD_MS);
@@ -101,22 +102,31 @@ extern "C" {
 void wifi_init_sta(void) {
     ESP_LOGI(TAG, "Initializing WiFi...");
     got_ip = false;
-    
+    wifi_event_group = xEventGroupCreate();
+
+    // Create default WiFi station
+    esp_netif_create_default_wifi_sta(); 
     // WiFi init
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    esp_wifi_init(&cfg);
-    esp_wifi_set_mode(WIFI_MODE_STA);
-    esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_sta_event_handler, NULL);
-    esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_sta_event_handler, NULL);
-    wifi_config_t sta_config = {};
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_sta_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_sta_event_handler, NULL));
+
+    wifi_config_t sta_config = { 0 };
     strcpy((char*)sta_config.sta.ssid, WIFI_SSID_STA);
     strcpy((char*)sta_config.sta.password, WIFI_PASS_STA);
-    esp_wifi_set_config(WIFI_IF_STA, &sta_config);
-    esp_wifi_set_max_tx_power(80);  // 设置最大发射功率（单位0.25dBm）
-    esp_wifi_start();
-    esp_wifi_connect();
+    sta_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_config));
+ 
+    ESP_ERROR_CHECK(esp_wifi_start());
+    //ESP_ERROR_CHECK(esp_wifi_connect());
+ 
 
     ESP_LOGI(TAG, "WiFi connecting...");
+    wait_for_wifi_connection();
 }
 
 

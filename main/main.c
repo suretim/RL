@@ -519,20 +519,15 @@ void plant_env_make_task(void *pvParameters)
 {
 
 	vTaskDelay(3000 / portTICK_PERIOD_MS);
-	wifi_ota_ppo_package();
-          
+	wifi_ota_ppo_package(); 
 	while(1)
-	{
-	       
-        
-	
+	{  
 		if(plant_env_step() ==0){
 			vTaskDelay(pdMS_TO_TICKS(1000));
 			break;
 		}
 		vTaskDelay(pdMS_TO_TICKS(10000));
-	}
-	
+	} 
 }
 
 /*

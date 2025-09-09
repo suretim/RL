@@ -3,6 +3,8 @@
 
 #include <vector>
 #include <stdio.h>
+#include "esp_log.h"
+#include "esp_http_client.h"
 #include "esp_spiffs.h"
 #include "nn.h"  // 这里替换成你自己的神经网络实现
 
@@ -32,9 +34,9 @@ public:
         const float* floatData = reinterpret_cast<const float*>(otaData);
         std::vector<float> weights(floatData, floatData + num_weights);
         network.loadWeights(weights);  // NN 类需要有 loadWeights 方法
-    }
- 
+    } 
 
+    
     bool downloadModel(const char* url, const char* save_path) {
         esp_http_client_config_t config = {};
         config.url = url;
