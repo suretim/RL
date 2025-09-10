@@ -12,10 +12,10 @@ from util_hvac_PPO import TensorFlowESP32BaseExporter
 import tensorflow as tf
 
 import  queue
-#set FLASK_APP=D:\RL\RL\fed_server\flask\ota_server.py
+# set FLASK_APP=D:\RL\RL\fed_server\flask\ota_server.py
 #set FLASK_ENV=development
 #flask run --host=192.168.0.57 --port=5000
-
+#flask --app ota_server.py run --host=192.168.0.57 --port=5000
 app = Flask(__name__)
 CORS(app)
 
@@ -224,6 +224,6 @@ if __name__ == "__main__":
     # 啟動 worker 線程
     threading.Thread(target=worker, daemon=True).start()
     # 注意: debug 模式請加 use_reloader=False 避免線程重複啟動
-    app.run(host="0.0.0.0", port=5000, debug=True, use_reloader=False)
+    app.run(host='0.0.0.0', port=5000, debug=False)  # Bind to all interfaces
 
 

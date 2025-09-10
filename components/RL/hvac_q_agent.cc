@@ -15,24 +15,10 @@
 #include "esp32_model_loader.h"
 #include "ml_pid.h"
 #include "nn.h" 
- 
+#include "hvac_q_agent.h"
 
-
-static const char *TAG = "OTA HVAC";
-// ======= WiFi 與 OTA 配置 ======= 
-#if 0
-    const char* check_url = "http://192.168.68.237:5000/api/check-update/device001/1.0.0";
-    const char* download_url = "http://192.168.68.237:5000/api/download-update";
-    //#define OTA_URL "http://192.168.68.237:5000/api/bin-update"
-#else
-    const char* base_url ="192.168.0.57:5000";
-    const char* check_url = "http://192.168.0.57:5000/api/check-update/device001/1.0.0";
-    const char* download_url = "http://192.168.0.57:5000/api/download-update";
-    const char* download_bin_url = "http://192.168.0.57:5000/api/bin-update";
-    //#define OTA_BIN_UPDATE_URL "http://192.168.0.57:5000/api/bin-update"
-#endif
-//#define LOCAL_MODEL_FILE "/spiffs/ppo_model.bin"
 extern const char * model_path ;
+static const char *TAG = "OTA HVAC";
 
   
 // ---------------- NN Placeholder ----------------
@@ -41,7 +27,7 @@ std::vector<float> W1, W2, b1, b2, Vw;
 float Vb = 0.0f;
 extern std::vector<float> health_result;
 
- #define H1          32
+#define H1          32
 #define H2          4
  
 
@@ -118,22 +104,23 @@ esp_err_t _http_down_load_event_handler(esp_http_client_event_t *evt) {
     return ESP_OK;
 }
  
-
-
 // ======= PPO 模型 =======
 ESP32EWCModel ewcppoModel;
-bool init_exporter_flag=false;
+//const int num_flask_task=3;
+bool flask_state_flag[NUM_FLASK_TASK]={false};
+char flask_name[NUM_FLASK_TASK][64]={"flask_init_exporter_task","flask_download_model_task","flask_download_model_ota_task"};
+void flask_init_exporter_task(void *pvParameters) {
+        flask_state_flag[INIT_EXPORTER]=false;
 
-void http_post_task(void *pvParameters) {
-       
-        const char* base_url ="192.168.0.57:5000";
-        char url[128];
-
-       sprintf(url, "http://%s/init_exporter", base_url);
-
+        //const char* base_url ="192.168.0.57:5000";
+        char task_str[32]="init_exporter";
+        char task_url_str[128];
+        sprintf(task_url_str, "http://%s:%s/%s", BASE_URL,BASE_PORT,task_str); 
+        ESP_LOGI(TAG, "URL: %s", task_url_str);
+        //sprintf(url, "http://%s/init_exporter", BASE_URL);
         esp_http_client_config_t config = {
             //.url = "http://<SERVER_IP>:5000/init_exporter",   // Flask 服务器地址
-            .url = url,    
+            .url = task_url_str,    
         };
 
         esp_http_client_handle_t client = esp_http_client_init(&config);
@@ -157,25 +144,161 @@ void http_post_task(void *pvParameters) {
             // 获取响应头的大小
      
             
-            
+            int cont_len=esp_http_client_get_content_length(client);
             char buffer[512];
-            int data_len = esp_http_client_read_response(client, buffer, sizeof(buffer) - 1);
-            if (data_len >= 0) {
-                buffer[data_len] = 0;
-                ESP_LOGI(TAG, "Response = %s", buffer);
+            if(cont_len<=512){
+                
+                //int data_len = esp_http_client_read_response(client, buffer, sizeof(buffer) - 1);
+                int data_len = esp_http_client_read_response(client, buffer, cont_len);
+                if (data_len >= 0) {
+                    buffer[data_len] = 0;
+                    ESP_LOGI(TAG, "Response = %s", buffer);
+                    flask_state_flag[INIT_EXPORTER]=true;
+                }
             }
         } else {
             ESP_LOGE(TAG, "HTTP POST request failed: %s", esp_err_to_name(err));
-        }
-
-
-
-
-
+        } 
 
         esp_http_client_cleanup(client);
         vTaskDelete(NULL);
 }
+
+
+static void flask_download_model_task(void *param) {
+    ESP_LOGI("MEM", "Before OTA: Heap free=%d, internal free=%d, largest=%d",
+             (int)esp_get_free_heap_size(),
+             (int)esp_get_free_internal_heap_size(),
+             (int)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
+        flask_state_flag[DOWN_LOAD_MODEL]=false;
+
+    // 删除旧模型 
+    remove(model_path);
+    static FILE *f_model =fopen(model_path, "wb");
+    if (!f_model) {
+        ESP_LOGE("OTA", "Failed to open file for OTA");
+        vTaskDelete(NULL);
+        return;
+    }
+ 
+    esp_http_client_config_t config = {0}; // 初始化为全零
+    char task_str[32]="api/bin-update";
+        char task_url_str[128];
+        sprintf(task_url_str, "http://%s:%s/%s", BASE_URL,BASE_PORT,task_str); 
+        ESP_LOGI(TAG, "URL: %s", task_url_str);
+    //sprintf(url, "http://%s:%d/api/bin-update",BASE_PORT, BASE_URL);
+    //ESP_LOGE(TAG, "Server URL: %s",url);
+    config.url = task_url_str;
+    config.timeout_ms = 10000;
+    config.user_data = f_model;
+    config.event_handler = _http_down_load_event_handler;
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    //esp_http_client_set_buffer_size(client, 4096); 
+    //FlaskState state = FlaskState::INIT_EXPORTER; 
+    if (!client) {
+        ESP_LOGE("OTA", "esp_http_client_init failed");
+        fclose(f_model);
+        f_model = NULL;
+        vTaskDelete(NULL);
+    }
+
+    esp_err_t err = esp_http_client_perform(client);
+    if (err == ESP_OK) {
+        ESP_LOGI("OTA", "Model downloaded successfully (%d bytes)",
+                 (int)esp_http_client_get_content_length(client));
+         flask_state_flag[DOWN_LOAD_MODEL]=true;
+
+    } else {
+        ESP_LOGE("OTA", "HTTP request failed: %s", esp_err_to_name(err));
+    }
+
+    esp_http_client_cleanup(client);
+    fclose(f_model);
+    f_model = NULL;
+
+    ESP_LOGI("MEM", "After OTA: Heap free=%d, internal free=%d",
+             (int)esp_get_free_heap_size(),
+             (int)esp_get_free_internal_heap_size());
+
+    vTaskDelete(NULL);
+}
+ 
+
+void flask_download_model_ota_task(void *param){
+     // ======= OTA 更新模型 =======otaUpdater.downloadModel()
+        char download_str[32]="api/download-update";
+        char download_url[128];
+        sprintf(download_url, "http://%s:%s/%s", BASE_URL,BASE_PORT,download_str); 
+        ESP_LOGI(TAG, "download_url URL: %s", download_url);
+    //char download_url[128];
+    //sprintf(download_url, "http://%s/api/download-update", BASE_URL);
+        char check_str[48]="api/check-update/device001/1.0.0";
+        char check_url[128];
+        sprintf(check_url, "http://%s:%s/%s", BASE_URL,BASE_PORT,check_str); 
+        ESP_LOGI(TAG, "check_url URL: %s", check_url);
+    //char check_url[128];
+    //sprintf(check_url, "http://%s/api/check-update/device001/1.0.0", BASE_URL);
+      
+     ModelOTAUpdater otaUpdater(check_url, download_url, "/spiffs/model.tflite","0.0.1");
+        flask_state_flag[DOWN_LOAD_MODEL_OTA]=false;
+
+    if (otaUpdater.checkUpdate()) {
+        ESP_LOGI(TAG, "Model OTA update completed!");
+         
+        flask_state_flag[DOWN_LOAD_MODEL_OTA]=true;
+         
+    } else {
+        ESP_LOGW(TAG, "Model OTA update failed or no update available");
+    }
+return  ;
+}
+
+void (*functionArray[3])(void *pvParameters) = {flask_init_exporter_task, flask_download_model_task, flask_download_model_ota_task};
+
+extern "C" void wifi_ota_ppo_package(int type ) {
+    if(type>=0 && type<=2)
+    //if(type==0)
+    {
+        xTaskCreatePinnedToCore(
+        functionArray[type],  //download_model_ota_task,download_model_task
+        flask_name[type],
+        8 * 1024,       // 栈大小，可根据实际增加
+        NULL,
+        tskIDLE_PRIORITY + 1,
+        NULL,
+        0);   
+
+    }
+    #if 0
+    if(type==1)
+    {
+        xTaskCreatePinnedToCore(
+        flask_download_model_task,  //download_model_ota_task,download_model_task
+        "flask_download_model_task",
+        8 * 1024,       // 栈大小，可根据实际增加
+        NULL,
+        tskIDLE_PRIORITY + 1,
+        NULL,
+        0);   
+    }
+    if(type==2)
+    {
+        xTaskCreatePinnedToCore(
+        flask_download_model_ota_task, 
+        "flask_download_model_ota_task",
+        8 * 1024,     
+        NULL,
+        tskIDLE_PRIORITY + 1,
+        NULL,
+        0);   
+    }
+    #endif
+    return   ;
+}
+
+
+
+
 
 
   
@@ -242,109 +365,6 @@ extern "C" void hvac_agent(void) {
 }
  
 
-void download_model_ota_task(void *param){
-     // ======= OTA 更新模型 =======otaUpdater.downloadModel()
-
-      
-     ModelOTAUpdater otaUpdater(check_url, download_url, "/spiffs/model.tflite","0.0.1");
-
-    if (otaUpdater.checkUpdate()) {
-        ESP_LOGI(TAG, "Model OTA update completed!");
-         
-    } else {
-        ESP_LOGW(TAG, "Model OTA update failed or no update available");
-        
-    }
-return  ;
-}
-
-static void download_model_task(void *param) {
-    ESP_LOGI("MEM", "Before OTA: Heap free=%d, internal free=%d, largest=%d",
-             (int)esp_get_free_heap_size(),
-             (int)esp_get_free_internal_heap_size(),
-             (int)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
-
-    // 删除旧模型 
-    remove(model_path);
-    static FILE *f_model =fopen(model_path, "wb");
-    if (!f_model) {
-        ESP_LOGE("OTA", "Failed to open file for OTA");
-        vTaskDelete(NULL);
-        return;
-    }
- 
-    esp_http_client_config_t config = {0}; // 初始化为全零
-
-    config.url = download_bin_url;
-    config.timeout_ms = 10000;
-    config.user_data = f_model;
-    config.event_handler = _http_down_load_event_handler;
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-    //esp_http_client_set_buffer_size(client, 4096); 
-     
-    if (!client) {
-        ESP_LOGE("OTA", "esp_http_client_init failed");
-        fclose(f_model);
-        f_model = NULL;
-        vTaskDelete(NULL);
-    }
-
-    esp_err_t err = esp_http_client_perform(client);
-    if (err == ESP_OK) {
-        ESP_LOGI("OTA", "Model downloaded successfully (%d bytes)",
-                 (int)esp_http_client_get_content_length(client));
-    } else {
-        ESP_LOGE("OTA", "HTTP request failed: %s", esp_err_to_name(err));
-    }
-
-    esp_http_client_cleanup(client);
-    fclose(f_model);
-    f_model = NULL;
-
-    ESP_LOGI("MEM", "After OTA: Heap free=%d, internal free=%d",
-             (int)esp_get_free_heap_size(),
-             (int)esp_get_free_internal_heap_size());
-
-    vTaskDelete(NULL);
-}
-   
- 
-extern "C" void wifi_ota_ppo_package(int type ) {
-    if(type==0)
-    {
-        xTaskCreatePinnedToCore(
-        http_post_task,  //download_model_ota_task,download_model_task
-        "http_post_task",
-        8 * 1024,       // 栈大小，可根据实际增加
-        NULL,
-        tskIDLE_PRIORITY + 1,
-        NULL,
-        0);   
-    }
-    if(type==1)
-    {
-        xTaskCreatePinnedToCore(
-        download_model_task,  //download_model_ota_task,download_model_task
-        "download_model_task",
-        8 * 1024,       // 栈大小，可根据实际增加
-        NULL,
-        tskIDLE_PRIORITY + 1,
-        NULL,
-        0);   
-    }
-    if(type==2)
-    {
-        xTaskCreatePinnedToCore(
-        download_model_ota_task, 
-        "download_model_ota_task",
-        8 * 1024,     
-        NULL,
-        tskIDLE_PRIORITY + 1,
-        NULL,
-        0);   
-    }
-    return   ;
-}
 extern "C" pid_run_output_st nn_ppo_infer() {
 
     // 尝试下载 OTA model_version == 0 &&

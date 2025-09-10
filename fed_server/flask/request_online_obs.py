@@ -59,7 +59,7 @@ def upload_client_data():
 
 
 # 初始化 OTA 服务
-ota_handler = OTAServer("ppo_model.bin", latest_version="1.0.0")
+ota_handler = OTAServer("saved_models/ppo_model.bin", latest_version="1.0.0")
 
 
 @app.route('/api/check-update/<device_id>/<current_version>')

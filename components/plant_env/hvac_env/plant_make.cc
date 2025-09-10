@@ -7,17 +7,25 @@
 
 #include "PlantHVACEnv.h"
 #include "fl_client.h"   
- 
+#include "hvac_q_agent.h"
+
 std::vector<float> health_result;
 std::array<int,4> action= {0, 0, 0,0};
 
 
 extern "C" void plant_env_step() {
     PlantHVACEnv env(20, 3, 25.0f, 0.5f, 64);
- 
+    
     env.set_seq_fetcher([](int t) -> std::vector<std::vector<float>> {
         std::vector<std::vector<float>> seq_input;
-        std::string url = "http://192.168.0.57:5000/seq_input";
+        char task_str[32]="seq_input";
+        char task_url[128];
+        sprintf(task_url, "http://%s:%s/%s", BASE_URL,BASE_PORT,task_str);
+        
+        
+
+        //sprintf(task_url, "http://%s/seq_input", BASE_URL);
+        std::string url =task_url;// "http://192.168.0.57:5000/seq_input";
         bool ok = fetch_seq_from_server(seq_input, url); // 只传 seq_input 和 url
         if(!ok){
             // 默认填充

@@ -37,7 +37,7 @@ W2, b2 = actor.get_weights()     # W2.shape = (32,4), b2.shape = (4,)
 Vw, Vb = critic.get_weights()    # Vw.shape = (32,1), Vb.shape = (1,)
 
 # ====== 存储为二进制 .bin ======
-with open("ppo_model.bin", "wb") as f:
+with open("saved_models/ppo_model.bin", "wb") as f:
     # W1 (input_dim * hidden_dim)
     f.write(W1.astype(np.float32).tobytes())
     # b1 (hidden_dim)
