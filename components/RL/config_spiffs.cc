@@ -4,7 +4,7 @@
 #define FLTYPE        SPIFFS_FL
  
 #include "esp_spiffs.h"
- #include "esp_log.h"
+#include "esp_log.h"
 #include "esp_system.h"
 #include "esp_spiffs.h"
 #include "freertos/FreeRTOS.h"
@@ -18,14 +18,14 @@
  
 #include "esp_err.h" 
 #include "mbedtls/md5.h"  
-  
+#include "hvac_q_agent.h"  
  bool spiffs_flag[2]={false};
 
 static const char *TAG = "OTA SPIFFS";
-const char* model_path = "/spiffs/ppo_model.bin";
+const char* spiffs_model_path = "/spiffs/ppo_model.bin";
 
-extern const unsigned char meta_model_tflite[];
-extern const unsigned int meta_model_tflite_len;
+//extern const unsigned char meta_model_tflite[];
+//extern const unsigned int meta_model_tflite_len;
 
 extern float *fisher_matrix;
 extern float *theta ; 
@@ -34,7 +34,7 @@ extern void parse_model_weights(uint8_t *buffer, size_t size);
 
 
 void verify_downloaded_file(void) {
-    const char *save_path = "/spiffs/ppo_model.bin";
+    const char *save_path = spiffs_model_path;
     
     // 检查文件是否存在
     FILE *f = fopen(save_path, "rb");
@@ -62,7 +62,7 @@ void verify_downloaded_file(void) {
 
 // ---------------- Local fallback ----------------
 bool load_local_model() {
-    FILE *f = fopen(model_path, "rb");
+    FILE *f = fopen(spiffs_model_path, "rb");
     if (!f) {
         ESP_LOGE(TAG, "Local model not found!");
         return false;
@@ -380,18 +380,20 @@ esp_err_t ota_download_event_based(const char *url, const char *save_path) {
 
 void download_model(void *pvParameters) {
 
-    const char *ota_url = "http://192.168.30.132:5001/ota_model";
-    const char *save_path = "/spiffs/ppo_model.bin";
-     
+    //const char *ota_url = "http://192.168.30.132:5001/ota_model";
+    char task_str[32]="ota_model";
+        char task_url[128];
+        sprintf(task_url, "http://%s:%s/%s", BASE_URL,POLICY_PORT,task_str);
+          
  
-    if (ota_download_event_based(ota_url, save_path) != ESP_OK) {
+    if (ota_download_event_based(task_url, spiffs_model_path) != ESP_OK) {
         ESP_LOGE(TAG, "OTA download failed");
         vTaskDelete(NULL); 
         return;
     }
     ESP_LOGI(TAG, "OTA download Suceess!");
     // 验证下载的文件
-    if (!calc_file_md5("/spiffs/ppo_model.bin", local_md5)) {
+    if (!calc_file_md5(spiffs_model_path, local_md5)) {
         ESP_LOGI(TAG, "Local MD5 calculation ppo_model.bin empty");
         //vTaskDelete(NULL);
         //return;
@@ -410,10 +412,13 @@ void download_model(void *pvParameters) {
 
 
 void get_server_md5(void *pvParameters ) { 
-
+        char task_str[32]="ota_model_md5";
+        char task_url[128];
+        sprintf(task_url, "http://%s:%s/%s", BASE_URL,POLICY_PORT,task_str);
+     
 
     esp_http_client_config_t config = {
-        .url =  "http://192.168.30.132:5001/ota_model_md5",
+        .url =  task_url   ,//"http://192.168.30.132:5001/ota_model_md5",
         .timeout_ms = 10000,
         .event_handler = http_md5_event_handler,
     };
@@ -455,7 +460,7 @@ void ota_update_process(void *pvParameters) {
 
     // 2. 计算本地 MD5
      
-    if (!calc_file_md5("/spiffs/ppo_model.bin", local_md5)) {
+    if (!calc_file_md5(spiffs_model_path, local_md5)) {
         ESP_LOGI(TAG, "Local MD5 calculation Model Empty");
         //vTaskDelete(NULL);
         //return;

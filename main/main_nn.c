@@ -81,17 +81,16 @@ extern bool flask_state_flag[NUM_FLASK_TASK];
 void plant_env_make_task(void *pvParameters)
 { 
 	vTaskDelay(3000 / portTICK_PERIOD_MS);
-	
-	//wifi_ota_ppo_package(0); 
+	 
 	while(1)
 	{  
-        for(int i=0;i<NUM_FLASK_TASK;i++)
-        {
-            vTaskDelay(pdMS_TO_TICKS(10000));
-            if(flask_state_flag[i]==false)
-                wifi_ota_ppo_package(i);    
+        // for(int i=0;i<NUM_FLASK_TASK;i++)
+        // {
+        //     vTaskDelay(pdMS_TO_TICKS(10000));
+        //     if(flask_state_flag[i]==false)
+        //         wifi_ota_ppo_package(i);    
 
-        }
+        // }
         
 		if(plant_env_step() ==0){
 			vTaskDelay(pdMS_TO_TICKS(5000));
@@ -160,15 +159,13 @@ void app_main(void) {
     spiffs_init();
 
 	wifi_init_sta();
-    
-    // 创建 OTA 更新任务
-   // xTaskCreate(ota_task, "ota_task", 8192, (void*)model_url, 5, NULL);
+    start_ota();
+
     //http_test();
     //ping_flask_server();
 
-    start_ota();
 
-    //xTaskCreate(plant_env_make_task,TASK_NAME_COMMDECODE, TASK_STACK_COMMDECODE, NULL, TASK_PRIO_COMMDECODE, NULL);	// 通信数据解析
+    xTaskCreate(plant_env_make_task,TASK_NAME_COMMDECODE, TASK_STACK_COMMDECODE, NULL, TASK_PRIO_COMMDECODE, NULL);	// 通信数据解析
  
 	vTaskDelete(NULL);
 }

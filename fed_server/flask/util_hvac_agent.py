@@ -1,21 +1,13 @@
 import tensorflow as tf
 from tensorflow.keras import layers, Model
 import numpy as np
-import json
-import tensorflow_probability as tfd
+import tensorflow_probability as tfp
 
 import datetime
 from collections import deque
 import os
-import tensorflow_model_optimization as tfmot
-import zlib
-import base64
-import gym
-from gym import spaces
 
-from typing import Union
-from typing import Dict
-from typing import *
+from util_env import PlantLLLHVACEnv,PlantHVACEnv
 
 
 # state_dim = 5  # 健康狀態、溫度、濕度、光照、CO2
@@ -308,7 +300,7 @@ class LifelongPPOBaseAgent:
 
 
 
-    def train_stepV(self, states, actions, advantages, old_probs, returns, use_ewc=True):
+    def xtrain_stepV(self, states, actions, advantages, old_probs, returns, use_ewc=True):
         """增强的训练步骤，包含持续学习机制"""
         with tf.GradientTape() as tape:
             # 原始PPO损失
@@ -773,7 +765,17 @@ class ESP32PPOWithFisherAgent(LifelongESP32PPOAgent):
             optimal_params[var.name] = var.numpy().copy()
 
         for x in dataset:
-            x = x[None, ...].astype(np.float32)
+            # 标准化输入形状
+            x = x.astype(np.float32)
+
+            # 确保输入形状为 (1, n_features)
+            if x.ndim == 1:
+                x = x.reshape(1, -1)
+            elif x.ndim == 3:
+                x = x.reshape(x.shape[0], x.shape[2])
+            elif x.ndim == 2 and x.shape[0] != 1:
+                x = x.reshape(1, -1)
+
             with tf.GradientTape() as tape:
                 probs = self.actor(x)
                 log_prob = tf.math.log(probs + 1e-8)
@@ -791,7 +793,7 @@ class ESP32PPOWithFisherAgent(LifelongESP32PPOAgent):
             fisher={k: v for k,v in self.fisher_matrix.items()},
             optimal={k: v for k,v in self.optimal_params.items()}
         )
-        print(f"✅ Fisher matrix & optimal params saved to {path}")
+        print(f"  Fisher matrix & optimal params saved to {path}")
 
 class OnlineESP32PPOAgent(LifelongESP32PPOAgent):
     """專為ESP32設計的輕量級PPO代理，支持 online EWC 和 TFLite 導出"""
@@ -837,7 +839,7 @@ class OnlineESP32PPOAgent(LifelongESP32PPOAgent):
         obs: tf.Tensor, shape (batch_size, state_dim)
         """
         logits = self.actor(obs)
-        return tfd.Bernoulli(probs=logits)
+        return tfp.Bernoulli(probs=logits)
 
     # ------------------ EWC online 更新 ------------------
     def update_online_fisher(self, obs: tf.Tensor, action: tf.Tensor):
@@ -911,755 +913,82 @@ class OnlineESP32PPOAgent(LifelongESP32PPOAgent):
             'ewc_loss': ewc_loss.numpy()
         }
 
- 
-class TensorFlowESP32BaseExporter:
-    def __init__(self, policy_model=None):
-        self.model = policy_model
-        self.converter = None
 
-    def create_representative_dataset(self, env, num_samples=1000):
-        """创建代表性数据集"""
-        representative_data = []
-        for _ in range(num_samples):
-            obs = env.reset()
-            if isinstance(obs, tuple):
-                obs = obs[0]
-            representative_data.append(obs.astype(np.float32))
-        return np.array(representative_data)
+class LifelongPPOAgent(LifelongPPOBaseAgent):
+    def __init__(self, state_dim=5, action_dim=4):
+        super().__init__(state_dim=state_dim, action_dim=action_dim)
+        self.state_dim = state_dim
+        self.action_dim = action_dim
+        self.policy = self._build_policy_network()
 
-    def convert_to_tflite(self, representative_data=None, quantize=True, prune=True):
-        """转换为TFLite模型"""
-        converter = tf.lite.TFLiteConverter.from_keras_model(self.model)
 
-        if quantize:
-            # 设置量化参数
-            converter.optimizations = [tf.lite.Optimize.DEFAULT]
 
-            if representative_data is not None:
-                def representative_dataset():
-                    for data in representative_data:
-                        yield [data.reshape(1, -1)]
-
-                converter.representative_dataset = representative_dataset
-                converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
-                converter.inference_input_type = tf.int8
-                converter.inference_output_type = tf.int8
-
-        if prune:
-            # 启用剪枝（如果适用）
-            pass
-
-        tflite_model = converter.convert()
-        return tflite_model
-
-    def save_ota_base_package(self, output_path, representative_data=None,
-                         firmware_version="1.0.0", prune=True, quantize=True):
-        """创建OTA包"""
-        # 转换模型
-        tflite_model = self.convert_to_tflite(representative_data, quantize, prune)
-
-        # 保存TFLite模型
-        tflite_path = output_path.replace('.json', '.tflite')
-        with open(tflite_path, 'wb') as f:
-            f.write(tflite_model)
-        print(f"Saved TFLite model to {tflite_path}")
-
-        # 创建OTA元数据
-        ota_metadata = {
-            "firmware_version": firmware_version,
-            "model_format": "tflite",
-            "input_shape": list(self.model.input_shape[1:]),
-            "output_shapes": [output.shape[1:].as_list() for output in self.model.outputs],  # Convert each to list
-            "quantized": quantize,
-            "pruned": prune,
-            "file_size": len(tflite_model),
-            "checksum": self._calculate_checksum(tflite_model)
-        }
-
-
-
-        # 保存OTA包
-        with open(output_path, 'w') as f:
-            json.dump(ota_metadata, f, indent=2)
-
-        print(f"Saved OTA package to {output_path}")
-        print(f"OTA Metadata: {json.dumps(ota_metadata, indent=2)}")
-
-    def _calculate_checksum(self, data):
-        """计算简单的校验和"""
-        return hash(data) % 1000000
-
-
-# -----------------------------
-# 獨立的 TensorFlow → ESP32 匯出器（不再繼承 Agent）
-# -----------------------------
-class TensorFlowESP32Exporter:
-    def __init__(self, model_or_path: Union[str, tf.keras.Model]):
-        """
-        Args:
-            model_or_path: 已訓練 Keras 模型或可由 tf.keras.models.load_model 載入的路徑
-                           **注意**: 不支援僅權重檔（*.weights.h5)。請改用 .keras 或 SavedModel
-        """
-        if isinstance(model_or_path, str):
-            # FIX: 只允許可 load 的完整模型
-            self.model = tf.keras.models.load_model(model_or_path)
-        else:
-            self.model = model_or_path
-
-        self.quantized_model_bytes: Optional[bytes] = None
-        self.fisher_matrix: Optional[Dict[str, np.ndarray]] = None
-        self.optimal_params: Optional[Dict[str, np.ndarray]] = None
-
-    # 量化
-    def apply_quantization(self, representative_data: np.ndarray) -> bytes:
-        """
-        將模型量化為 int8,適合 ESP32。
-        """
-        print("Applying post-training quantization...")
-
-        converter = tf.lite.TFLiteConverter.from_keras_model(self.model)
-        converter.optimizations = [tf.lite.Optimize.DEFAULT]
-
-        # 定義 generator 函數
-        def representative_dataset_gen():
-            for i in range(min(100, len(representative_data))):
-                # 每次返回一個 batch (1, input_shape)
-                yield [representative_data[i:i + 1].astype(np.float32)]
-
-        # 注意這裡要傳函數，不要傳 generator 對象
-        converter.representative_dataset = representative_dataset_gen
-
-        converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
-        converter.inference_input_type = tf.int8
-        converter.inference_output_type = tf.int8
-
-        tflite_model = converter.convert()
-
-        # 保存到文件示例
-        with open('quantized_model.tflite', 'wb') as f:
-            f.write(tflite_model)
-
-        print("Quantization completed! Model saved as quantized_model.tflite")
-        return tflite_model
-
-
-    def _representative_dataset_gen(self, dataset: np.ndarray):
-        # 注意：這裡是函數，yield 產生數據
-        for i in range(min(100, len(dataset))):
-            yield [dataset[i:i + 1].astype(np.float32)]
-
-
-    def prune_model(self, target_sparsity: float = 0.5) -> tf.keras.Model:
-        print(f"Pruning model to {target_sparsity * 100}% sparsity...")
-
-        # 確保模型已編譯
-        if not hasattr(self.model, 'loss') or self.model.loss is None:
-            self.model.compile(
-                optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
-                loss='mse',
-                metrics=['mae']
-            )
-
-        # 剪枝代碼
-        pruning_params = {
-            'pruning_schedule': tfmot.sparsity.keras.ConstantSparsity(
-                target_sparsity, begin_step=0, frequency=100
-            )
-        }
-
-        pruned_model = tfmot.sparsity.keras.prune_low_magnitude(
-            self.model, **pruning_params
-        )
-
-        pruned_model.compile(
-            optimizer=self.model.optimizer,
-            loss=self.model.loss,
-            metrics=self.model.metrics
-        )
-
-        # 微調可以在這裡進行
-        # pruned_model.fit(x_train, y_train, epochs=2, validation_data=(x_val, y_val))
-
-        self.model = tfmot.sparsity.keras.strip_pruning(pruned_model)
-        print("Pruning completed!")
-        return self.model
-
-    # 剪枝
-
-    # Fisher（對分類輸出安全處理）
-    def compute_fisher_matrix(self, dataset: np.ndarray, num_samples: int = 1000) -> Dict[str, np.ndarray]:
-        print("Computing Fisher Information Matrix...")
-        vars_list = self.model.trainable_variables
-        self.optimal_params = {v.name: v.numpy().copy() for v in vars_list}
-        fisher = {v.name: np.zeros_like(v.numpy()) for v in vars_list}
-
-        @tf.function
-        def grads_on_input(x):
-            with tf.GradientTape() as tape:
-                y = self.model(x, training=False)
-                # 若輸出不是機率，轉 logits 為機率（避免 log(0)）
-                if y.dtype != tf.float32:
-                    y = tf.cast(y, tf.float32)
-                # 小偏移避免 log(0)
-                logp = tf.math.log(tf.nn.softmax(y) + 1e-8)
-                # 對 batch 取均值 → 純量
-                obj = tf.reduce_mean(tf.reduce_sum(logp, axis=-1))
-            return tape.gradient(obj, vars_list)
-
-        n = min(num_samples, len(dataset))
-        for i in range(n):
-            if i % 100 == 0:
-                print(f"Processing sample {i}/{n}")
-            x = tf.convert_to_tensor(dataset[i:i+1], dtype=tf.float32)
-            grads = grads_on_input(x)
-            for v, g in zip(vars_list, grads):
-                if g is not None:
-                    fisher[v.name] += (g.numpy() ** 2) / float(n)
-
-        self.fisher_matrix = fisher
-        print("Fisher matrix computation completed!")
-        return fisher
-
-    # 壓縮
-    def compress_for_esp32(self, tflite_bytes: bytes) -> Dict[str, Any]:
-        print("Compressing model for ESP32...")
-        comp = zlib.compress(tflite_bytes)
-        original_size = len(tflite_bytes)
-        compressed_size = len(comp)
-        compression_ratio = original_size / compressed_size if compressed_size > 0 else float('inf')
-        print(f"Compression ratio: {compression_ratio:.2f}x")
-        print(f"Original: {original_size} bytes, Compressed: {compressed_size} bytes")
-        return {
-            'compressed_model': comp,
-            'original_size': original_size,
-            'compressed_size': compressed_size,
-            'compression_ratio': compression_ratio,  # FIX: 供 metadata 使用
-        }
-
-    # OTA 組包
-    def create_ota_package(self,
-                           representative_data: np.ndarray,
-                           firmware_version: str = "1.0.0",
-                           prune: bool = True,
-                           quantize: bool = True) -> Dict[str, Any]:
-        print("Creating OTA package...")
-        if prune:
-            self.prune_model(target_sparsity=0.5)
-
-        self.compute_fisher_matrix(representative_data)
-
-        if quantize:
-            tflite_bytes = self.apply_quantization(representative_data)
-        else:
-            converter = tf.lite.TFLiteConverter.from_keras_model(self.model)
-            tflite_bytes = converter.convert()
-
-        comp = self.compress_for_esp32(tflite_bytes)
-        simplified_fisher = self._simplify_fisher_matrix()
-        metadata = {
-            'firmware_version': firmware_version,
-            'model_type': 'TFLite',
-            'input_shape': list(self.model.input_shape[1:]) if self.model.input_shape else None,
-            'output_shape': list(self.model.output_shape[1:]) if self.model.output_shape else None,
-            'compression_ratio': comp['compression_ratio'],
-            'timestamp': datetime.now().isoformat(),
-            'quantization': quantize,
-            'pruning': prune,
-        }
-
-        # FIX: JSON 不能存 bytes，先 Base64
-        model_data_b64 = base64.b64encode(comp['compressed_model']).decode('ascii')
-
-        ota_package = {
-            'metadata': metadata,
-            'model_data_b64': model_data_b64,
-            'fisher_matrix': simplified_fisher,
-            'optimal_params': self._prepare_optimal_params(),
-            'crc32': self._calculate_crc(comp['compressed_model']),
-        }
-        return ota_package
-
-    def _simplify_fisher_matrix(self) -> Dict[str, Any]:
-        simplified = {}
-        assert self.fisher_matrix is not None
-        for name, fm in self.fisher_matrix.items():
-            thr = np.percentile(fm, 80.0)
-            mask = fm > thr
-            values = fm[mask]
-            indices = np.where(mask)
-            simplified[name] = {
-                'values': values.astype(np.float32).tolist(),
-                'indices': [idx.astype(np.int32).tolist() for idx in indices],
-                'shape': list(fm.shape),
-                'threshold': float(thr),
-            }
-        return simplified
-
-    def _prepare_optimal_params(self) -> Dict[str, Any]:
-        assert self.optimal_params is not None
-        return {name: arr.astype(np.float32).tolist() for name, arr in self.optimal_params.items()}
-
-    def _calculate_crc(self, data: bytes) -> int:
-        return zlib.crc32(data)
-
-    def save_ota_package(self, output_path: str, representative_data: np.ndarray, **kwargs) -> None:
-        ota = self.create_ota_package(representative_data, **kwargs)
-
-        # JSON 檔（Base64 模型）
-        with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(ota, f, indent=2, ensure_ascii=False)
-
-        # 二進位（含 bytes）— 使用 pickle
-        binary_path = output_path.replace('.json', '.bin')
-        import pickle
-        with open(binary_path, 'wb') as f:
-            pickle.dump(ota, f)
-
-        print(f"OTA package saved to {output_path} and {binary_path}")
-        print(f"JSON size: {os.path.getsize(output_path)} bytes")
-        print(f"Binary size: {os.path.getsize(binary_path)} bytes")
-
-class PlantHVACEnv(gym.Env):
-    """
-    自定義 Plant HVAC 環境
-    狀態 (state_dim=5):
-        [溫度, 濕度, 光照, CO2濃度, 土壤濕度]
-    動作 (action_dim=4):
-        0 = 空調降溫
-        1 = 加濕器增濕
-        2 = 開燈補光
-        3 = 通風降CO2
-
-    獎勵:
-        根據與最佳生長區間的差距給分
-    """
-    def __init__(self):
-        super(PlantHVACEnv, self).__init__()
-
-        # 觀測空間: 連續狀態 (5維)
-        self.observation_space = spaces.Box(
-            low=np.array([0.0, 0.0, 0.0, 200.0, 0.0], dtype=np.float32),
-            high=np.array([50.0, 100.0, 2000.0, 2000.0, 100.0], dtype=np.float32),
-            dtype=np.float32
-        )
-
-        # 動作空間: 4個離散動作
-        self.action_space = spaces.Discrete(4)
-
-        # 初始狀態
-        self.state = None
-        self.reset()
-
-        # 最佳生長區間 (目標區域)
-        self.optimal_ranges = {
-            "temp": (22, 28),      # 溫度 (°C)
-            "humidity": (60, 75),  # 濕度 (%)
-            "light": (400, 800),   # 光照 (lux)
-            "co2": (350, 600),     # CO2 ppm
-            "soil": (40, 60),      # 土壤濕度 (%)
-        }
-
-    def reset(self):
-        """重置環境"""
-        self.state = self.observation_space.sample()
-        return self.state
-
-    def step(self, action):
-        """
-        根據 action 更新狀態
-        """
-        temp, humidity, light, co2, soil = self.state
-
-        # 簡單模擬 HVAC 控制
-        if action == 0:   # 降溫
-            temp -= 1.5
-        elif action == 1: # 加濕
-            humidity += 2.0
-        elif action == 2: # 補光
-            light += 50
-        elif action == 3: # 通風
-            co2 -= 30
-
-        # 加入隨機擾動 (模擬外部環境影響)
-        temp += np.random.uniform(-0.5, 0.5)
-        humidity += np.random.uniform(-1, 1)
-        light += np.random.uniform(-20, 20)
-        co2 += np.random.uniform(-10, 10)
-        soil += np.random.uniform(-1, 1)
-
-        # 更新狀態
-        self.state = np.array([temp, humidity, light, co2, soil], dtype=np.float32)
-
-        # 計算 reward
-        reward = self._calculate_reward()
-
-        # 終止條件：偏離太嚴重
-        done = self._is_done()
-
-        return self.state, reward, done, {}
-
-    def _calculate_reward(self):
-        """根據與最佳生長區間的差距計算 reward"""
-        temp, humidity, light, co2, soil = self.state
-        score = 0
-
-        def range_penalty(value, optimal_range):
-            low, high = optimal_range
-            if value < low:
-                return -(low - value)
-            elif value > high:
-                return -(value - high)
-            else:
-                return +1.0  # 在區間內加分
-
-        score += range_penalty(temp, self.optimal_ranges["temp"])
-        score += range_penalty(humidity, self.optimal_ranges["humidity"])
-        score += range_penalty(light, self.optimal_ranges["light"])
-        score += range_penalty(co2, self.optimal_ranges["co2"])
-        score += range_penalty(soil, self.optimal_ranges["soil"])
-
-        return score
-
-    def _is_done(self):
-        """當狀態超出極限值，結束 episode"""
-        temp, humidity, light, co2, soil = self.state
-        if temp < 0 or temp > 50:
-            return True
-        if humidity < 0 or humidity > 100:
-            return True
-        if light < 0 or light > 2000:
-            return True
-        if co2 < 100 or co2 > 3000:
-            return True
-        if soil < 0 or soil > 100:
-            return True
-        return False
-
-class PlantLLLHVACEnv:
-    def __init__(self, seq_len=20, n_features=5, temp_init=25.0, humid_init=0.5,
-                 latent_dim=64, mode="growing"):
-        self.seq_len = seq_len
-        self.temp_init = temp_init
-        self.humid_init = humid_init
-        self.n_features = n_features  # 現在有5個特徵: temp, humid, health, light, co2
-        self.mode = mode  # "growing", "flowering", "seeding"
-
-        # 構建encoder
-        self.encoder = self._build_encoder(seq_len, n_features, latent_dim)
-
-        # LLL模型
-        self.lll_model = self._build_lll_model(latent_dim, hidden_dim=64, output_dim=3)
-        self.fisher_matrix = None
-        self.prev_weights = None
-        self.memory = deque(maxlen=1000)  # 簡單的記憶緩衝區
-
-        # 不同模式的理想環境參數（添加光照和CO2範圍）
-        self.mode_params = {
-            "growing": {
-                "temp_range": (22, 28),
-                "humid_range": (0.4, 0.7),
-                "vpd_range": (0.8, 1.5),
-                "light_range": (300, 600),  # lux
-                "co2_range": (400, 800)  # ppm
-            },
-            "flowering": {
-                "temp_range": (20, 26),
-                "humid_range": (0.4, 0.6),
-                "vpd_range": (1.0, 1.8),
-                "light_range": (500, 800),  # lux
-                "co2_range": (600, 1000)  # ppm
-            },
-            "seeding": {
-                "temp_range": (24, 30),
-                "humid_range": (0.5, 0.7),
-                "vpd_range": (0.7, 1.3),
-                "light_range": (200, 400),  # lux
-                "co2_range": (400, 600)  # ppm
-            }
-        }
-
-        # 初始化環境變量
-        self.light = 500.0  # 初始光照 (lux)
-        self.co2 = 600.0  # 初始CO2濃度 (ppm)
-
-        # 初始化狀態變量
-        self.reset()
-
-    def _build_encoder(self, seq_len, n_features, latent_dim):
-        """構建序列編碼器"""
-        return tf.keras.Sequential([
-            tf.keras.layers.LSTM(64, input_shape=(seq_len, n_features), return_sequences=True),
-            tf.keras.layers.LSTM(32),
-            tf.keras.layers.Dense(latent_dim, activation='relu')
-        ])
-
-    def _build_lll_model(self, input_dim, hidden_dim, output_dim):
-        """構建終身學習模型"""
-        return tf.keras.Sequential([
-            tf.keras.layers.Dense(hidden_dim, activation='relu', input_shape=(input_dim,)),
-            tf.keras.layers.Dense(hidden_dim, activation='relu'),
-            tf.keras.layers.Dense(output_dim, activation='softmax')
-        ])
-
-    def update_lll_model(self, sequence_input, true_label=None):
-        """
-        更新LLL模型並返回預測結果
-
-        Args:
-            sequence_input: 輸入序列數據
-            true_label: 真實標籤（可選，用於訓練）
-
-        Returns:
-            soft_label: 軟標籤預測概率
-        """
-        # 編碼序列數據
-        latent_representation = self.encoder(sequence_input)
-
-        # 獲取預測
-        soft_label = self.lll_model(latent_representation)
-
-        # 如果有真實標籤，則進行訓練
-        if true_label is not None:
-            self._train_lll_model(latent_representation, true_label)
-
-        return soft_label.numpy()[0]  # 返回第一個batch的預測
-
-    def _train_lll_model(self, latent_input, true_label):
-        """
-        訓練LLL模型
-        """
-        # 計算EWC正則化損失
-        ewc_loss = self._compute_ewc_loss()
-
+    def train_step(self, states, actions, advantages, old_probs, returns, use_ewc=True):
+        """Training step using PPO"""
         with tf.GradientTape() as tape:
-            predictions = self.lll_model(latent_input, training=True)
+            # Get the new policy outputs
+            mean, log_std = self.policy(states)
+            std = tf.exp(log_std)
+            dist = tfp.distributions.Normal(mean, std)
 
-            # 計算交叉熵損失
-            ce_loss = tf.keras.losses.sparse_categorical_crossentropy(
-                true_label, predictions
-            )
+            # Calculate log probabilities of taken actions
+            new_probs = dist.log_prob(actions)
+            old_probs = tf.convert_to_tensor(old_probs, dtype=tf.float32)
 
-            # 總損失 = 交叉熵損失 + EWC正則化
-            total_loss = tf.reduce_mean(ce_loss) + ewc_loss
+            # Calculate the ratio (for clipping)
+            ratio = tf.exp(new_probs - old_probs)
 
-        # 更新模型權重
-        gradients = tape.gradient(total_loss, self.lll_model.trainable_variables)
-        optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
-        optimizer.apply_gradients(zip(gradients, self.lll_model.trainable_variables))
+            # PPO objective (with clipping)
+            clip_ratio = 0.2
+            clipped_ratio = tf.clip_by_value(ratio, 1 - clip_ratio, 1 + clip_ratio)
+            policy_loss = -tf.reduce_mean(tf.minimum(ratio * advantages, clipped_ratio * advantages))
 
-    def _compute_ewc_loss(self):
-        """計算EWC正則化損失"""
-        if self.fisher_matrix is None or self.prev_weights is None:
-            return 0.0
+            # Value loss (if applicable, you can add a value network)
+            # value_loss = tf.reduce_mean((returns - value_preds)**2)
 
-        ewc_loss = 0.0
-        ewc_lambda = 500  # EWC正則化強度
+            # Total loss (if you include value loss and entropy)
+            entropy_bonus = tf.reduce_mean(dist.entropy())
+            total_loss = policy_loss - 0.01 * entropy_bonus  # Regularization via entropy
 
-        for i, (current_var, prev_var, fisher) in enumerate(
-                zip(self.lll_model.trainable_variables,
-                    self.prev_weights,
-                    self.fisher_matrix)):
-            ewc_loss += tf.reduce_sum(
-                ewc_lambda * 0.5 * fisher * tf.square(current_var - prev_var)
-            )
+            # Apply gradients
+            gradients = tape.gradient(total_loss, self.policy.trainable_variables)
+            optimizer = tf.keras.optimizers.Adam(learning_rate=3e-4)
+            optimizer.apply_gradients(zip(gradients, self.policy.trainable_variables))
 
-        return ewc_loss
+        return total_loss
 
-    def save_model_knowledge(self):
-        """保存當前模型的知識（用於EWC）"""
-        # 保存當前權重
-        self.prev_weights = [tf.identity(var) for var in self.lll_model.trainable_variables]
+    def _build_policy_network(self):
+        """Build the policy network"""
+        inputs = tf.keras.layers.Input(shape=(self.state_dim,))
+        x = tf.keras.layers.Dense(64, activation='relu')(inputs)
+        x = tf.keras.layers.Dense(64, activation='relu')(x)
 
-        # 計算Fisher信息矩陣（這裡簡化處理）
-        self.fisher_matrix = [
-            tf.ones_like(var) * 0.1 for var in self.lll_model.trainable_variables
-        ]
+        # Action distribution parameters - using Dense layers
+        mean = tf.keras.layers.Dense(self.action_dim)(x)
+        log_std = tf.keras.layers.Dense(self.action_dim)(x)
 
-    def reset(self):
-        """重置環境狀態"""
-        self.temp = self.temp_init
-        self.humid = self.humid_init
-        self.light = 500.0
-        self.co2 = 600.0
-        self.health = 2  # 初始狀態設為"無法判定"
-        self.t = 0
-        self.prev_action = np.zeros(4, dtype=int)
+        return tf.keras.Model(inputs=inputs, outputs=[mean, log_std])
 
-        # 初始化序列數據
-        self.current_sequence = np.zeros((1, self.seq_len, self.n_features))
+    def sample_action(self, state):
+        """Sample action based on current policy"""
+        mean, log_std = self.policy(state)
+        std = tf.exp(log_std)  # Convert log_std to actual standard deviation
+        dist = tfp.distributions.Normal(mean, std)  # Define the Gaussian distribution
+        action = dist.sample()  # Sample an action from the distribution
+        return action.numpy()  # Convert to numpy array for usage in environment
 
-        # 填充初始序列
-        for i in range(self.seq_len):
-            self.current_sequence[0, i] = [self.temp, self.humid, self.health, self.light, self.co2]
+    def get_action(self, state):
+        """Get action for environment interaction"""
+        return self.sample_action(state)
 
-        return self._get_state()
+    def learn(self, states, actions, advantages, old_probs, returns, use_ewc=True, total_timesteps=1000000):
+        """Simulated training process"""
+        print(f"Training for {total_timesteps} timesteps...")
 
-    def _get_state(self):
-        """獲取當前狀態"""
-        return np.array([self.health, self.temp, self.humid, self.light, self.co2], dtype=np.float32)
-
-    def update_sequence(self, new_data_point):
-        """
-        更新數據序列，添加新的數據點
-
-        Args:
-            new_data_point: 新的傳感器數據點 [temp, humid, health, light, co2]
-        """
-        # 將序列向前移動一位，移除最舊的數據
-        self.current_sequence = np.roll(self.current_sequence, shift=-1, axis=1)
-
-        # 在序列末尾添加新的數據點
-        self.current_sequence[0, -1] = new_data_point
-
-    def _calculate_enhanced_vpd(self, temp, humid, light, co2):
-        """
-        計算增強的VPD，考慮光照和CO2的影響
-        """
-        # 基礎VPD計算
-        base_vpd = self.calc_vpd(temp, humid)
-
-        # 光照對VPD的影響因子
-        light_factor = np.clip((light - 200) / 600, 0.8, 1.2)
-
-        # CO2對VPD的影響因子
-        co2_factor = np.clip(1.0 - (co2 - 400) / 1000, 0.8, 1.0)
-
-        # 增強的VPD計算
-        enhanced_vpd = base_vpd * light_factor * co2_factor
-
-        return enhanced_vpd
-
-    def calc_vpd(self, temp, humid):
-        """計算VPD（蒸汽壓差）"""
-        # 飽和蒸汽壓計算（Tetens公式）
-        es = 0.6108 * np.exp(17.27 * temp / (temp + 237.3))
-        # 實際蒸汽壓
-        ea = es * humid
-        # VPD
-        vpd = es - ea
-        return max(vpd, 0.1)
-
-    def step(self, action, params=None, true_label=None):
-        """
-        執行動作並返回新的狀態、獎勵等信息
-        """
-        if params is None:
-            params = {}
-
-        ac, humi, heat, dehumi = action
-
-        # 環境動力學
-        self.temp += (-0.5 if ac == 1 else 0.2) + (0.5 if heat == 1 else 0.0)
-        self.humid += (0.05 if humi == 1 else -0.02) + (-0.03 if heat == 1 else 0.0) + (-0.05 if dehumi == 1 else 0.0)
-
-        # 光照和CO2的自然變化
-        self.light += np.random.normal(0, 20)
-        self.co2 += np.random.normal(0, 10)
-
-        # 邊界限制
-        self.temp = np.clip(self.temp, 15, 35)
-        self.humid = np.clip(self.humid, 0, 1)
-        self.light = np.clip(self.light, 100, 1000)
-        self.co2 = np.clip(self.co2, 300, 1200)
-
-        # 根據當前模式獲取理想環境參數
-        mode_param = self.mode_params[self.mode]
-        temp_min, temp_max = mode_param["temp_range"]
-        humid_min, humid_max = mode_param["humid_range"]
-        vpd_min, vpd_max = mode_param["vpd_range"]
-        light_min, light_max = mode_param["light_range"]
-        co2_min, co2_max = mode_param["co2_range"]
-
-        # 計算增強的VPD
-        vpd_current = self._calculate_enhanced_vpd(self.temp, self.humid, self.light, self.co2)
-
-        # 健康判定
-        temp_ok = temp_min <= self.temp <= temp_max
-        humid_ok = humid_min <= self.humid <= humid_max
-        vpd_ok = vpd_min <= vpd_current <= vpd_max
-        light_ok = light_min <= self.light <= light_max
-        co2_ok = co2_min <= self.co2 <= co2_max
-
-        # 綜合健康判定
-        optimal_conditions = sum([temp_ok, humid_ok, vpd_ok, light_ok, co2_ok])
-
-        if optimal_conditions >= 4:
-            self.health = 0  # 健康
-        elif optimal_conditions >= 2:
-            self.health = 1  # 亞健康
-        else:
-            self.health = 2  # 不健康
-
-        # 更新序列數據
-        new_data_point = np.array([self.temp, self.humid, self.health, self.light, self.co2])
-        self.update_sequence(new_data_point)
-
-        # LLL模型預測
-        seq_input_tf = tf.convert_to_tensor(self.current_sequence, dtype=tf.float32)
-
-        if true_label is not None and not isinstance(true_label, tf.Tensor):
-            true_label_tf = tf.convert_to_tensor(true_label, dtype=tf.int32)
-        else:
-            true_label_tf = true_label
-
-        # 使用update_lll_model方法獲取軟標籤
-        soft_label = self.update_lll_model(seq_input_tf, true_label_tf)
-        flower_prob = soft_label[2]
-
-        # 計算獎勵
-        health_reward = {0: 2.0, 1: 0.5, 2: -1.0}[self.health]
-        energy_cost = params.get("energy_penalty", 0.1) * np.sum(action)
-        switch_penalty = params.get("switch_penalty_per_toggle", 0.2) * np.sum(np.abs(action - self.prev_action))
-
-        # 環境因子獎勵
-        vpd_ideal = (vpd_min + vpd_max) / 2
-        vpd_reward = -abs(vpd_current - vpd_ideal) * params.get("vpd_penalty", 2.0)
-
-        light_ideal = (light_min + light_max) / 2
-        light_reward = -abs(self.light - light_ideal) * params.get("light_penalty", 0.5)
-
-        co2_ideal = (co2_min + co2_max) / 2
-        co2_reward = -abs(self.co2 - co2_ideal) * params.get("co2_penalty", 0.3)
-
-        learning_reward = 0
-        if true_label is not None:
-            pred_class = np.argmax(soft_label)
-            true_class = true_label if isinstance(true_label, (int, np.integer)) else true_label.numpy()
-            learning_reward = 0.5 if pred_class == true_class else -0.3
-
-        # 軟標籤獎勵
-        soft_label_bonus = 0
-        if self.mode == "flowering":
-            soft_label_bonus = flower_prob * params.get("flower_bonus", 0.5)
-        elif self.mode == "seeding":
-            soft_label_bonus = soft_label[1] * params.get("seed_bonus", 0.5)
-        else:
-            soft_label_bonus = soft_label[0] * params.get("grow_bonus", 0.5)
-
-        reward = (health_reward - energy_cost - switch_penalty +
-                  vpd_reward + light_reward + co2_reward +
-                  learning_reward + soft_label_bonus)
-
-        self.prev_action = action
-        self.t += 1
-        done = self.t >= self.seq_len
-
-        info = {
-            "latent_soft_label": soft_label,
-            "flower_prob": flower_prob,
-            "temp": self.temp,
-            "humid": self.humid,
-            "vpd": vpd_current,
-            "light": self.light,
-            "co2": self.co2,
-            "learning_reward": learning_reward,
-            "soft_label_bonus": soft_label_bonus,
-            "health_status": self.health,
-            "health_status_text": ["健康", "亞健康", "不健康"][self.health],
-            "optimal_conditions": optimal_conditions
-        }
-
-        return self._get_state(), reward, done, info
+        for i in range(total_timesteps // 1000):
+            self.train_step(states, actions, advantages, old_probs, returns, use_ewc=True)
+            if i % 100 == 0:
+                print(f"Step {i * 1000}/{total_timesteps}")
 
 
 
@@ -1700,7 +1029,6 @@ def process_experiences(agent,experiences, gamma=0.99, gae_lambda=0.95):
 
     return states, actions, advantages, old_probs, returns
 
-
 def compute_returns(rewards, dones, gamma=0.99):
     """计算折扣回报"""
     returns = []
@@ -1712,7 +1040,6 @@ def compute_returns(rewards, dones, gamma=0.99):
             R = reward + gamma * R
         returns.insert(0, R)
     return tf.convert_to_tensor(returns, dtype=tf.float32)
-
 
 def compute_advantages(rewards, values, next_values, dones, gamma=0.99, gae_lambda=0.95):
     """
@@ -1745,7 +1072,6 @@ def compute_advantages(rewards, values, next_values, dones, gamma=0.99, gae_lamb
         advantages.insert(0, advantage)  # 插入到开头
 
     return tf.convert_to_tensor(advantages, dtype=tf.float32)
-
 
 def collect_experiences(agent, env, num_episodes=100, max_steps_per_episode=None):
     """
@@ -1840,47 +1166,6 @@ def collect_experiences(agent, env, num_episodes=100, max_steps_per_episode=None
         print("-" * 50)
 
     return experiences
-
-
-# 使用示例
-def train_ESP32PPOAgent():
-    # 创建环境和智能体
-    env = PlantHVACEnv(mode="flowering")
-
-    #agent       = ESP32PPOAgent(state_dim=5, action_dim=4)
-    agent = ESP32PPOAgent(state_dim=5, action_dim=4, hidden_units=8)
-    # 顯示模型信息
-    print("模型參數數量:")
-    print(f"Actor: {agent._count_params(agent.actor)}")
-    print(f"Critic: {agent._count_params(agent.critic)}")
-    # 收集经验
-    experiences = collect_experiences(agent, env, num_episodes=10)
-
-    # 分析收集到的经验
-    print(f"总共收集了 {len(experiences)} 条经验")
-
-    # 计算统计信息
-    rewards = [exp['reward'] for exp in experiences]
-    health_statuses = [exp['info']['health_status'] for exp in experiences]
-
-    print(f"平均奖励: {np.mean(rewards):.3f}")
-    print(f"健康比例: {np.mean([1 if s == 0 else 0 for s in health_statuses]) * 100:.1f}%")
-    print(f"不健康比例: {np.mean([1 if s == 1 else 0 for s in health_statuses]) * 100:.1f}%")
-
-
-    # 導出ESP32所需文件
-    agent.export_for_esp32()
-
-    # 測試推理
-    test_state = np.array([0, 25.0, 0.5, 500.0, 600.0], dtype=np.float32)
-    action = agent.get_action_esp32(test_state)
-    value = agent.get_value_esp32(test_state)
-
-    print(f"測試狀態: {test_state}")
-    print(f"預測動作: {action}")
-    print(f"預測價值: {value}")
-    return experiences
-
 
 
 # 或者使用Keras的train_on_batch方法

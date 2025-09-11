@@ -17,7 +17,15 @@
 #include "nn.h" 
 #include "hvac_q_agent.h"
 
-extern const char * model_path ;
+ 
+#include "cJSON.h"
+ #include "mbedtls/base64.h"
+
+#include "esp_crc.h"   
+
+#define OTA_SERVER_URL   "http://192.168.30.132:5002"   // 换成你的 PC IP
+#define CURRENT_VERSION  "1.0.0"
+extern const char * spiffs_model_path ;
 static const char *TAG = "OTA HVAC";
 
   
@@ -60,21 +68,7 @@ void parse_model_weights(uint8_t *buffer, size_t size) {
     ESP_LOGI(TAG, "Model weights parsed successfully. Total floats = %d", offset);
 } 
  
-
-
-esp_err_t _http_down_load_event_handler0(esp_http_client_event_t *evt) {
-    switch (evt->event_id) {
-        case HTTP_EVENT_ON_DATA:
-            if (evt->user_data) {
-                FILE *file = (FILE *)evt->user_data;
-                fwrite(evt->data, 1, evt->data_len, file);
-            }
-            break;
-        default:
-            break;
-    }
-    return ESP_OK;
-}
+ 
 // ---------------- OTA Callback ----------------
 esp_err_t _http_down_load_event_handler(esp_http_client_event_t *evt) {
     static FILE *f_model = NULL;
@@ -90,7 +84,7 @@ esp_err_t _http_down_load_event_handler(esp_http_client_event_t *evt) {
             if (f_model) {
                 fclose(f_model);
                 f_model = NULL;
-                ESP_LOGI(TAG, "OTA file saved to %s", model_path);
+                ESP_LOGI(TAG, "OTA file saved to %s", spiffs_model_path);
             }
             break;
         case HTTP_EVENT_DISCONNECTED:
@@ -173,8 +167,8 @@ static void flask_download_model_task(void *param) {
         flask_state_flag[DOWN_LOAD_MODEL]=false;
 
     // 删除旧模型 
-    remove(model_path);
-    static FILE *f_model =fopen(model_path, "wb");
+    remove(spiffs_model_path);
+    static FILE *f_model =fopen(spiffs_model_path, "wb");
     if (!f_model) {
         ESP_LOGE("OTA", "Failed to open file for OTA");
         vTaskDelete(NULL);
@@ -222,6 +216,171 @@ static void flask_download_model_task(void *param) {
 
     vTaskDelete(NULL);
 }
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+void ota_check_update(void) {
+    char url[128];
+    snprintf(url, sizeof(url), "%s/api/ota/check-update?version=%s", OTA_SERVER_URL, CURRENT_VERSION);
+
+    esp_http_client_config_t config = {
+        .url = url,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+
+    esp_err_t err = esp_http_client_perform(client);
+    if (err == ESP_OK) {
+        int status = esp_http_client_get_status_code(client);
+        if (status == 200) {
+            int len = esp_http_client_get_content_length(client);
+            char *buffer =(char*) malloc(len + 1);
+            esp_http_client_read(client, buffer, len);
+            buffer[len] = '\0';
+            
+            ESP_LOGI(TAG, "Response: %s", buffer);
+
+            // 解析 JSON
+            cJSON *root = cJSON_Parse(buffer);
+            if (root) {
+                cJSON *update_available = cJSON_GetObjectItem(root, "update_available");
+                if (cJSON_IsTrue(update_available)) {
+                    ESP_LOGI(TAG, "New version available: %s", 
+                             cJSON_GetObjectItem(root, "latest_version")->valuestring);
+                } else {
+                    ESP_LOGI(TAG, "No update available");
+                }
+                cJSON_Delete(root);
+            }
+            free(buffer);
+        }
+    } else {
+        ESP_LOGE(TAG, "HTTP GET request failed: %s", esp_err_to_name(err));
+    }
+
+    esp_http_client_cleanup(client);
+}
+
+ 
+ 
+
+// CRC32 計算
+static uint32_t calc_crc32(const uint8_t *data, size_t len) {
+    return esp_crc32_le(0, data, len);
+}
+
+void ota_download_package(void) {
+    esp_http_client_config_t config = {
+        .url = OTA_SERVER_URL "/api/ota/package",
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+
+    esp_err_t err = esp_http_client_perform(client);
+    if (err == ESP_OK) {
+        int status = esp_http_client_get_status_code(client);
+        if (status == 200) {
+            int len = esp_http_client_get_content_length(client);
+            char *buffer = (char *)malloc(len + 1);
+            if (!buffer) {
+                ESP_LOGE(TAG, "malloc failed");
+                esp_http_client_cleanup(client);
+                return;
+            }
+
+            int read_len = esp_http_client_read(client, buffer, len);
+            buffer[read_len] = '\0';
+
+            ESP_LOGI(TAG, "OTA Package JSON: %s", buffer);
+
+            // === 1. 解析 JSON ===
+            cJSON *root = cJSON_Parse(buffer);
+            if (!root) {
+                ESP_LOGE(TAG, "JSON parse error");
+                free(buffer);
+                esp_http_client_cleanup(client);
+                return;
+            }
+
+            // 假設 OTA 包 JSON 格式:
+            // { "data": "<base64 string>", "crc32": 12345678 }
+            cJSON *data_b64 = cJSON_GetObjectItem(root, "data");
+            cJSON *crc_item = cJSON_GetObjectItem(root, "crc32");
+
+            if (!cJSON_IsString(data_b64) || !cJSON_IsNumber(crc_item)) {
+                ESP_LOGE(TAG, "Invalid JSON format");
+                cJSON_Delete(root);
+                free(buffer);
+                esp_http_client_cleanup(client);
+                return;
+            }
+
+            const char *b64_str = data_b64->valuestring;
+            uint32_t expected_crc = (uint32_t)crc_item->valuedouble;
+
+            // === 2. base64 decode ===
+
+            size_t out_len = 0;
+            int ret = mbedtls_base64_decode(NULL, 0, &out_len,
+                                            (const unsigned char *)b64_str, strlen(b64_str));
+            if (ret != 0 && ret != MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL) {
+                ESP_LOGE(TAG, "Base64 length calc failed (%d)", ret);
+                return;
+            }
+
+            uint8_t *bin_data =(uint8_t *) malloc(out_len);
+            if (!bin_data) {
+                ESP_LOGE(TAG, "malloc failed");
+                return;
+            }
+
+            ret = mbedtls_base64_decode(bin_data, out_len, &out_len,
+                                        (const unsigned char *)b64_str, strlen(b64_str));
+            if (ret != 0) {
+                ESP_LOGE(TAG, "Base64 decode failed (%d)", ret);
+                free(bin_data);
+                return;
+            }
+
+            ESP_LOGI(TAG, "Decoded length = %d", (int)out_len);
+
+
+ 
+
+            // === 3. CRC32 校驗 ===
+            uint32_t actual_crc = calc_crc32(bin_data, out_len);
+            if (actual_crc == expected_crc) {
+                ESP_LOGI(TAG, "CRC32 OK (0x%d)",(int) actual_crc);
+
+                // TODO: 把 bin_data 寫到 Flash / SPIFFS / 模型加載
+            } else {
+                ESP_LOGE(TAG, "CRC32 mismatch! expected=0x%d, got=0x%d",
+                        (int)  expected_crc, (int) actual_crc);
+            }
+
+            // 釋放
+            free(bin_data);
+            cJSON_Delete(root);
+            free(buffer);
+        }
+    } else {
+        ESP_LOGE(TAG, "Failed to download OTA package: %s", esp_err_to_name(err));
+    }
+
+    esp_http_client_cleanup(client);
+}
+
  
 
 void flask_download_model_ota_task(void *param){
@@ -364,8 +523,8 @@ extern "C" void hvac_agent(void) {
  
 }
  
-
-extern "C" pid_run_output_st nn_ppo_infer() {
+extern "C" pid_run_output_st nn_ppo_infer(void) {
+    pid_run_output_st output_speed;
 
     // 尝试下载 OTA model_version == 0 &&
     //if( !ppoModel.downloadModel(bin_url, model_path)) {
@@ -374,7 +533,7 @@ extern "C" pid_run_output_st nn_ppo_infer() {
 
     //const char* version = "1.0.0";
     //ModelOTAUpdater otaUpdater( check_url, download_url, "/spiffs/model.bin",version  );
-    static pid_run_output_st 		output_speed;
+    
     // OTA 拉取最新 PPO 参数
     //if (otaUpdater.checkUpdate()) {
     //    printf("✅ Model updated from server\n");
@@ -382,9 +541,13 @@ extern "C" pid_run_output_st nn_ppo_infer() {
 
     // 初始化 PPO 推理网络
     NN  ppoNN(5, 32, 4);  // state_dim=5, hidden=32, action_dim=4
-    if (ppoNN.loadWeights("/spiffs/model.bin")) {
-        printf("✅ Weights loaded into PPO NN\n");
+    if (ppoNN.loadWeights("/spiffs/model.bin")==false) {
+        ESP_LOGI(TAG, "Failed to load weights\n");
+        output_speed.speed[0] =11;
+        return output_speed;
     }
+    ESP_LOGI(TAG," Weights loaded into PPO NN\n");
+    
  
     std::vector<float> state = { bp_pid_th.t_feed, bp_pid_th.h_feed, bp_pid_th.l_feed, bp_pid_th.c_feed, 1.0};
     auto action_probs = ppoNN.forwardActor(state);
@@ -399,7 +562,7 @@ extern "C" pid_run_output_st nn_ppo_infer() {
     printf("Action probs: ");
     for (auto p : action_probs) printf("%.3f ", p);
     printf("\nCritic value: %.3f\n", value);
-    return output_speed;
+    return output_speed ;
 }
 
  

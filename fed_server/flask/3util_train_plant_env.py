@@ -6,10 +6,10 @@ import random
   
 import os
 
-from util_hvac_PPO import PPOBuffer
-from util_hvac_PPO import PlantHVACEnv,PlantLLLHVACEnv
-from util_hvac_PPO import  LifelongESP32PPOAgent
-from util_hvac_PPO import process_experiences,compute_returns,compute_advantages,collect_experiences
+from util_hvac_agent import PPOBuffer
+from util_hvac_agent import PlantHVACEnv,PlantLLLHVACEnv
+from util_hvac_agent import  LifelongESP32PPOAgent
+from util_hvac_agent import process_experiences,compute_returns,compute_advantages,collect_experiences
 
 
 
@@ -246,8 +246,8 @@ def train_ppo_simple():
 # 批量训练版本
 def train_ppo_with_batching():
     env = PlantHVACEnv()
-    agent = SimplePPOAgent(state_dim=3, action_dim=4)
-    buffer = PPOBuffer(state_dim=3, action_dim=4, buffer_size=1024)
+    agent = SimplePPOAgent(state_dim=5, action_dim=4)
+    buffer = PPOBuffer(state_dim=5, action_dim=4, buffer_size=1024)
 
     params = {
         "energy_penalty": 0.1,
@@ -435,6 +435,7 @@ def trainbytask_lifelong_ppo(agent):
     # 创建环境和智能体
     #env = PlantHVACEnv(mode="flowering")
     # 创建多个不同的环境（代表不同任务）
+    # PlantLLLHVACEnv states[health, temp, humid, light, co2]
     tasks = [
         PlantLLLHVACEnv(mode="flowering"),
         PlantLLLHVACEnv(mode="seeding"),

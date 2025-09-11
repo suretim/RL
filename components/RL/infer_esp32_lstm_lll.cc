@@ -48,7 +48,7 @@ extern "C" {
 #include <stdint.h>
 #include <string.h> 
 #include "sensor_module.h" 
-
+#include "hvac_q_agent.h"
 
 
 
@@ -74,7 +74,8 @@ extern "C" {
 //extern const unsigned int lstm_encoder_contrastive_tflite_len;
 
 extern const unsigned char meta_model_tflite[];
-extern const unsigned int meta_model_tflite_len;
+//extern const unsigned char actor_tflite[];
+//extern const unsigned int meta_model_tflite_len;
 
 extern float *fisher_matrix;
 extern float *theta ; 
@@ -131,7 +132,10 @@ std::string shape_to_string(const std::vector<int>& shape) {
 // 初始化 TFLite Micro interpreter
 bool init_spiffs_model(const char *model_path) {
     FILE *f = fopen(model_path, "rb");
-    if(!f) { ESP_LOGE(TAG,"Failed to open model"); return false; }
+    if(!f) { 
+        ESP_LOGE(TAG,"Failed to open model");
+        return false; 
+    }
     fseek(f, 0, SEEK_END);
     size_t model_size = ftell(f);
     fseek(f, 0, SEEK_SET);
@@ -141,25 +145,28 @@ bool init_spiffs_model(const char *model_path) {
 
     const tflite::Model *model = tflite::GetModel(model_data);
     if(model->version() != TFLITE_SCHEMA_VERSION) {
-        ESP_LOGE(TAG,"Model schema mismatch"); free(model_data); return false;
+        ESP_LOGE(TAG,"Model schema mismatch");
+        free(model_data); 
+        model=nullptr;
+        return false;
     }
     return true;
 }
 
 
 
-bool init_tflite_model(void) {
+bool init_tflite_model(const unsigned char model_tflite[]) {
     
-    model = tflite::GetModel(meta_model_tflite);
+    model = tflite::GetModel(model_tflite);
     if (model->version() != TFLITE_SCHEMA_VERSION) {
       MicroPrintf("Model provided is schema version %d not equal to supported "
                   "version %d.", model->version(), TFLITE_SCHEMA_VERSION);
       return false ;
     } 
-    if (tensor_arena == NULL) {
+    if (tensor_arena == nullptr) {
        tensor_arena = (uint8_t*) heap_caps_malloc(kTensorArenaSize, MALLOC_CAP_SPIRAM);
     }
-    if (tensor_arena == NULL) {
+    if (tensor_arena == nullptr) {
       printf("Couldn't allocate memory of %d bytes\n", kTensorArenaSize);
       return false;
     }
@@ -170,13 +177,22 @@ bool init_tflite_model(void) {
   
 bool init_model(int type)
 {
-    if(type == 0) {
-        init_spiffs_model("/model/lstm_encoder_contrastive.tflite");
-        
+    if(model!=nullptr) {
+        return false;
     }
-    if(type == 1) {
-        init_tflite_model();
-       
+    ESP_LOGI(TAG,"Model loadding..."); 
+    if(type == PPO_CASE && init_spiffs_model("/model/lstm_encoder_contrastive.tflite")==false) {
+        ESP_LOGE(TAG,"Failed to load model"); 
+        return false;
+    }
+    
+    if(type == NN_PPO_CASE&& init_tflite_model(meta_model_tflite)==false) {  
+        ESP_LOGE(TAG,"Failed to load model");
+        return false;    
+    }
+    if(type == SARSA_CASE && init_tflite_model(meta_model_tflite)==false) { 
+        ESP_LOGE(TAG,"Failed to load model");
+        return false; 
     }
     static tflite::MicroInterpreter static_interpreter(model, micro_op_resolver, tensor_arena, kTensorArenaSize);
     interpreter = &static_interpreter;
@@ -197,8 +213,7 @@ bool init_model(int type)
           return false;
       }
     ESP_LOGI(TAG,"Interpreter ready. Input=%d Output=%d",
-             input_tensor->bytes/sizeof(float), output_tensor->bytes/sizeof(float));
-    
+             input_tensor->bytes/sizeof(float), output_tensor->bytes/sizeof(float)); 
     
     printf("input dims: %d %d %d %d  output dims: %d %d  \n",
         input_tensor->dims->data[0],
@@ -207,17 +222,14 @@ bool init_model(int type)
         input_tensor->dims->data[3],
         output_tensor->dims->data[0],
         output_tensor->dims->data[1] 
-    );
-
+    ); 
     free(tensor_arena);
     tensor_arena = nullptr;
     if(SEQ_LEN!=input_tensor->dims->data[1] || FEATURE_DIM!=input_tensor->dims->data[2] ) 
     {
         printf("input tensor dims not match  %d %d but %d %d \n",SEQ_LEN,FEATURE_DIM,input_tensor->dims->data[1],input_tensor->dims->data[2]);  
         return false;
-    }
-
-    
+    }  
     return true;
 }
 
@@ -378,7 +390,7 @@ void reset_tensor(void)
 
 
 // The name of this function is important for Arduino compatibility.
-TfLiteStatus sarsa_loop() {
+TfLiteStatus infer_loop() {
   
     // 推理範例
     //float* input = interpreter.input(0)->data.f;
@@ -395,12 +407,10 @@ TfLiteStatus sarsa_loop() {
     printf("Inference output: ");
     for(int i=0; i<NUM_CLASSES; ++i) printf("%.3f ", output[i]);
     printf("\n");
-
+#if INFER_CASE == SARSA_CASE
     // 計算 EWC loss
     float ewc_loss = compute_ewc_loss( trainable_layers, fisher_layers);
     printf("EWC loss: %.6f\n", ewc_loss);
-    
-
     // int flowering = is_flowering_seq(x_input, 550.0f);
     // int toggle_flag;
     // float toggle_rate = hvac_toggle_score(x_input, 0.15f, &toggle_flag);
@@ -409,7 +419,7 @@ TfLiteStatus sarsa_loop() {
     // printf("Predicted probabilities: ");
     // for (int i=0; i<NUM_CLASSES; i++) printf("%.4f ", out_prob[i]);
     // printf("\n");
-
+#endif     
     
     get_mqtt_feature(output_tensor->data.f); 
     int predicted = classifier_predict(output_tensor->data.f);
@@ -481,54 +491,47 @@ void parse_ewc_assets() {
     ewc_ready = false;
 }
  
-esp_err_t ppo_inference(void) {
-
-    
-   
+esp_err_t ppo_inference(float *input_data) {
+ 
      
  // 假设模型只用 10 种算子
     tflite::MicroMutableOpResolver<10> micro_op_resolver;
     micro_op_resolver.AddFullyConnected();
     micro_op_resolver.AddSoftmax();
-    micro_op_resolver.AddReshape();
-
-  init_model(1);
+    micro_op_resolver.AddReshape(); 
+    init_model(1);  
  
-
-     
- 
-    float input_data[50] = {0};
-    float out_logits[40] = {0}; 
+    //float input_data[50] = {0};
+    
     // 填充输入数据
-        for(int i=0;i<50;i++) input_data[i] = (float) rand () / UINT32_MAX;
+    //    for(int i=0;i<50;i++) input_data[i] = (float) rand () / UINT32_MAX;
 
      int seq_len= input_tensor->dims->data[1];
      int num_feats= input_tensor->dims->data[2];
      for (int t=0; t<seq_len; t++)
             for (int f=0; f<num_feats; f++)
                 input_tensor->data.f[t*num_feats + f] = input_data[t*num_feats+f];
-
+    infer_loop();
+#if 0
     TfLiteStatus invoke_status = interpreter->Invoke();
     if (invoke_status != kTfLiteOk) {
         ESP_LOGE(TAG, "Invoke failed");
         return kTfLiteError;
-    }
-      
-    
-     
+    }  
+    float out_logits[40] = {0};  
     int num_classes = output_tensor->dims->data[1];
     memcpy(out_logits, output_tensor->data.f, num_classes * sizeof(float));
     printf("PPO Inference output: ");
     for(int i=0; i<num_classes; ++i) printf("%.3f ", out_logits[i]);
     printf("\n");           
-     
+#endif 
     return kTfLiteOk;
 }
   
 // The name of this function is important for Arduino compatibility.
 //TfLiteStatus setup(void) {
-TfLiteStatus sarsa_inference(float* input_seq, int seq_len, int num_feats, float* out_logits) {
-    
+TfLiteStatus sarsa_inference( float* input_seq, float* out_logits) {
+    // int seq_len, int num_feats
     tflite::MicroMutableOpResolver<24> micro_op_resolver;
     micro_op_resolver.AddStridedSlice();
     micro_op_resolver.AddPack();
@@ -554,17 +557,14 @@ TfLiteStatus sarsa_inference(float* input_seq, int seq_len, int num_feats, float
 
     micro_op_resolver.AddMean();
     micro_op_resolver.AddAbs();
-    micro_op_resolver.AddConcatenation();
-
-     
-          init_model(1);
-
+    micro_op_resolver.AddConcatenation();  
+    init_model(1); 
     // 微调示意：更新权重，EWC参与 
     parse_ewc_assets();   
  
     for (int t=0; t<SEQ_LEN; t++)
-            for (int f=0; f<FEATURE_DIM; f++)
-                input_tensor->data.f[t*FEATURE_DIM + f] = input_seq[t*FEATURE_DIM+f];
+        for (int f=0; f<FEATURE_DIM; f++)
+            input_tensor->data.f[t*FEATURE_DIM + f] = input_seq[t*FEATURE_DIM+f];
      
     
      
@@ -572,37 +572,57 @@ TfLiteStatus sarsa_inference(float* input_seq, int seq_len, int num_feats, float
      
     //int num_classes = output->dims->data[1];
     //memcpy(out_logits, output->data.f, num_classes * sizeof(float));
+    infer_loop();
+     
+     
+     
+    vTaskDelay(1); // to avoid watchdog trigger 
+   //   interpreter->ResetTempAllocations();
+
+    //free(tensor_arena);
+   // ESP_LOGI(TAG, "推理完成，系统正常运行");
  
-    TfLiteStatus invoke_status = interpreter->Invoke();
-    if (invoke_status != kTfLiteOk) {
-        ESP_LOGE(TAG, "Invoke failed");
-        return kTfLiteError;
-    }
+    return kTfLiteOk;
+}
+  
+TfLiteStatus img_inference( float* input_seq, float* out_logits) {
+    // int seq_len, int num_feats
+    tflite::MicroMutableOpResolver<24> micro_op_resolver;
+    micro_op_resolver.AddStridedSlice();
+    micro_op_resolver.AddPack();
+    micro_op_resolver.AddConv2D();
+    micro_op_resolver.AddRelu(); 
+    micro_op_resolver.AddAveragePool2D();
+    micro_op_resolver.AddReshape();  // 🔧 添加这个
+    micro_op_resolver.AddFullyConnected();  // 如果你有 dense 层也要加
+    micro_op_resolver.AddQuantize();
+    micro_op_resolver.AddDequantize();
+    micro_op_resolver.AddSoftmax();
+
+    micro_op_resolver.AddAdd(); 
+    micro_op_resolver.AddSub();
+    micro_op_resolver.AddMul();
+    micro_op_resolver.AddShape();
+    micro_op_resolver.AddTranspose();
+    micro_op_resolver.AddUnpack();  
+    micro_op_resolver.AddFill();
+    micro_op_resolver.AddSplit(); 
+    micro_op_resolver.AddLogistic();  // This handles sigmoid activation CONCATENATION
+    micro_op_resolver.AddTanh();
+
+    micro_op_resolver.AddMean();
+    micro_op_resolver.AddAbs();
+    micro_op_resolver.AddConcatenation();  
+    init_model(INFER_CASE); 
+    for (int t=0; t<SEQ_LEN; t++)
+        for (int f=0; f<FEATURE_DIM; f++)
+            input_tensor->data.f[t*FEATURE_DIM + f] = input_seq[t*FEATURE_DIM+f];
       
-    
-    float* output = output_tensor->data.f;
-    printf("Inference output: ");
-    for(int i=0; i<NUM_CLASSES; ++i) printf("%.3f ", output[i]);
-    printf("\n");
-
-    // 計算 EWC loss
-    float ewc_loss = compute_ewc_loss( trainable_layers, fisher_layers);
-    printf("EWC loss: %.6f\n", ewc_loss);
-    
-
-    // int flowering = is_flowering_seq(x_input, 550.0f);
-    // int toggle_flag;
-    // float toggle_rate = hvac_toggle_score(x_input, 0.15f, &toggle_flag);
-
-    // printf("Flowering: %d, Toggle Rate: %.4f, Toggle Flag: %d\n", flowering, toggle_rate, toggle_flag);
-    // printf("Predicted probabilities: ");
-    // for (int i=0; i<NUM_CLASSES; i++) printf("%.4f ", out_prob[i]);
-    // printf("\n");
-
-    
-    get_mqtt_feature(output_tensor->data.f); 
-    int predicted = classifier_predict(output_tensor->data.f);
-    printf("Predicted class: %d\n", predicted); 
+    // 7) 读取输出 
+    //int num_classes = output->dims->data[1];
+    //memcpy(out_logits, output->data.f, num_classes * sizeof(float));
+    infer_loop(); 
+     
     vTaskDelay(1); // to avoid watchdog trigger 
    //   interpreter->ResetTempAllocations();
 
@@ -612,19 +632,58 @@ TfLiteStatus sarsa_inference(float* input_seq, int seq_len, int num_feats, float
     return kTfLiteOk;
 }
 
+
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
- #include "ml_pid.h"
+#include "ml_pid.h"
 
-float input_seq[SEQ_LEN * FEATURE_DIM] = {25.0};  // 从传感器读取
-float logits[NUM_CLASSES];
- 
-
-
+float input_seq[SEQ_LEN * FEATURE_DIM] = {0.0};  // 从传感器读取
+float logits[NUM_CLASSES]= {0.0};
+pid_run_input_st lll_tensor_run_input = {0};  
 pid_run_output_st ml_pid_out_speed;
+int load_up_input_seq(void)
+{
+      int cnt=0;
 
+#if INFER_CASE == PPO_CASE
+    input_seq[cnt*FEATURE_DIM + 0] = (float)0.0;
+    input_seq[cnt*FEATURE_DIM + 1] = (float)bp_pid_th.t_feed;
+    input_seq[cnt*FEATURE_DIM + 2] = (float)bp_pid_th.h_feed;
+    input_seq[cnt*FEATURE_DIM + 3] = (float)bp_pid_th.l_feed;
+    input_seq[cnt*FEATURE_DIM + 4] = (float)bp_pid_th.c_feed;
+#elif INFER_CASE == SARSACASE
+    int h_idx=-1;
+    uint8_t geer[6];
+    for(int port=1;port<9;port++)
+    {     
+        switch(  devs_type_list[port].real_type  ) 
+        {
+            case loadType_heater:	h_idx=DEV_TU;  break;
+            case loadType_A_C:		h_idx=DEV_TD;  break;
+            case loadType_humi:		h_idx=DEV_HU;  break;
+            case loadType_dehumi:	h_idx=DEV_HD;  break;
+            case loadType_inlinefan:h_idx=(bp_pid_th.v_outside- bp_pid_th.v_feed)>=0?DEV_VU:DEV_VD; break;
+            case loadType_fan:      h_idx=(bp_pid_th.v_outside- bp_pid_th.v_feed)>=0?DEV_VU:DEV_VD;   break;
+            default:               break;
+        }
+        if(h_idx>=0)
+            geer[h_idx] = ml_pid_out_speed.speed[port];
+    }
+    input_seq[cnt*FEATURE_DIM + 0] = (float)bp_pid_th.t_feed;
+    input_seq[cnt*FEATURE_DIM + 1] = (float)bp_pid_th.h_feed;
+    input_seq[cnt*FEATURE_DIM + 2] = (float)bp_pid_th.l_feed;
+    input_seq[cnt*FEATURE_DIM + 3] = (float)geer[0];
+    input_seq[cnt*FEATURE_DIM + 4] = (float)geer[1];
+    input_seq[cnt*FEATURE_DIM + 5] = (float)geer[2];
+    input_seq[cnt*FEATURE_DIM + 6] = (float)geer[3];//+rand() % 10;
+#endif
+    cnt++;
+    cnt=cnt%SEQ_LEN;
+    return (cnt);
+}
 //u_int8_t get_tensor_state(void);
 esp_err_t  lll_tensor_run(void) 
 {
@@ -640,66 +699,46 @@ esp_err_t  lll_tensor_run(void)
     // extern void pid_param_get(ai_setting_t *ai_setting, uint8_t* load_type_list, uint8_t* dev_origin_list, int16_t* env_value_list, pid_run_input_st* param);
      
      
-    read_all_sensor();
-    pid_run_input_st pid_run_input = {0};
+    read_all_sensor_trigger();
     // pid_param_get(&g_ai_setting, NULL, NULL, NULL, &pid_run_input );
-    pid_run_input.dev_type[0] = loadType_heater;
-    pid_run_input.is_switch[0] = 1;
-    pid_run_input.env_en_bit  = 0xf;
-    pid_run_input.ml_run_sta  = 1;
-    pid_run_input.env_target[ENV_TEMP]=32.0;
-    pid_run_input.env_target[ENV_HUMID]=32.0;
-    pid_run_input.env_target[ENV_LIGHT]=320;
-    ml_pid_out_speed= pid_run_rule( &pid_run_input );
-    devs_type_list[1].real_type = loadType_heater;
-    devs_type_list[2].real_type = loadType_A_C;
-    devs_type_list[3].real_type = loadType_humi;
-    devs_type_list[4].real_type = loadType_dehumi;
-    int h_idx=-1;
-    uint8_t geer[6];
+     
+    lll_tensor_run_input.env_en_bit  = 0xff;
+    lll_tensor_run_input.ml_run_sta  = 1;
+    lll_tensor_run_input.env_target[ENV_TEMP] =30.0;
+    lll_tensor_run_input.env_target[ENV_HUMID]=60.0;
+    lll_tensor_run_input.env_target[ENV_LIGHT]=320;
+    lll_tensor_run_input.env_target[ENV_CO2]  =500;
+    devs_type_list[1].real_type = lll_tensor_run_input.dev_type[1] =loadType_A_C;
+    devs_type_list[2].real_type = lll_tensor_run_input.dev_type[2]= loadType_heater;
+    devs_type_list[3].real_type = lll_tensor_run_input.dev_type[3]= loadType_dehumi;
+    devs_type_list[4].real_type = lll_tensor_run_input.dev_type[4]= loadType_humi;
+    devs_type_list[5].real_type = lll_tensor_run_input.dev_type[5]= loadType_A_C;
+    devs_type_list[6].real_type = lll_tensor_run_input.dev_type[6]= loadType_heater;
+    devs_type_list[7].real_type = lll_tensor_run_input.dev_type[7]= loadType_dehumi;
+    devs_type_list[8].real_type = lll_tensor_run_input.dev_type[8]= loadType_humi;
     for(int port=1;port<9;port++)
-    {
-        switch(  devs_type_list[port].real_type  ) 
-        {
-            case loadType_heater:	h_idx=DEV_TU;  break;
-            case loadType_A_C:		h_idx=DEV_TD;  break;
-            case loadType_humi:		h_idx=DEV_HU;  break;
-            case loadType_dehumi:	h_idx=DEV_HD;  break;
-            case loadType_inlinefan:h_idx=(bp_pid_th.v_outside- bp_pid_th.v_feed)>=0?DEV_VU:DEV_VD; break;
-            case loadType_fan:      h_idx=(bp_pid_th.v_outside- bp_pid_th.v_feed)>=0?DEV_VU:DEV_VD;   break;
-            default:               break;
-        }
-        if(h_idx>=0)
-            geer[h_idx] = ml_pid_out_speed.speed[port];
+    {    
+        lll_tensor_run_input.is_switch[port] = 1;
     }
-    //return ESP_OK;
-     static int cnt=0; 
-     //while (true)
-     //{ 
-        //
-        if(cnt==SEQ_LEN)
+    ml_pid_out_speed= pid_run_rule( &lll_tensor_run_input ); 
+     
+    if(load_up_input_seq()==0)
+    {    
+#if INFER_CASE == PPO_CASE 
+        if( kTfLiteError == ppo_inference(input_seq))  
+#elif INFER_CASE == SARSA_CASE
+        if( kTfLiteError ==  sarsa_inference(input_seq) )
+#elif INFER_CASE == IMG_CASE
+        if( kTfLiteError ==  sarsa_inference(input_seq) )
+#endif
         {
-            //ESP_LOGI(TAG, "run_inference %d",cnt);
-            if(kTfLiteError == ppo_inference())
-            //if( kTfLiteError ==  sarsa_inference(input_seq, SEQ_LEN, FEATURE_DIM, logits) )
-            {
-                vTaskDelay(pdMS_TO_TICKS(10));
-                return ESP_FAIL;  //kTfLiteOK
-            }
-            //ESP_LOGI(TAG, "run_inference logits %f,%f,%f",logits[0],logits[1],logits[2]);
-            cnt=0;
-        }
-        input_seq[cnt*FEATURE_DIM + 0] = (float)bp_pid_th.t_feed;
-        input_seq[cnt*FEATURE_DIM + 1] = (float)bp_pid_th.h_feed;
-        input_seq[cnt*FEATURE_DIM + 2] = (float)bp_pid_th.l_feed;
-        input_seq[cnt*FEATURE_DIM + 3] = (float)geer[0];
-        input_seq[cnt*FEATURE_DIM + 4] = (float)geer[1];
-        input_seq[cnt*FEATURE_DIM + 5] = (float)geer[2];
-        input_seq[cnt*FEATURE_DIM + 6] = (float)geer[3];//+rand() % 10;
+            vTaskDelay(pdMS_TO_TICKS(10));
+            return ESP_FAIL;  //kTfLiteOK
+        }    
+    } 
         //ESP_LOGI(TAG, "Set up 2 input tensor %d",cnt);
-        cnt++;
         
-      vTaskDelay(pdMS_TO_TICKS(1000));  // 60000 每60秒输出一次
+        vTaskDelay(pdMS_TO_TICKS(1000));  // 60000 每60秒输出一次
       //  vTaskDelay(30000 / portTICK_PERIOD_MS);
     //}  
     //reset_tensor();

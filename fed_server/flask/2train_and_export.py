@@ -3,7 +3,7 @@ import numpy as np
 import json
 import os
 from tf_utils import create_representative_dataset_from_ESP32BaseExporter
-from util_hvac_PPO import LifelongESP32PPOAgent,LifelongPPOBaseAgent,TensorFlowESP32BaseExporter
+from util_hvac_agent import LifelongESP32PPOAgent,LifelongPPOBaseAgent,TensorFlowESP32BaseExporter
 
 
 def train_and_export():

@@ -14,21 +14,17 @@ enum flask_state{
 };
 // ======= WiFi 與 OTA 配置 ======= 
 #if 0
-    const char* base_url ="192.168.68.237:5000";
-    const char* check_url = "http://192.168.68.237:5000/api/check-update/device001/1.0.0";
-    const char* download_url = "http://192.168.68.237:5000/api/download-update";
-    //#define OTA_URL "http://192.168.68.237:5000/api/bin-update"
+     #define BASE_URL  "192.168.68.237"     
 #else
     #define BASE_URL  "192.168.30.132" 
-    #define BASE_PORT "5000"
     //const char* check_url = "http://192.168.0.57:5000/api/check-update/device001/1.0.0";
     //const char* download_url = "http://192.168.0.57:5000/api/download-update";
     //const char* download_bin_url = "http://192.168.0.57:5000/api/bin-update";
     //#define OTA_BIN_UPDATE_URL "http://192.168.0.57:5000/api/bin-update"
 #endif
-//#define LOCAL_MODEL_FILE "/spiffs/ppo_model.bin"
-// 每个维度可能取值数
-
+#define BASE_PORT "5000"
+#define POLICY_PORT "5001"
+  
 #if 0
 const int STATE_SIZES[STATE_DIM] = {2, 2, 2, 3, 3}; // 例：health 0/1, light 0/1/2 等
 

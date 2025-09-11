@@ -7,28 +7,37 @@
 
 
 #define PPO_CASE 1
-#define SARSA_CASE 2
-#define IMG_CASE 3
+#define NN_PPO_CASE 2
+#define SARSA_CASE 3
+#define IMG_CASE 4
 #define INFER_CASE PPO_CASE
 
 
 // 全局参数 (需在你的工程中定义实际大小)
  
 #define PPO_FEATURE_DIM 5
+#define NN_PPO_FEATURE_DIM 5
 #define SARSA_FEATURE_DIM 7
 #define IMG_FEATURE_DIM 64 
  
-#define SARSA_CLASSES 3
 #define PPO_CLASSES 4
+#define NN_PPO_CLASSES 4
+#define SARSA_CLASSES 3
 #define IMG_CLASSES 3
-#define SARSA_SEQ_LEN 10
+
 #define PPO_SEQ_LEN 1 
+#define NN_PPO_SEQ_LEN 10 
+#define SARSA_SEQ_LEN 10
 #define IMG_SEQ_LEN 64
  
 #if INFER_CASE == PPO_CASE
   #define FEATURE_DIM (PPO_FEATURE_DIM)
   #define NUM_CLASSES (PPO_CLASSES)
-  #define SEQ_LEN (PPO_SEQ_LEN)
+  #define SEQ_LEN     (PPO_SEQ_LEN)
+#elif INFER_CASE == NN_PPO_CASE
+  #define FEATURE_DIM (NN_PPO_FEATURE_DIM)
+  #define NUM_CLASSES (NN_PPO_CLASSES)
+  #define SEQ_LEN     (NN_PPO_SEQ_LEN)
 #elif INFER_CASE == SARSA_CASE
   #define FEATURE_DIM (SARSA_FEATURE_DIM)
   #define NUM_CLASSES (SARSA_CLASSES)

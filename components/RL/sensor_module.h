@@ -74,7 +74,7 @@ extern void ai_insight_set_light_is_ruuning_flag();
 
 extern bool get_aiinsight_be_reset_flag(uint8_t insight_id);
  
-void read_all_sensor();
+void read_all_sensor_trigger();
 #endif
 
 

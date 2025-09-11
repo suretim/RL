@@ -870,18 +870,7 @@ void dbg_task_loop(void *arg)
 
 #endif
 
-
-// 
-
-// void get_target_diff(void)
-// {
-// 	target_diff[0][0]  = bp_pid_th.e[0][0];
-// 	target_diff[0][1]  = -target_diff[0][0];
-// 	target_diff[0][2]  = bp_pid_th.e[0][1];
-// 	target_diff[0][3]  = -target_diff[0][2];
-// 	target_diff[0][4]  = bp_pid_th.e[0][2];
-// 	target_diff[0][5]  = -target_diff[0][4];
-// }
+ 
 
 unsigned int * pso_latin_permutation(void)
 {
@@ -979,10 +968,7 @@ perm=pso_latin_permutation();
 	}
 }
 
-
-
-
-
+ 
 unsigned int pso_mae_val( double *fitness)
 {
 	unsigned int  	d=0;
@@ -990,35 +976,33 @@ unsigned int pso_mae_val( double *fitness)
 	double err=0;
 	static unsigned int buf_idx=0;
 	//pso.buf_cnt = 10 ; 
-		*fitness=0;
-		for(d=0;d<NUM_ENV_TYPE;d++)
-		{
-			// if(bp_pid_th.du_gain[d] < 0)  du_status[d] |= 1 << 0;
-			// else  	du_status[d] |= 1 << 1; 	
-		
-			err =bp_pid_th.e[0][d];
-			err = err + 0.01 * err * err +	0.01 * bp_pid_th.du_gain[d] ;/// pso_pos_max_tab[0]  ;
-			pso.mae_buf[0][d] *=buf_idx;
-			pso.mae_buf[0][d] += err; 
-			pso.mae_buf[0][d] /=(buf_idx+1);
-			pso.mae_buf[1][d]=(buf_idx==0  )?fabs(err):pso.mae_buf[1][d];	  
-			pso.mae_buf[1][d]=(pso.mae_buf[1][d] < fabs(pso.mae_buf[0][d]))? pso.mae_buf[1][d]:fabs(pso.mae_buf[0][d]);
-						
-			// if((du_status[d] & 0x03) != 0x03) 
-			// {
-			// 	pso.mae_buf[pso.swarm_idx][d]  =50; 
-			// 	du_status[d]=0;
-			// }
-			*fitness+= fabs(pso.mae_buf[0][d] );
-		}
-		
-		buf_idx=buf_idx>=40? 0:buf_idx+1;
+	*fitness=0;
+	for(d=0;d<NUM_ENV_TYPE;d++)
+	{
+		// if(bp_pid_th.du_gain[d] < 0)  du_status[d] |= 1 << 0;
+		// else  	du_status[d] |= 1 << 1; 	
+	
+		err =bp_pid_th.e[0][d];
+		err = err + 0.01 * err * err +	0.01 * bp_pid_th.du_gain[d] ;/// pso_pos_max_tab[0]  ;
+		pso.mae_buf[0][d] *=buf_idx;
+		pso.mae_buf[0][d] += err; 
+		pso.mae_buf[0][d] /=(buf_idx+1);
+		pso.mae_buf[1][d]=(buf_idx==0  )?fabs(err):pso.mae_buf[1][d];	  
+		pso.mae_buf[1][d]=(pso.mae_buf[1][d] < fabs(pso.mae_buf[0][d]))? pso.mae_buf[1][d]:fabs(pso.mae_buf[0][d]);
+					
+		// if((du_status[d] & 0x03) != 0x03) 
+		// {
+		// 	pso.mae_buf[pso.swarm_idx][d]  =50; 
+		// 	du_status[d]=0;
+		// }
+		*fitness+= fabs(pso.mae_buf[0][d] );
+	}
+	
+	buf_idx=buf_idx>=40? 0:buf_idx+1;
 
-		//bp_pid_dbg("mae measaure[%d][%d] %.3f,%.3f,%.3f,%.3f\r\n",pso.swarm_idx,buf_idx,*fitness	,pso.mae_buf[1][ENV_T],pso.mae_buf[1][ENV_H],pso.mae_buf[1][ENV_V]);
+	//bp_pid_dbg("mae measaure[%d][%d] %.3f,%.3f,%.3f,%.3f\r\n",pso.swarm_idx,buf_idx,*fitness	,pso.mae_buf[1][ENV_T],pso.mae_buf[1][ENV_H],pso.mae_buf[1][ENV_V]);
 		 
-		 
-	 
-//*fitness=100;
+	//*fitness=100;
 	
 	if(*fitness>50.0 ){
 		bp_pid_dbg("fitness= %f reset[%d]:fit(%.2f,%.2f %.2f) \r\n", *fitness,pso.swarm_idx,pso.mae_buf[1][ENV_T],pso.mae_buf[1][ENV_H], pso.global_bestval);
@@ -1064,6 +1048,8 @@ unsigned int chex_swarm(double new_mae)
 	}
 	return NUM_PARTICLES;
 }
+
+
 void pso_check(double new_mae)  //^(?!.*global_fit).+(\n|$)  
 {
 	
@@ -1135,6 +1121,8 @@ uint8 i=0,d=0;
 	#endif
 	return;
 }
+
+
 unsigned char   pso_get_val(void)
 {	 
 	static unsigned char check_time=0;
@@ -1241,8 +1229,6 @@ bp_pid_dbg("check_idx[0x%x][%d][0x%x] ,pitch_energ=%.0f,%.0f,%.0f ,avg_pitchs=%.
 	//bp_pid_dbg(" get feed=(%.2f,%.2f) tgt=(%.2f,%.2f) mae=(%.2f,%.2f,%.2f) \r\n" ,bp_pid_th.t_feed,bp_pid_th.h_feed,bp_pid_th.t_target,bp_pid_th.h_target, bp_pid_th.hvac_mae[0], bp_pid_th.hvac_mae[2] ,fitness);
 	return ck;
 }
-
-
 
 
 static double update_particles (void)//float t_target, float t_feed, float h_target, float h_feed, float v_target, float v_feed) //^bp_pid_run.*$\r?\n
@@ -1505,9 +1491,7 @@ static pid_run_output_st bp_pid_th_proc(short dev_type,uint8_t *input_dev_type  
 	return output;
 }
 
-
-
-
+ 
 float pid_cal_vpd(float t, float rh)
 {
 	float dx;
@@ -1517,6 +1501,42 @@ float pid_cal_vpd(float t, float rh)
 	return dx;
 }
 
+extern s16 ml_get_cur_temp();
+extern s16 ml_get_cur_humid();
+extern s16 ml_get_outside_temp();
+extern s16 ml_get_outside_humid();
+extern s16 ml_get_outside_vpd();
+extern s16 ml_get_cur_vpd();
+
+
+void read_all_sensor_soft(pid_run_input_st* input )
+{
+	bp_pid_th.t_target  = input->env_target[ENV_TEMP]/10.0f;
+	bp_pid_th.t_feed    = ml_get_cur_temp()/10;//input->env_value_cur[ENV_TEMP]/10.0f;
+	bp_pid_th.t_outside = ml_get_outside_temp()/10;//input->env_value_cur[ENV_TEMP]/10.0f;
+	if(is_temp_unit_f())
+	{	//C = (F - 32) × 5/9
+		bp_pid_th.t_target = (bp_pid_th.t_target - 32) * 5 / 9;
+		bp_pid_th.t_feed   = (bp_pid_th.t_feed   - 32) * 5 / 9;
+		bp_pid_th.t_outside= (bp_pid_th.t_outside- 32) * 5 / 9;
+	}
+	bp_pid_th.h_target = input->env_target[ENV_HUMID]/10.0f;
+	bp_pid_th.h_feed   = ml_get_cur_humid()/10;//nput->env_value_cur[ENV_HUMID]/10.0f;
+	bp_pid_th.h_outside =   ml_get_outside_humid()/10;//nput->env_value_cur[ENV_HUMID]/10.0f;
+	if(input->env_en_bit & (1 << ENV_VPD))
+	{
+		bp_pid_th.v_target = input->env_target[ENV_VPD]/100.0;
+		//bp_pid_dbg(" env v_target=%.2f,v_feed= %.2f, v_inside= %.2f  \r\n", pid_arg.v_target, pid_arg.v_feed,pid_arg.v_inside  );
+	}
+	else
+	{
+		bp_pid_th.v_target =  pid_cal_vpd(bp_pid_th.t_target, bp_pid_th.h_target) ; 
+		//bp_pid_dbg(" cal v_target=%.2f,t_target= %.2f, h_target= %.2f  \r\n", pid_arg.v_target, pid_arg.t_target,pid_arg.h_target  );
+		//bp_pid_dbg(" cal v_target=%.2f,v_feed= %.2f, v_inside= %.2f  \r\n", pid_arg.v_target, pid_arg.v_feed,pid_arg.v_inside  );
+	}			
+	bp_pid_th.v_feed    = ml_get_cur_vpd()/100.0;//input->env_value_cur[ENV_VPD]/10.0f;
+	bp_pid_th.v_outside = ml_get_outside_vpd()/100.0;//in_side_vpd;
+}
 
 /// @brief 100ms call
 /// @param input 
@@ -1593,48 +1613,15 @@ pid_run_output_st pid_run_rule(pid_run_input_st* input)
 	//}	
 	ESP_LOGI(TAG,"input->env_en_bit %d ",(int) input->env_en_bit);
     //if((input->env_en_bit & (1 << ENV_TEMP))||(input->env_en_bit & (1 << ENV_HUMID))||(input->env_en_bit & (1 << ENV_VPD)))
-    { 
-		extern s16 ml_get_cur_temp();
-		extern s16 ml_get_cur_humid();
-		extern s16 ml_get_outside_temp();
-		extern s16 ml_get_outside_humid();
-		extern s16 ml_get_outside_vpd();
-		extern s16 ml_get_cur_vpd();
-
-		bp_pid_th.t_target  = input->env_target[ENV_TEMP]/10.0f;
-		bp_pid_th.t_feed    = ml_get_cur_temp()/10;//input->env_value_cur[ENV_TEMP]/10.0f;
-		bp_pid_th.t_outside = ml_get_outside_temp()/10;//input->env_value_cur[ENV_TEMP]/10.0f;
-		if(is_temp_unit_f())
-		{	//C = (F - 32) × 5/9
-			bp_pid_th.t_target = (bp_pid_th.t_target - 32) * 5 / 9;
-			bp_pid_th.t_feed   = (bp_pid_th.t_feed   - 32) * 5 / 9;
-			bp_pid_th.t_outside= (bp_pid_th.t_outside- 32) * 5 / 9;
-		}
-		bp_pid_th.h_target = input->env_target[ENV_HUMID]/10.0f;
-		bp_pid_th.h_feed   = ml_get_cur_humid()/10;//nput->env_value_cur[ENV_HUMID]/10.0f;
-		bp_pid_th.h_outside =   ml_get_outside_humid()/10;//nput->env_value_cur[ENV_HUMID]/10.0f;
-
-
-		
-		if(input->env_en_bit & (1 << ENV_VPD))
-		{
-			bp_pid_th.v_target = input->env_target[ENV_VPD]/100.0;
-   			//bp_pid_dbg(" env v_target=%.2f,v_feed= %.2f, v_inside= %.2f  \r\n", pid_arg.v_target, pid_arg.v_feed,pid_arg.v_inside  );
-		}
-		else
-		{
-			bp_pid_th.v_target =  pid_cal_vpd(bp_pid_th.t_target, bp_pid_th.h_target) ; 
-   			//bp_pid_dbg(" cal v_target=%.2f,t_target= %.2f, h_target= %.2f  \r\n", pid_arg.v_target, pid_arg.t_target,pid_arg.h_target  );
-   			//bp_pid_dbg(" cal v_target=%.2f,v_feed= %.2f, v_inside= %.2f  \r\n", pid_arg.v_target, pid_arg.v_feed,pid_arg.v_inside  );
-		}			
-		bp_pid_th.v_feed    = ml_get_cur_vpd()/100.0;//input->env_value_cur[ENV_VPD]/10.0f;
-		bp_pid_th.v_outside = ml_get_outside_vpd()/100.0;//in_side_vpd;
-		ESP_LOGI(TAG,"t_feed %f ", bp_pid_th.t_feed); 
-        pid_run_output_st output1=	bp_pid_th_proc( dev_type,input->dev_type); 
-	    pid_run_output_st output2= nn_ppo_infer() ;
-		for(int i=0;i<4;i++)
-			output.speed[i]=  output1.speed[i]+output2.speed[i];
-    }
+     
+	//read_all_sensor_soft(input);
+	 
+	ESP_LOGI(TAG,"t_feed %f ", bp_pid_th.t_feed); 
+	pid_run_output_st output1=	bp_pid_th_proc( dev_type,input->dev_type); 
+	pid_run_output_st output2= nn_ppo_infer() ;
+	for(int i=0;i<4;i++)
+		output.speed[i]=  output1.speed[i]+output2.speed[i];
+    
     return output;
 }
 

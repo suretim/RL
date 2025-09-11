@@ -44,7 +44,7 @@ float pid_cal_vpd(float t, float rh)
 	return dx;
 }
 
-void read_all_sensor(void )
+void read_all_sensor_trigger(void )
 {
       ml_read_sensor();
 	  for (uint8_t i = 1; i < 9; i++)

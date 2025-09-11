@@ -1,0 +1,184 @@
+{
+  "metadata": {
+    "firmware_version": "1.0.0",
+    "model_type": "TFLite",
+    "input_shape": [
+      5
+    ],
+    "output_shape": [
+      4
+    ],
+    "compression_ratio": 2.1282660332541568,
+    "timestamp": "2025-09-11T16:28:03.732562",
+    "quantization": true,
+    "pruning": true
+  },
+  "model_data_b64": "eJx9VUtoE1EUvUnzmdSYBiw10i6CH3AhaZNGEFNLYluxkrS1rW2RYhibqQ6kSUkmrfjBqgiiVYq40qIggl8QC4qIIigo6MKqXXSh4KKLYhV0owtpx/tm7kzGNOaFk3nz3n33nPuZGS8AdO+I1uMFKsELNeDBqxuceM+BBeeAawDjiDmExYx2iAkbQBnem9gaYmpRlp1k24CoQGSFzIiYOhBPCIN8LinpthOyLFtpziESQiorxAObweDv6pIss6srvx+Mi6nhnASA9BAku0/oi6P5KkRTe1tPS2dXa3tbPNbSHWmOdEeQw6nEwuzsBtshMRXP5FKSOCTER4RMVkynwMFiQBGVJjXeG4hJxCXKQZLON8qqvj6EmiuXzuFGbGTBgE1Zs9EZFtsCSxqUKxlme+WgxmMmG2Yb8PnrfXUA14mD+fP7/EG2po05zM884hviDdkxztFfx08fSlx+d+38k+/9s09n759bd2rbwuPA/rejV9a29+7+6Lh49uRMz55CbV7Ez94TR24dHp8Kvw+svNN499F8ecPAh9/pPw8evup6tu9zbx/y9CNYbWPR1k5vUzqFeZOEhE+JrVJR5tI7iPl30TrrixnELKsZcQ7xYoqdYCk5SjV1w/L8OGndRLAa+oTFrvIC5yYui/LL25RBvlfRXGYaqxSfTlhBGj3kw0Na1fzYlfywoyaDH6B6MV9GPUD1m8PNfsS0Se2lMdKxa5Fxg8lD+W4gexyODoNPZhtcVPtai3tMVofKMxZag/9dEi8Jg7lkB5+RRAm7V0g08cnk1jrypcX/ogivlXiHC3jvFfByFBebf3luD2/Bq5Adrg/E+QEpnanVnt3aGC/FcslQ0b3tIp+NJBJQoGvv0nJdFtJ1xqCLaWhe+n8+Jr/awp3FdQVL6ArWdgrJXPEdXbHZkIcLsqqX9Vgw3wuOKKjPI0f9p/WCNth9zc17oZrSGv1afji9PlXK+3g1PQ3qsCu9a9RhJh078S8pl9bx+tjtUHXpGurvIo40sK9Ctf5VAOW50DSw2m1CRPN8joOG2rE4nPo5C70r8/q0Omr6pl9uCLNeKPh2xP/9BigtrtfGSvP1pPsH+nPl8+JyovIKA78D8n32F4joT9w=",
+  "fisher_matrix": {
+    "dense_24/kernel:0": {
+      "values": [],
+      "indices": [
+        [],
+        []
+      ],
+      "shape": [
+        5,
+        8
+      ],
+      "threshold": 0.0
+    },
+    "dense_24/bias:0": {
+      "values": [],
+      "indices": [
+        []
+      ],
+      "shape": [
+        8
+      ],
+      "threshold": 0.0
+    },
+    "dense_25/kernel:0": {
+      "values": [],
+      "indices": [
+        [],
+        []
+      ],
+      "shape": [
+        8,
+        4
+      ],
+      "threshold": 0.0
+    },
+    "dense_25/bias:0": {
+      "values": [],
+      "indices": [
+        []
+      ],
+      "shape": [
+        4
+      ],
+      "threshold": 0.0
+    }
+  },
+  "optimal_params": {
+    "dense_24/kernel:0": [
+      [
+        0.6290379762649536,
+        0.524899959564209,
+        -0.36872270703315735,
+        -0.21016600728034973,
+        0.3219383955001831,
+        -0.2815376818180084,
+        0.45912301540374756,
+        -0.6234709620475769
+      ],
+      [
+        -0.05517935752868652,
+        -0.5349237322807312,
+        -0.09811240434646606,
+        -0.42506858706474304,
+        -0.1087576150894165,
+        0.6248257160186768,
+        0.4250701665878296,
+        -0.6643540263175964
+      ],
+      [
+        0.6691559553146362,
+        -0.2557361125946045,
+        0.48480427265167236,
+        -0.6154428720474243,
+        -0.37975892424583435,
+        -0.5332097411155701,
+        -0.2348778247833252,
+        -0.2322167456150055
+      ],
+      [
+        -0.6490157842636108,
+        -0.5097031593322754,
+        -0.21195435523986816,
+        0.1854950189590454,
+        0.26448947191238403,
+        0.17695671319961548,
+        0.04993468523025513,
+        0.4534953832626343
+      ],
+      [
+        0.6339864730834961,
+        -0.6055927872657776,
+        -0.355829119682312,
+        -0.6596080660820007,
+        0.5178908109664917,
+        0.4147084951400757,
+        -0.5775219798088074,
+        0.44682061672210693
+      ]
+    ],
+    "dense_24/bias:0": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "dense_25/kernel:0": [
+      [
+        -0.08014494180679321,
+        0.33274954557418823,
+        -0.12577396631240845,
+        -0.4071444571018219
+      ],
+      [
+        0.449211061000824,
+        -0.24512556195259094,
+        0.0536770224571228,
+        -0.38943418860435486
+      ],
+      [
+        -0.6569029688835144,
+        0.25607162714004517,
+        0.31047481298446655,
+        -0.30143308639526367
+      ],
+      [
+        0.6353465914726257,
+        0.06610226631164551,
+        0.5096595883369446,
+        0.42781680822372437
+      ],
+      [
+        -0.4576999247074127,
+        -0.44290807843208313,
+        -0.23728978633880615,
+        -0.3464351296424866
+      ],
+      [
+        0.6333293318748474,
+        0.32092851400375366,
+        -0.046410441398620605,
+        0.48443835973739624
+      ],
+      [
+        -0.5982525944709778,
+        -0.44061511754989624,
+        0.5758897662162781,
+        -0.1824544072151184
+      ],
+      [
+        -0.4054262042045593,
+        -0.383647084236145,
+        -0.02624112367630005,
+        0.45173734426498413
+      ]
+    ],
+    "dense_25/bias:0": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "crc32": 3126313332
+}
