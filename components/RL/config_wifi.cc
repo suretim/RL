@@ -126,7 +126,7 @@ void wifi_init_sta(void) {
  
 
     ESP_LOGI(TAG, "WiFi connecting...");
-    wait_for_wifi_connection();
+    //wait_for_wifi_connection();
 }
 
 

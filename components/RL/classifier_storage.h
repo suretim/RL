@@ -6,10 +6,10 @@
 
 
 
-#define PPO_CASE 1
-#define NN_PPO_CASE 2
-#define SARSA_CASE 3
-#define IMG_CASE 4
+#define PPO_CASE 0
+#define NN_PPO_CASE 1
+#define SARSA_CASE 2
+#define IMG_CASE 3
 #define INFER_CASE PPO_CASE
 
 

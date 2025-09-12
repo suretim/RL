@@ -5,18 +5,24 @@
 
 // 假设状态维度 5：health + ac_target + dehum_target + light + humidity
 #define STATE_DIM 5
-#define NUM_FLASK_TASK 3
+#define NUM_FLASK_TASK 4
 
 enum flask_state{
-    INIT_EXPORTER=0,
-    DOWN_LOAD_MODEL=1,
-    DOWN_LOAD_MODEL_OTA=2,
+    FLASH_DOWN_LOAD_MODEL=0,
+    INIT_EXPORTER=1,
+    DOWN_LOAD_MODEL=2,
+    DOWN_LOAD_MODEL_OTA=3,
 };
 // ======= WiFi 與 OTA 配置 ======= 
 #if 0
      #define BASE_URL  "192.168.68.237"     
 #else
+    //#define BASE_URL  "192.168.0.57" 
     #define BASE_URL  "192.168.30.132" 
+    
+
+#define HTTP_GET_MODEL_JSON_URL "http://192.168.30.132:5001/api/model?name=esp32_policy"
+#define OTA_SERVER_URL          "http://192.168.30.132:5001"   // 换成你的 PC IP
     //const char* check_url = "http://192.168.0.57:5000/api/check-update/device001/1.0.0";
     //const char* download_url = "http://192.168.0.57:5000/api/download-update";
     //const char* download_bin_url = "http://192.168.0.57:5000/api/bin-update";

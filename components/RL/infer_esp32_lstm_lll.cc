@@ -51,7 +51,7 @@ extern "C" {
 #include "hvac_q_agent.h"
 
 
-
+  
 #ifdef __cplusplus
 }
 #endif
@@ -63,8 +63,8 @@ extern "C" {
 
 #include "classifier_storage.h" 
 #include "config_mqtt.h"
-
-
+#include "esp_partition.h"  
+#include "spi_flash_mmap.h"   // 替代 esp_spi_flash.h
 
 
 // -------------------------
@@ -118,7 +118,41 @@ std::vector<int> trainable_tensor_indices;     // 存 dense 層的 tensor index
 //trainable_tensor_indices = [0, 1, 2, 3, 6, 13, 14, 15, 16, 17, 18, 19, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 50, 223, 224, 225]; 
 // 將 TFLite FULLY_CONNECTED 層的 shape 提取到 layer_shapes
 
- 
+
+static const void *model_data_ptr = NULL;
+static spi_flash_mmap_handle_t model_mmap_handle;
+
+bool load_model_from_flash(void) {
+    const esp_partition_t *partition = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "spiffs2");
+
+    if (!partition) {
+        ESP_LOGE(TAG, "Partition 'spiffs2' not found");
+        return false;
+    }
+
+    // 映射整个分区
+    esp_err_t err = esp_partition_mmap(
+        partition,
+        0,                    // offset
+        partition->size,      // size
+        ESP_PARTITION_MMAP_DATA,
+        &model_data_ptr,
+        &model_mmap_handle
+    );
+
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_partition_mmap failed, err=%d", err);
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Model mapped at addr=%d, size=%d",
+           (int)  model_data_ptr, (int)partition->size);
+
+    // 直接返回 TFLite 模型
+    model= tflite::GetModel(model_data_ptr);
+    return true;
+}
 
 std::string shape_to_string(const std::vector<int>& shape) {
     std::string s;
@@ -180,8 +214,9 @@ bool init_model(int type)
     if(model!=nullptr) {
         return false;
     }
-    ESP_LOGI(TAG,"Model loadding..."); 
-    if(type == PPO_CASE && init_spiffs_model("/model/lstm_encoder_contrastive.tflite")==false) {
+    ESP_LOGI(TAG,"Model loadding..."); //
+    if(type == PPO_CASE && load_model_from_flash()==false) {
+    //if(type == PPO_CASE && init_spiffs_model("/model/lstm_encoder_contrastive.tflite")==false) {
         ESP_LOGE(TAG,"Failed to load model"); 
         return false;
     }
@@ -389,6 +424,28 @@ void reset_tensor(void)
 }
 
 
+
+
+
+
+
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+ 
+
+#include "ml_pid.h"
+
+
+
+pid_run_input_st lll_tensor_run_input = {0};  
+pid_run_output_st ml_pid_out_speed;
+
+
+
+
+
 // The name of this function is important for Arduino compatibility.
 TfLiteStatus infer_loop() {
   
@@ -405,9 +462,14 @@ TfLiteStatus infer_loop() {
     
     float* output = output_tensor->data.f;
     printf("Inference output: ");
-    for(int i=0; i<NUM_CLASSES; ++i) printf("%.3f ", output[i]);
+    
     printf("\n");
-#if INFER_CASE == SARSA_CASE
+#if INFER_CASE == PPO_CASE
+    for(int i=0; i<NUM_CLASSES; ++i){
+         printf("%.3f ", output[i]);
+        ml_pid_out_speed.speed[i+1] = output[i];
+    }
+#elif INFER_CASE == SARSA_CASE
     // 計算 EWC loss
     float ewc_loss = compute_ewc_loss( trainable_layers, fisher_layers);
     printf("EWC loss: %.6f\n", ewc_loss);
@@ -419,12 +481,12 @@ TfLiteStatus infer_loop() {
     // printf("Predicted probabilities: ");
     // for (int i=0; i<NUM_CLASSES; i++) printf("%.4f ", out_prob[i]);
     // printf("\n");
-#endif     
     
     get_mqtt_feature(output_tensor->data.f); 
     int predicted = classifier_predict(output_tensor->data.f);
     printf("Predicted class: %d\n", predicted); 
-    vTaskDelay(1); // to avoid watchdog trigger
+ #endif     
+   vTaskDelay(1); // to avoid watchdog trigger
   return kTfLiteOk;
 } 
  
@@ -633,17 +695,8 @@ TfLiteStatus img_inference( float* input_seq, float* out_logits) {
 }
 
 
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-#include "ml_pid.h"
-
 float input_seq[SEQ_LEN * FEATURE_DIM] = {0.0};  // 从传感器读取
 float logits[NUM_CLASSES]= {0.0};
-pid_run_input_st lll_tensor_run_input = {0};  
-pid_run_output_st ml_pid_out_speed;
 int load_up_input_seq(void)
 {
       int cnt=0;
@@ -720,7 +773,12 @@ esp_err_t  lll_tensor_run(void)
     {    
         lll_tensor_run_input.is_switch[port] = 1;
     }
-    ml_pid_out_speed= pid_run_rule( &lll_tensor_run_input ); 
+    pid_run_output_st out_speed = pid_run_rule( &lll_tensor_run_input );
+    for(int port=1;port<9;port++)
+    {    
+        ml_pid_out_speed.speed[port] += out_speed.speed[port];
+    }
+    
      
     if(load_up_input_seq()==0)
     {    

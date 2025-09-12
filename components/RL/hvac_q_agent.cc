@@ -22,13 +22,23 @@
  #include "mbedtls/base64.h"
 
 #include "esp_crc.h"   
+#include <string.h> 
+#include "esp_system.h" 
+#include "cJSON.h"
+//#include "esp_base64.h"   // ESP-IDF 自带 base64
+#include "esp_err.h"
+ 
+#include <string.h> 
+#include "esp_system.h"
+#include "esp_partition.h"   
 
-#define OTA_SERVER_URL   "http://192.168.30.132:5002"   // 换成你的 PC IP
+
 #define CURRENT_VERSION  "1.0.0"
 extern const char * spiffs_model_path ;
 static const char *TAG = "OTA HVAC";
 
-  
+bool flask_state_flag[NUM_FLASK_TASK]={false};
+
 // ---------------- NN Placeholder ----------------
 // 权重向量示例
 std::vector<float> W1, W2, b1, b2, Vw;
@@ -100,9 +110,265 @@ esp_err_t _http_down_load_event_handler(esp_http_client_event_t *evt) {
  
 // ======= PPO 模型 =======
 ESP32EWCModel ewcppoModel;
-//const int num_flask_task=3;
-bool flask_state_flag[NUM_FLASK_TASK]={false};
-char flask_name[NUM_FLASK_TASK][64]={"flask_init_exporter_task","flask_download_model_task","flask_download_model_ota_task"};
+
+
+
+// 从 Flash 分区读取模型
+void read_model_from_flash(void) {
+    const esp_partition_t *partition = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "model");
+
+    if (!partition) {
+        ESP_LOGE(TAG, "Model partition not found!");
+        return;
+    }
+
+    size_t size = partition->size;
+    uint8_t *buf = (uint8_t *) malloc(size);
+    if (!buf) {
+        ESP_LOGE(TAG, "malloc failed");
+        return;
+    }
+
+    ESP_ERROR_CHECK(esp_partition_read(partition, 0, buf, size));
+
+    ESP_LOGI(TAG, "Model read back, first 16 bytes:");
+    for (int i = 0; i < 16 && i < size; i++) {
+        printf("%02X ", buf[i]);
+    }
+    printf("\n");
+
+    free(buf);
+    flask_state_flag[FLASH_DOWN_LOAD_MODEL] = true;
+}
+
+// 保存模型到自定义 Flash 分区
+bool save_model_to_flash(const char *b64_str) {
+    size_t bin_len = strlen(b64_str) * 3 / 4;
+    uint8_t *model_bin =(uint8_t *) malloc(bin_len);
+    if (!model_bin) {
+        ESP_LOGE(TAG, "malloc failed");
+        return false;
+    }
+
+ 
+    size_t decoded_len = 0;
+    int ret = mbedtls_base64_decode(model_bin, bin_len, &decoded_len,
+                                    (const unsigned char *)b64_str,
+                                    strlen(b64_str));
+    if (ret != 0) {
+        ESP_LOGE(TAG, "Base64 decode failed, ret=%d", ret);
+        free(model_bin);
+        return false;
+    }
+    ESP_LOGI(TAG, "Model decoded, length=%zu", decoded_len);
+
+  
+    // 查找 "spiffs2" 分区
+    const esp_partition_t *partition = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "spiffs2");
+
+    if (!partition) {
+        ESP_LOGE(TAG, "spiffs2 partition not found!");
+        free(model_bin);
+        return false;
+    }
+
+    // 擦除并写入
+    ESP_ERROR_CHECK(esp_partition_erase_range(partition, 0, partition->size));
+    ESP_ERROR_CHECK(esp_partition_write(partition, 0, model_bin, decoded_len));
+
+    ESP_LOGI(TAG, "Model saved to Flash partition (size=%d)", decoded_len);
+
+    free(model_bin);
+    read_model_from_flash();
+    return true;
+}
+
+void app_test(void) {
+    // 模拟一个 JSON，里面包含 base64 模型
+    const char *json_str = "{ \"model_data_b64\": \"QUJDREVGRw==\" }"; // "ABCDEFG"
+
+    cJSON *root = cJSON_Parse(json_str);
+    if (!root) {
+        ESP_LOGE(TAG, "Failed to parse JSON");
+        return;
+    }
+
+    cJSON *model_b64 = cJSON_GetObjectItem(root, "model_data_b64");
+    if (model_b64 && cJSON_IsString(model_b64)) {
+        save_model_to_flash(model_b64->valuestring);
+    }
+
+    cJSON_Delete(root);
+
+    // 验证读取
+    read_model_from_flash();
+}
+
+// 从 SPIFFS 读取模型验证
+void read_model_from_spiffs(void) {
+    FILE *f = fopen("/spiffs/esp32_optimized_model.tflite", "rb");
+    if (!f) {
+        ESP_LOGE(TAG, "Failed to open model file for reading");
+        return;
+    }
+
+    fseek(f, 0, SEEK_END);
+    long file_size = ftell(f);
+    rewind(f);
+
+    uint8_t *buf =(uint8_t *) malloc(file_size);
+    if (!buf) {
+        ESP_LOGE(TAG, "malloc failed");
+        fclose(f);
+        return;
+    }
+
+    fread(buf, 1, file_size, f);
+    fclose(f);
+
+    ESP_LOGI(TAG, "Model read back, size=%ld bytes", file_size);
+
+    free(buf);
+}
+
+// 保存模型到 SPIFFS
+bool save_model_to_spiffs(const char *b64_str) {
+    size_t bin_len = strlen(b64_str) * 3 / 4;  // 预估长度
+    uint8_t *model_bin =(uint8_t *) malloc(bin_len);
+    if (!model_bin) {
+        ESP_LOGE(TAG, "malloc failed");
+        return false;
+    }
+
+     
+    size_t decoded_len = 0;
+    int ret = mbedtls_base64_decode(model_bin, bin_len, &decoded_len,
+                                    (const unsigned char *)b64_str,
+                                    strlen(b64_str));
+    if (ret != 0) {
+        ESP_LOGE(TAG, "Base64 decode failed, ret=%d", ret);
+        free(model_bin);
+        return false;
+    }
+    ESP_LOGI(TAG, "Model decoded, length=%zu", decoded_len);
+ 
+    ESP_LOGI(TAG, "Model decoded, length=%d", decoded_len);
+
+    FILE *f = fopen("/spiffs/esp32_optimized_model.tflite", "wb");
+    if (f) {
+        fwrite(model_bin, 1, decoded_len, f);
+        fclose(f);
+        ESP_LOGI(TAG, "Model saved to SPIFFS");
+    } else {
+        ESP_LOGE(TAG, "Failed to open file for writing");
+    }
+
+    free(model_bin);
+    read_model_from_spiffs();
+    return true;
+}
+
+void parse_model_json(const char *json_str) {
+    cJSON *root = cJSON_Parse(json_str);
+    if (!root) {
+        ESP_LOGE(TAG, "Failed to parse JSON");
+        return;
+    }
+
+    // 解析 metadata
+    cJSON *metadata = cJSON_GetObjectItem(root, "metadata");
+    if (metadata) {
+        const char *fw = cJSON_GetObjectItem(metadata, "firmware_version")->valuestring;
+        const char *model_type = cJSON_GetObjectItem(metadata, "model_type")->valuestring;
+        ESP_LOGI(TAG, "Firmware: %s, ModelType: %s", fw, model_type);
+    }
+
+    // 解析 model_data_b64
+    cJSON *model_b64 = cJSON_GetObjectItem(root, "model_data_b64");
+    if (model_b64 && cJSON_IsString(model_b64)) {
+        const char *b64_str = model_b64->valuestring;
+        size_t bin_len = strlen(b64_str) * 3 / 4;  // 预估长度
+        uint8_t *model_bin =(uint8_t *) malloc(bin_len);
+        if (model_bin) {
+            #include "mbedtls/base64.h"
+
+size_t decoded_len = 0;
+int ret = mbedtls_base64_decode(model_bin, bin_len, &decoded_len,
+                                (const unsigned char *)b64_str,
+                                strlen(b64_str));
+if (ret != 0) {
+    ESP_LOGE(TAG, "Base64 decode failed, ret=%d", ret);
+    free(model_bin);
+    return  ;
+}
+ESP_LOGI(TAG, "Model decoded, length=%zu", decoded_len);
+
+
+            //save_model_to_spiffs(b64_str);
+            save_model_to_flash(b64_str);
+            // TODO: 存到 SPIFFS / PSRAM / Flash 分区
+            free(model_bin);
+        }
+    }
+
+    // 解析 optimal_params
+    cJSON *opt_params = cJSON_GetObjectItem(root, "optimal_params");
+    if (opt_params) {
+        cJSON *dense24_kernel = cJSON_GetObjectItem(opt_params, "dense_24/kernel:0");
+        if (dense24_kernel) {
+            int rows = cJSON_GetArraySize(dense24_kernel);
+            ESP_LOGI(TAG, "dense_24/kernel:0 has %d rows", rows);
+            for (int i = 0; i < rows; i++) {
+                cJSON *row = cJSON_GetArrayItem(dense24_kernel, i);
+                int cols = cJSON_GetArraySize(row);
+                for (int j = 0; j < cols; j++) {
+                    float val = (float)cJSON_GetArrayItem(row, j)->valuedouble;
+                    // TODO: 存到你的 dense layer 权重数组
+                    ESP_LOGD(TAG, "W[%d][%d]=%f", i, j, val);
+                }
+            }
+        }
+
+        cJSON *dense25_bias = cJSON_GetObjectItem(opt_params, "dense_25/bias:0");
+        if (dense25_bias) {
+            int size = cJSON_GetArraySize(dense25_bias);
+            for (int i = 0; i < size; i++) {
+                float val = (float)cJSON_GetArrayItem(dense25_bias, i)->valuedouble;
+                ESP_LOGI(TAG, "dense_25/bias[%d]=%f", i, val);
+            }
+        }
+    }
+
+    cJSON_Delete(root);
+}
+
+void http_get_model_json(void *pvParameters) {
+    esp_http_client_config_t config = {
+        .url = HTTP_GET_MODEL_JSON_URL,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    esp_err_t err = esp_http_client_perform(client);
+    if (err == ESP_OK) {
+        int content_len = esp_http_client_get_content_length(client);
+        char *buffer =(char*) malloc(content_len + 1);
+        if (buffer) {
+            esp_http_client_read(client, buffer, content_len);
+            buffer[content_len] = '\0';
+            parse_model_json(buffer);
+            free(buffer);
+        }
+    } else {
+        ESP_LOGE(TAG, "HTTP GET failed: %s", esp_err_to_name(err));
+    }
+    esp_http_client_cleanup(client);
+    vTaskDelete(NULL);
+}
+
+ 
+
+
 void flask_init_exporter_task(void *pvParameters) {
         flask_state_flag[INIT_EXPORTER]=false;
 
@@ -158,7 +424,7 @@ void flask_init_exporter_task(void *pvParameters) {
         vTaskDelete(NULL);
 }
 
-
+//print(f"GET http://{ip}:{port}/api/model?name=esp32_policy")
 static void flask_download_model_task(void *param) {
     ESP_LOGI("MEM", "Before OTA: Heap free=%d, internal free=%d, largest=%d",
              (int)esp_get_free_heap_size(),
@@ -216,20 +482,7 @@ static void flask_download_model_task(void *param) {
 
     vTaskDelete(NULL);
 }
- 
-
-
-
-
-
-
-
-
-
-
-
-
-
+  
 
 
 void ota_check_update(void) {
@@ -271,10 +524,7 @@ void ota_check_update(void) {
     }
 
     esp_http_client_cleanup(client);
-}
-
- 
- 
+} 
 
 // CRC32 計算
 static uint32_t calc_crc32(const uint8_t *data, size_t len) {
@@ -412,10 +662,23 @@ void flask_download_model_ota_task(void *param){
 return  ;
 }
 
-void (*functionArray[3])(void *pvParameters) = {flask_init_exporter_task, flask_download_model_task, flask_download_model_ota_task};
+void (*functionArray[NUM_FLASK_TASK])(void *pvParameters) = {
+    http_get_model_json,
+    flask_init_exporter_task, 
+    flask_download_model_task, 
+    flask_download_model_ota_task
+};
+
+//const int num_flask_task=3;
+char flask_name[NUM_FLASK_TASK][64]={
+    "http_get_model_json",
+    "flask_init_exporter_task",
+    "flask_download_model_task",
+    "flask_download_model_ota_task"
+};
 
 extern "C" void wifi_ota_ppo_package(int type ) {
-    if(type>=0 && type<=2)
+    if(type>=0 && type<NUM_FLASK_TASK)
     //if(type==0)
     {
         xTaskCreatePinnedToCore(
@@ -427,39 +690,11 @@ extern "C" void wifi_ota_ppo_package(int type ) {
         NULL,
         0);   
 
-    }
-    #if 0
-    if(type==1)
-    {
-        xTaskCreatePinnedToCore(
-        flask_download_model_task,  //download_model_ota_task,download_model_task
-        "flask_download_model_task",
-        8 * 1024,       // 栈大小，可根据实际增加
-        NULL,
-        tskIDLE_PRIORITY + 1,
-        NULL,
-        0);   
-    }
-    if(type==2)
-    {
-        xTaskCreatePinnedToCore(
-        flask_download_model_ota_task, 
-        "flask_download_model_ota_task",
-        8 * 1024,     
-        NULL,
-        tskIDLE_PRIORITY + 1,
-        NULL,
-        0);   
-    }
-    #endif
+    } 
     return   ;
 }
 
-
-
-
-
-
+ 
   
 extern "C" void hvac_agent(void) {
      

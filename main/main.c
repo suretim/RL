@@ -34,6 +34,7 @@
 SemaphoreHandle_t mutex_mainTask;
 EventGroupHandle_t main_eventGroup;
 extern void ai_check_plug_in(uint8_t track_cc);
+extern bool flask_state_flag[NUM_FLASK_TASK];
 
 /*
 ****************************************************************************************************
@@ -470,7 +471,7 @@ void main_task(void *pvParameters)
 			// ai_check_plug_in(1);   // called per sec
 
 			flag_100ms++;
-		    if (flag_100ms>=100)
+		    if (flask_state_flag[FLASH_DOWN_LOAD_MODEL]==true && flag_100ms>=100)
 			{
 				flag_100ms = 0;	
 				lll_tensor_run();	
@@ -520,9 +521,17 @@ void plant_env_make_task(void *pvParameters)
 {
 
 	vTaskDelay(3000 / portTICK_PERIOD_MS);
-	//wifi_ota_ppo_package(); 
+	 
 	while(1)
 	{  
+		//for(int i=0;i<NUM_FLASK_TASK;i++)
+        for(int i=0;i<1;i++)
+        {
+            vTaskDelay(pdMS_TO_TICKS(10000));
+            if(flask_state_flag[i]==false)
+                wifi_ota_ppo_package(i);    
+
+        }
 		if(plant_env_step() ==0){
 			vTaskDelay(pdMS_TO_TICKS(1000));
 			break;
@@ -572,14 +581,14 @@ void app_main(void)
     spiffs_init();
 
 	//--------------------------------------------------------------
-    ble_creat_event();
+    //ble_creat_event();
     //wifi_creat_event();
-	wifi_init_apsta();  
-	//wifi_init_sta();
-    updata_creat_event();
+	//wifi_init_apsta();  
+	wifi_init_sta();
+//updata_creat_event();
  	main_creat_objs();
 //tcp_client_creat_objs();
-	     start_ota();
+	//     start_ota();
 
 //comm_creat_objs();
     //////////////////

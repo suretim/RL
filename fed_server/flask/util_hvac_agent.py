@@ -12,7 +12,7 @@ from util_env import PlantLLLHVACEnv,PlantHVACEnv
 
 # state_dim = 5  # 健康狀態、溫度、濕度、光照、CO2
 # action_dim = 4  # 4個控制動作
-class LifelongPPOBaseAgent:
+class PPOBaseAgent:
     def __init__(self, state_dim=5, action_dim=4,
                  clip_epsilon=0.2, value_coef=0.5, entropy_coef=0.01,
                  ewc_lambda=500, memory_size=1000):
@@ -298,47 +298,6 @@ class LifelongPPOBaseAgent:
         self.optimizer.apply_gradients(zip(grads, self.actor.trainable_variables + self.critic.trainable_variables))
         return total_loss, policy_loss, value_loss, entropy, ewc_loss
 
-
-
-    def xtrain_stepV(self, states, actions, advantages, old_probs, returns, use_ewc=True):
-        """增强的训练步骤，包含持续学习机制"""
-        with tf.GradientTape() as tape:
-            # 原始PPO损失
-            new_probs = self.actor(states, training=True)
-            new_values = self.critic(states, training=True)
-
-            actions_float = tf.cast(actions, tf.float32)
-            old_action_probs = tf.reduce_sum(old_probs * actions_float + (1 - old_probs) * (1 - actions_float), axis=1)
-            new_action_probs = tf.reduce_sum(new_probs * actions_float + (1 - new_probs) * (1 - actions_float), axis=1)
-
-            ratio = new_action_probs / (old_action_probs + 1e-8)
-            clipped_ratio = tf.clip_by_value(ratio, 1 - self.clip_epsilon, 1 + self.clip_epsilon)
-
-            policy_loss = -tf.reduce_mean(tf.minimum(ratio * advantages, clipped_ratio * advantages))
-            value_loss = tf.reduce_mean(tf.square(returns - tf.squeeze(new_values)))
-
-            entropy = -tf.reduce_mean(
-                new_probs * tf.math.log(new_probs + 1e-8) +
-                (1 - new_probs) * tf.math.log(1 - new_probs + 1e-8)
-            )
-
-            # 基础损失
-            base_loss = policy_loss + self.value_coef * value_loss - self.entropy_coef * entropy
-
-            # EWC正则化损失（防止遗忘）
-            ewc_loss = self._compute_ewc_loss() if use_ewc and self.fisher_matrices else 0
-
-            # 总损失 = 基础损失 + EWC正则化
-            total_loss = base_loss + ewc_loss
-
-        # 应用梯度
-        grads = tape.gradient(total_loss, self.actor.trainable_variables + self.critic.trainable_variables)
-        self.optimizer.apply_gradients(
-            zip(grads, self.actor.trainable_variables + self.critic.trainable_variables)
-        )
-
-        return total_loss, policy_loss, value_loss, entropy, ewc_loss
-
     def test_task_performance(self, env, task_id=None):
         """测试在特定任务上的性能"""
         state = env.reset()
@@ -354,7 +313,7 @@ class LifelongPPOBaseAgent:
         return total_reward
 
 
-class LifelongESP32PPOAgent(LifelongPPOBaseAgent):
+class ESP32PPOAgent(PPOBaseAgent):
     """專為ESP32設計的輕量級PPO代理,繼承自LifelongPPOAgent"""
 
     def __init__(self, state_dim=5, action_dim=4,
@@ -748,13 +707,14 @@ void loop() {
         print("無法壓縮到目標大小")
         return False
 
+class ESP32PPOFisherAgent(PPOBaseAgent):
+    def __init__(self, state_dim=5, action_dim=4, hidden_units=8, ewc_lambda=0.4):
 
-class ESP32PPOWithFisherAgent(LifelongESP32PPOAgent):
-    def __init__(self, state_dim=5, action_dim=4, hidden_units=8, ewc_lambda=500):
         super().__init__(state_dim, action_dim, hidden_units)
         self.ewc_lambda = ewc_lambda
         self.fisher_matrix = None
         self.optimal_params = None
+
 
     def compute_fisher_matrix(self, dataset: np.ndarray):
         """計算 Fisher 矩陣"""
@@ -795,10 +755,10 @@ class ESP32PPOWithFisherAgent(LifelongESP32PPOAgent):
         )
         print(f"  Fisher matrix & optimal params saved to {path}")
 
-class OnlineESP32PPOAgent(LifelongESP32PPOAgent):
+class ESP32OnlinePPOFisherAgent(ESP32PPOAgent):
     """專為ESP32設計的輕量級PPO代理，支持 online EWC 和 TFLite 導出"""
 
-    def __init__(self, state_dim=5, action_dim=4,
+    def __init__(self,fisher_matrix=None, optimal_params=None, state_dim=5, action_dim=4,
                  clip_epsilon=0.2, value_coef=0.5, entropy_coef=0.01,
                  ewc_lambda=500, memory_size=1000, hidden_units=8):
         super().__init__(state_dim, action_dim, clip_epsilon, value_coef,
@@ -806,14 +766,13 @@ class OnlineESP32PPOAgent(LifelongESP32PPOAgent):
 
         self.hidden_units = hidden_units
         self._tflite_models = {}
-
         self.actor = self._build_esp32_actor()
         self.critic = self._build_esp32_critic()
         self.optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
 
         # EWC online
-        self.online_fisher = None
-        self.optimal_params = None
+        self.online_fisher = fisher_matrix
+        self.optimal_params = optimal_params
         self.ema_decay = 0.99
         self.fisher_update_frequency = 1
         self.update_counter = 0
@@ -913,15 +872,15 @@ class OnlineESP32PPOAgent(LifelongESP32PPOAgent):
             'ewc_loss': ewc_loss.numpy()
         }
 
-
-class LifelongPPOAgent(LifelongPPOBaseAgent):
-    def __init__(self, state_dim=5, action_dim=4):
-        super().__init__(state_dim=state_dim, action_dim=action_dim)
-        self.state_dim = state_dim
-        self.action_dim = action_dim
-        self.policy = self._build_policy_network()
-
-
+    '''
+    class LifelongPPOAgent(LifelongPPOBaseAgent):
+        def __init__(self, state_dim=5, action_dim=4):
+            super().__init__(state_dim=state_dim, action_dim=action_dim)
+            self.state_dim = state_dim
+            self.action_dim = action_dim
+            self.policy = self._build_policy_network()
+    
+    '''
 
     def train_step(self, states, actions, advantages, old_probs, returns, use_ewc=True):
         """Training step using PPO"""

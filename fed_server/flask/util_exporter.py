@@ -1,6 +1,6 @@
 import tensorflow as tf
 import numpy as np
-from util_hvac_agent import LifelongPPOBaseAgent
+#from util_hvac_agent import LifelongPPOBaseAgent
 import tensorflow_probability as tfp
 import tensorflow_model_optimization as tfmot
 import zlib
@@ -14,7 +14,7 @@ from typing import *
 from datetime import datetime
 
 
-class TensorFlowESP32BaseExporter:
+class ESP32BaseExporter:
     def __init__(self, policy_model=None):
         self.model = policy_model
         self.converter = None
@@ -89,12 +89,48 @@ class TensorFlowESP32BaseExporter:
         """计算简单的校验和"""
         return hash(data) % 1000000
 
+    def prune_model(self, target_sparsity: float = 0.5) -> tf.keras.Model:
+        print(f"Pruning model to {target_sparsity * 100}% sparsity...")
+
+        # 確保模型已編譯
+        if not hasattr(self.model, 'loss') or self.model.loss is None:
+            self.model.compile(
+                optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
+                loss='mse',
+                metrics=['mae']
+            )
+
+        # 剪枝代碼
+        pruning_params = {
+            'pruning_schedule': tfmot.sparsity.keras.ConstantSparsity(
+                target_sparsity, begin_step=0, frequency=100
+            )
+        }
+
+        pruned_model = tfmot.sparsity.keras.prune_low_magnitude(
+            self.model, **pruning_params
+        )
+
+        pruned_model.compile(
+            optimizer=self.model.optimizer,
+            loss=self.model.loss,
+            metrics=self.model.metrics
+        )
+
+        # 微調可以在這裡進行
+        # pruned_model.fit(x_train, y_train, epochs=2, validation_data=(x_val, y_val))
+
+        self.model = tfmot.sparsity.keras.strip_pruning(pruned_model)
+        print("Pruning completed!")
+        return self.model
+
 
 # -----------------------------
 # 獨立的 TensorFlow → ESP32 匯出器（不再繼承 Agent）
 # -----------------------------
-class TensorFlowESP32Exporter:
+class TensorFlowESP32Exporter(ESP32BaseExporter):
     def __init__(self, model_or_path: Union[str, tf.keras.Model]):
+        super().__init__(model_or_path)
         """
         Args:
             model_or_path: 已訓練 Keras 模型或可由 tf.keras.models.load_model 載入的路徑
@@ -147,42 +183,71 @@ class TensorFlowESP32Exporter:
         for i in range(min(100, len(dataset))):
             yield [dataset[i:i + 1].astype(np.float32)]
 
-    def prune_model(self, target_sparsity: float = 0.5) -> tf.keras.Model:
-        print(f"Pruning model to {target_sparsity * 100}% sparsity...")
 
-        # 確保模型已編譯
-        if not hasattr(self.model, 'loss') or self.model.loss is None:
-            self.model.compile(
-                optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
-                loss='mse',
-                metrics=['mae']
-            )
 
-        # 剪枝代碼
+    def prune_model(self, target_sparsity=0.5, fine_tune_data=None, epochs=2, batch_size=32):
+
+        prune_low_magnitude = tfmot.sparsity.keras.prune_low_magnitude
+        # 剪枝參數 (多項式衰減)
         pruning_params = {
-            'pruning_schedule': tfmot.sparsity.keras.ConstantSparsity(
-                target_sparsity, begin_step=0, frequency=100
+            "pruning_schedule": tfmot.sparsity.keras.PolynomialDecay(
+                initial_sparsity=0.0,
+                final_sparsity=target_sparsity,
+                begin_step=0,
+                end_step=1000
             )
         }
 
-        pruned_model = tfmot.sparsity.keras.prune_low_magnitude(
-            self.model, **pruning_params
-        )
+        # 包裝模型，加上 pruning wrapper
+        pruned_model = prune_low_magnitude(self.model, **pruning_params)
 
+        # 編譯
         pruned_model.compile(
-            optimizer=self.model.optimizer,
-            loss=self.model.loss,
-            metrics=self.model.metrics
+            optimizer="adam",
+            loss="sparse_categorical_crossentropy",
+            metrics=["accuracy"]
         )
 
-        # 微調可以在這裡進行
-        # pruned_model.fit(x_train, y_train, epochs=2, validation_data=(x_val, y_val))
+        if fine_tune_data is not None:
+            if isinstance(fine_tune_data, tuple) and len(fine_tune_data) == 2:
+                # 有 (x, y) → 正常 supervised 微調
+                x_train, y_train = fine_tune_data
+                # 去掉多余维度
+                if x_train.ndim == 3 and x_train.shape[1] == 1:
+                    x_train = np.squeeze(x_train, axis=1)  # [batch, 1, feature_dim] → [batch, feature_dim]
 
-        self.model = tfmot.sparsity.keras.strip_pruning(pruned_model)
-        print("Pruning completed!")
-        return self.model
+                pruned_model.compile(
+                    optimizer="adam",
+                    loss="sparse_categorical_crossentropy",
+                    metrics=["accuracy"]
+                )
+                callbacks = [
+                    tfmot.sparsity.keras.UpdatePruningStep(),  # 剪枝必须回调
+                    tf.keras.callbacks.EarlyStopping(patience=3, restore_best_weights=True)  # 可选
+                ]
+                pruned_model.fit(x_train, y_train, batch_size=batch_size, epochs=epochs,callbacks=callbacks, verbose=1)
+            else:
+                # 只有 x → 偽微調 (dummy label)
+                x_train = fine_tune_data
+                # 去掉多余维度
+                if x_train.ndim == 3 and x_train.shape[1] == 1:
+                    x_train = np.squeeze(x_train, axis=1)  # [batch, 1, feature_dim] → [batch, feature_dim]
+
+                dummy_y = np.zeros((x_train.shape[0],), dtype=np.int32)  # fake label
+                pruned_model.compile(
+                    optimizer="adam",
+                    loss="sparse_categorical_crossentropy"
+                )
+                pruned_model.fit(x_train, dummy_y, epochs=1)  # 跑短暫 1 epoch 就行
+                print("⚠️ Warning: Fake fine-tune only, model may lose accuracy.")
+        else:
+            print("⚠️ No fine-tune data provided. Pruning without adaptation may hurt accuracy.")
 
 
+
+        # strip_pruning 真正移除 wrapper
+        final_model = tfmot.sparsity.keras.strip_pruning(pruned_model)
+        return final_model
 
     def compute_fisher_matrix(self, dataset: np.ndarray, num_samples: int = 1000) -> Dict[str, np.ndarray]:
         print("Computing Fisher Information Matrix...")
@@ -258,11 +323,15 @@ class TensorFlowESP32Exporter:
     def create_ota_package(self,
                            representative_data: np.ndarray,
                            firmware_version: str = "1.0.0",
+                           fine_tune_data=None,  #fine_tune_data=(x_train, y_train)
                            prune: bool = True,
                            quantize: bool = True) -> Dict[str, Any]:
         print("Creating OTA package...")
         if prune:
-            self.prune_model(target_sparsity=0.5)
+            if fine_tune_data is not None:
+                self.prune_model( target_sparsity=0.5, fine_tune_data=fine_tune_data, epochs=2)
+            else:
+                super().prune_model(target_sparsity=0.5)
 
         self.compute_fisher_matrix(representative_data)
 
@@ -320,8 +389,8 @@ class TensorFlowESP32Exporter:
     def _calculate_crc(self, data: bytes) -> int:
         return zlib.crc32(data)
 
-    def save_ota_package(self, output_path: str, representative_data: np.ndarray, **kwargs) -> None:
-        ota = self.create_ota_package(representative_data, **kwargs)
+    def save_ota_package(self, output_path: str, representative_data: np.ndarray,fine_tune_data=None, **kwargs) -> None:
+        ota = self.create_ota_package(representative_data,fine_tune_data=fine_tune_data, **kwargs)
 
         # JSON 檔（Base64 模型）
         with open(output_path, 'w', encoding='utf-8') as f:

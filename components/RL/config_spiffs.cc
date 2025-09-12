@@ -109,39 +109,37 @@ esp_err_t download_tflite(const char *url, const char *save_path) {
     ESP_LOGI(TAG, "Downloaded %s (%d bytes)", save_path, total_read);
     return ESP_OK;
 }
-
-/**
- * 初始化 SPIFFS
- */
+ 
+// 初始化兩個 SPIFFS 分區
 extern "C" void spiffs_init(void) {
-    esp_vfs_spiffs_conf_t conf = {
-        .base_path = "/spiffs",       // 挂载路径
-        .partition_label = NULL,      // 默认分区
-        .max_files = 5,               // 最大同时打开文件数
+    // 第一個 SPIFFS，用於普通文件
+    esp_vfs_spiffs_conf_t conf1 = {
+        .base_path = "/spiffs",
+        .partition_label = "spiffs1",  // 分區名
+        .max_files = 5,
         .format_if_mount_failed = true
     };
+    ESP_ERROR_CHECK(esp_vfs_spiffs_register(&conf1));
 
-    esp_err_t ret = esp_vfs_spiffs_register(&conf);
+    size_t total1 = 0, used1 = 0;
+    esp_spiffs_info("spiffs1", &total1, &used1);
+    ESP_LOGI(TAG, "SPIFFS1: total=%d, used=%d", total1, used1);
 
-    if (ret != ESP_OK) {
-        if (ret == ESP_FAIL) {
-            ESP_LOGE(TAG, "Failed to mount or format filesystem");
-        } else if (ret == ESP_ERR_NOT_FOUND) {
-            ESP_LOGE(TAG, "Failed to find SPIFFS partition");
-        } else {
-            ESP_LOGE(TAG, "Failed to init SPIFFS (%s)", esp_err_to_name(ret));
-        }
-        return;
-    }
+    // 第二個 SPIFFS，用於模型文件
+    esp_vfs_spiffs_conf_t conf2 = {
+        .base_path = "/models",
+        .partition_label = "spiffs2",  // 分區名
+        .max_files = 5,
+        .format_if_mount_failed = true
+    };
+    ESP_ERROR_CHECK(esp_vfs_spiffs_register(&conf2));
 
-    size_t total = 0, used = 0;
-    ret = esp_spiffs_info(NULL, &total, &used);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to get SPIFFS partition information (%s)", esp_err_to_name(ret));
-    } else {
-        ESP_LOGI(TAG, "Partition size: total: %d, used: %d", total, used);
-    }
+    size_t total2 = 0, used2 = 0;
+    esp_spiffs_info("spiffs2", &total2, &used2);
+    ESP_LOGI(TAG, "SPIFFS2: total=%d, used=%d", total2, used2);
 }
+
+
 
 /**
  * 从 SPIFFS 加载二进制 float 文件

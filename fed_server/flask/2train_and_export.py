@@ -3,12 +3,13 @@ import numpy as np
 import json
 import os
 from tf_utils import create_representative_dataset_from_ESP32BaseExporter
-from util_hvac_agent import LifelongESP32PPOAgent,LifelongPPOBaseAgent,TensorFlowESP32BaseExporter
+from util_hvac_agent import ESP32PPOAgent,PPOBaseAgent
+from util_exporter import TensorFlowESP32BaseExporter
 
 
 def train_and_export():
     # 1. 训练模型
-    agent = LifelongESP32PPOAgent()
+    agent = ESP32PPOAgent()
     agent.learn(total_timesteps=1000000)
 
     # 2. 保存原始模型

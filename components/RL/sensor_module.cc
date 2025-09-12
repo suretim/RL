@@ -43,15 +43,17 @@ float pid_cal_vpd(float t, float rh)
 	dx = dx * 0.61078 * (1.0f - rh / 100.0f);
 	return dx;
 }
+extern pid_run_output_st ml_pid_out_speed;
 
 void read_all_sensor_trigger(void )
 {
       ml_read_sensor();
 	  for (uint8_t i = 1; i < 9; i++)
 	  {
-		ml_set_sw( i,0);
+		ml_set_sw( i,ml_pid_out_speed.speed[i]>1);
+		ml_pid_out_speed.speed[i]=0;
 	  }
-	  ml_set_sw( 1,1);
+	  //ml_set_sw( 1,1);
 	  
 		bp_pid_th.t_feed    = ml_get_cur_temp() /10.0;//input->env_value_cur[ENV_TEMP]/10.0f;
 		bp_pid_th.t_target  = ml_get_target_temp()/10.0 ;

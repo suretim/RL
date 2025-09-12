@@ -123,20 +123,22 @@ class PlantHVACEnv(gym.Env):
             return True
         return False
 
+# 現在有5個特徵: health,temp, humid,light, co2
+# "growing", "flowering", "seeding"
 class PlantLLLHVACEnv:
-    def __init__(self, seq_len=10, n_features=5, temp_init=25.0, humid_init=0.5,
-                 latent_dim=64, mode="growing"):
+    def __init__(self, seq_len=10,  temp_init=25.0, humid_init=60.5, mode="growing"):
         self.seq_len = seq_len
         self.temp_init = temp_init
         self.humid_init = humid_init
-        self.n_features = n_features  # 現在有5個特徵: temp, humid, health, light, co2
-        self.mode = mode  # "growing", "flowering", "seeding"
-
+        self.n_features = 5  # 現在有5個特徵: health,temp, humid,light, co2
+        self.mode = mode   # "growing", "flowering", "seeding"
+        self.n_classes = 3 # size of "growing", "flowering", "seeding"
+        self.latent_dim = 64
         # 構建encoder
-        self.encoder = self._build_encoder(seq_len, n_features, latent_dim)
+        self.encoder = self._build_lstm_encoder(seq_len, self.n_features,self.latent_dim)
 
         # LLL模型
-        self.lll_model = self._build_lll_model(latent_dim, hidden_dim=64, output_dim=3)
+        self.lll_model = self._build_lll_model(self.latent_dim, hidden_dim=self.latent_dim, output_dim=self.n_classes)
         self.fisher_matrix = None
         self.prev_weights = None
         self.memory = deque(maxlen=1000)  # 簡單的記憶緩衝區
@@ -172,8 +174,9 @@ class PlantLLLHVACEnv:
 
         # 初始化狀態變量
         self.reset()
-
-    def _build_encoder(self, seq_len, n_features, latent_dim):
+    #input_shape=(seq_len, n_features)
+    #output shape=latent_dim
+    def _build_lstm_encoder(self, seq_len, n_features, latent_dim):
         """構建序列編碼器"""
         return tf.keras.Sequential([
             tf.keras.layers.LSTM(64, input_shape=(seq_len, n_features), return_sequences=True),
@@ -192,7 +195,6 @@ class PlantLLLHVACEnv:
     def update_lll_model(self, sequence_input, true_label=None):
         """
         更新LLL模型並返回預測結果
-
         Args:
             sequence_input: 輸入序列數據
             true_label: 真實標籤（可選，用於訓練）
