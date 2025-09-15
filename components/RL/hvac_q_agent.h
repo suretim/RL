@@ -30,7 +30,7 @@ enum flask_state{
 #endif
 #define BASE_PORT "5000"
 #define POLICY_PORT "5001"
-extern uint8_t * read_model_from_spiffs(const char *spi_file_name);
+
 #if 0
 const int STATE_SIZES[STATE_DIM] = {2, 2, 2, 3, 3}; // 例：health 0/1, light 0/1/2 等
 

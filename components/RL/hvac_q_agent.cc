@@ -47,7 +47,7 @@ extern std::vector<float> health_result;
 
 #define H1          32
 #define H2          4
- 
+const char *spiffs_model_path ="/spiffs/esp32_optimized_model.tflite";
 
 void parse_model_weights(uint8_t *buffer, size_t size) {
     ESP_LOGI(TAG, "Parsing model weights... (%d bytes)", size);

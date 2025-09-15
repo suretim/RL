@@ -180,7 +180,7 @@ std::string shape_to_string(const std::vector<int>& shape) {
     }
     return s;
 }
-
+extern uint8_t * read_model_from_spiffs(const char *spi_file_name);
 // 初始化 TFLite Micro interpreter
 bool init_spiffs_model(const char *model_path) {
 

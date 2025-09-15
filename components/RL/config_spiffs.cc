@@ -22,7 +22,7 @@
  bool spiffs_flag[2]={false};
 
 static const char *TAG = "OTA SPIFFS";
-const char* spiffs_model_path = "/spiffs/ppo_model.bin";
+const char* spiffs_ppo_model_bin_path = "/spiffs/ppo_model.bin";
 
 //extern const unsigned char meta_model_tflite[];
 //extern const unsigned int meta_model_tflite_len;
@@ -33,8 +33,8 @@ extern bool ewc_ready;
 extern void parse_model_weights(uint8_t *buffer, size_t size); 
 
 
-void verify_downloaded_file(void) {
-    const char *save_path = spiffs_model_path;
+void verify_downloaded_file(const char *save_path) {
+    //const char *save_path = spiffs_model_path;
     
     // 检查文件是否存在
     FILE *f = fopen(save_path, "rb");
@@ -62,7 +62,7 @@ void verify_downloaded_file(void) {
 
 // ---------------- Local fallback ----------------
 bool load_local_model() {
-    FILE *f = fopen(spiffs_model_path, "rb");
+    FILE *f = fopen(spiffs_ppo_model_bin_path, "rb");
     if (!f) {
         ESP_LOGE(TAG, "Local model not found!");
         return false;
@@ -384,14 +384,14 @@ void download_model(void *pvParameters) {
         sprintf(task_url, "http://%s:%s/%s", BASE_URL,POLICY_PORT,task_str);
           
  
-    if (ota_download_event_based(task_url, spiffs_model_path) != ESP_OK) {
+    if (ota_download_event_based(task_url, spiffs_ppo_model_bin_path) != ESP_OK) {
         ESP_LOGE(TAG, "OTA download failed");
         vTaskDelete(NULL); 
         return;
     }
     ESP_LOGI(TAG, "OTA download Suceess!");
     // 验证下载的文件
-    if (!calc_file_md5(spiffs_model_path, local_md5)) {
+    if (!calc_file_md5(spiffs_ppo_model_bin_path, local_md5)) {
         ESP_LOGI(TAG, "Local MD5 calculation ppo_model.bin empty");
         //vTaskDelete(NULL);
         //return;
@@ -441,7 +441,7 @@ void get_server_md5(void *pvParameters ) {
     vTaskDelete(NULL);
 } 
 
-void ota_update_process(void *pvParameters) {
+void ota_update_ppo_model_bin_process(void *pvParameters) {
     ESP_LOGI(TAG, "Starting OTA update process...");
 
     // 1. 获取服务器 MD5
@@ -458,7 +458,7 @@ void ota_update_process(void *pvParameters) {
 
     // 2. 计算本地 MD5
      
-    if (!calc_file_md5(spiffs_model_path, local_md5)) {
+    if (!calc_file_md5(spiffs_ppo_model_bin_path, local_md5)) {
         ESP_LOGI(TAG, "Local MD5 calculation Model Empty");
         //vTaskDelete(NULL);
         //return;
@@ -479,7 +479,7 @@ void ota_update_process(void *pvParameters) {
     //if (local_md5 != NULL) free(local_md5);
     
     // 在 download_model 函数末尾添加验证
-    verify_downloaded_file();
+    verify_downloaded_file(spiffs_ppo_model_bin_path);
     spiffs_flag[1]=true;
     vTaskDelete(NULL);
 }
@@ -492,7 +492,7 @@ extern "C" void start_ota() {
         vTaskDelay(10000 / portTICK_PERIOD_MS);
      }
      while(spiffs_flag[1]==false){
-        xTaskCreate(ota_update_process, "ota_update_process", 16384, NULL, 5, NULL);
+        xTaskCreate(ota_update_ppo_model_bin_process, "ota_update_ppo_model_bin_process", 16384, NULL, 5, NULL);
         vTaskDelay(10000 / portTICK_PERIOD_MS);
      }
 

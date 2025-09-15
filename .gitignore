@@ -24,7 +24,7 @@ sdkconfig.old
 sdkconfig.bak
 sdkconfig.bk
 dependencies.lock
-partition_table.csv
+partitions_table.csv
 partitions.csv
 *.txt
 components/bsp/version.h.rej
