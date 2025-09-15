@@ -121,6 +121,7 @@ std::vector<int> trainable_tensor_indices;     // 存 dense 層的 tensor index
 
 static const void *model_data_ptr = NULL;
 static spi_flash_mmap_handle_t model_mmap_handle;
+#include "tensorflow/lite/schema/schema_generated.h"
 
 bool load_model_from_flash(void) {
     const esp_partition_t *partition = esp_partition_find_first(
@@ -131,28 +132,45 @@ bool load_model_from_flash(void) {
         return false;
     }
 
-    // 映射整个分区
-    esp_err_t err = esp_partition_mmap(
+    // 首先读取模型文件头信息来确定实际模型大小
+    uint32_t model_size = 0;
+    esp_err_t err = esp_partition_read(partition, 0, &model_size, sizeof(model_size));
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read model size, err=%d", (int)err);
+        return false;
+    }
+    ESP_LOGI(TAG, "Read from spiffs2 model , model_size=%d", (int)model_size);
+      
+    // 映射实际模型大小，而不是整个分区
+    err = esp_partition_mmap(
         partition,
         0,                    // offset
-        partition->size,      // size
+        model_size,           // 使用实际模型大小，而不是整个分区大小
         ESP_PARTITION_MMAP_DATA,
         &model_data_ptr,
         &model_mmap_handle
     );
 
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "esp_partition_mmap failed, err=%d", err);
+        ESP_LOGE(TAG, "esp_partition_mmap failed, err=%d", (int)err);
         return false;
     }
 
-    ESP_LOGI(TAG, "Model mapped at addr=%d, size=%d",
-           (int)  model_data_ptr, (int)partition->size);
+    ESP_LOGI(TAG, "Model mapped at addr= %d, size=%d bytes",
+           (int)model_data_ptr, (int)model_size);
 
-    // 直接返回 TFLite 模型
-    model= tflite::GetModel(model_data_ptr);
+    // 验证模型
+    model = tflite::GetModel(model_data_ptr);
+    if (model->version() != TFLITE_SCHEMA_VERSION) {
+        ESP_LOGE(TAG, "Model provided is schema version %d not equal to supported version %d",
+               (int)model->version(), TFLITE_SCHEMA_VERSION);
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Model loaded successfully, version: %d", (int)model->version());
     return true;
-}
+} 
+
 
 std::string shape_to_string(const std::vector<int>& shape) {
     std::string s;
@@ -165,6 +183,8 @@ std::string shape_to_string(const std::vector<int>& shape) {
 
 // 初始化 TFLite Micro interpreter
 bool init_spiffs_model(const char *model_path) {
+
+#if 0
     FILE *f = fopen(model_path, "rb");
     if(!f) { 
         ESP_LOGE(TAG,"Failed to open model");
@@ -176,7 +196,13 @@ bool init_spiffs_model(const char *model_path) {
     uint8_t *model_data = (uint8_t*)malloc(model_size);
     fread(model_data, 1, model_size, f);
     fclose(f);
-
+#else
+    uint8_t *model_data=read_model_from_spiffs(model_path);
+    if(model_data==nullptr) {
+        ESP_LOGE(TAG,"Model read failed");
+        return false;
+    }
+#endif
     const tflite::Model *model = tflite::GetModel(model_data);
     if(model->version() != TFLITE_SCHEMA_VERSION) {
         ESP_LOGE(TAG,"Model schema mismatch");
@@ -184,6 +210,7 @@ bool init_spiffs_model(const char *model_path) {
         model=nullptr;
         return false;
     }
+    free(model_data); 
     return true;
 }
 
@@ -215,8 +242,8 @@ bool init_model(int type)
         return false;
     }
     ESP_LOGI(TAG,"Model loadding..."); //
-    if(type == PPO_CASE && load_model_from_flash()==false) {
-    //if(type == PPO_CASE && init_spiffs_model("/model/lstm_encoder_contrastive.tflite")==false) {
+    //if(type == PPO_CASE && load_model_from_flash()==false) {
+    if(type == PPO_CASE && init_spiffs_model("/model/lstm_encoder_contrastive.tflite")==false) {
         ESP_LOGE(TAG,"Failed to load model"); 
         return false;
     }
@@ -555,14 +582,53 @@ void parse_ewc_assets() {
  
 esp_err_t ppo_inference(float *input_data) {
  
+     ESP_LOGE(TAG, "ppo_inference Invoke ");
+     // 假设模型只用 10 种算子
+     //tflite::MicroMutableOpResolver<10> micro_op_resolver;
+    micro_op_resolver.AddShape();            // SHAPE操作符 - 之前缺失的
+    micro_op_resolver.AddStridedSlice();     // STRIDED_SLICE操作符 - 现在缺失的 ← 添加这一行
+    micro_op_resolver.AddFullyConnected();   // 全连接层
+    micro_op_resolver.AddReshape();          // 重塑层
+    micro_op_resolver.AddSoftmax();          // Softmax
+    micro_op_resolver.AddRelu();             // ReLU激活
+    micro_op_resolver.AddMul();              // 乘法
+    micro_op_resolver.AddAdd();              // 加法
+    micro_op_resolver.AddSub();              // 减法
+    micro_op_resolver.AddConcatenation();    // 连接操作
+
+    micro_op_resolver.AddSplit();            // 分割操作
+    micro_op_resolver.AddTanh();             // Tanh激活（LSTM常用）
+    micro_op_resolver.AddMean();              
+    micro_op_resolver.AddAbs();              
+    micro_op_resolver.AddFill();              
+    micro_op_resolver.AddLogistic();              
+    
+    micro_op_resolver.AddPack();             // Pack操作
+    micro_op_resolver.AddUnpack();           // Unpack操作
+    micro_op_resolver.AddTranspose();        // 转置操作
+    if(    init_model(INFER_CASE)==false){
+        ESP_LOGE(TAG,"Init ppo_inference Model Failed");
+        return kTfLiteError;
+    }
+    
+
+
+    ESP_LOGI("INFERENCE", "Input dimensions: %dD", input_tensor->dims->size);
+    for (int i = 0; i < input_tensor->dims->size; i++) {
+        ESP_LOGI("INFERENCE", "  dim[%d]: %d", i, input_tensor->dims->data[i]);
+    }
+    
      
- // 假设模型只用 10 种算子
-    tflite::MicroMutableOpResolver<10> micro_op_resolver;
-    micro_op_resolver.AddFullyConnected();
-    micro_op_resolver.AddSoftmax();
-    micro_op_resolver.AddReshape(); 
-    init_model(1);  
- 
+    if (input_tensor->dims->size != 3 || 
+        input_tensor->dims->data[0] != 1 || 
+        input_tensor->dims->data[1] != PPO_SEQ_LEN || 
+        input_tensor->dims->data[2] != FEATURE_DIM) {
+        ESP_LOGE("INFERENCE", "Unexpected input shape");
+        return kTfLiteError;
+    }
+    
+    // 准备输入数据 - 需要10个时间步，每个时间步7个特征
+    //float* input_data = input_tensor->data.f;
     //float input_data[50] = {0};
     
     // 填充输入数据
@@ -594,7 +660,7 @@ esp_err_t ppo_inference(float *input_data) {
 //TfLiteStatus setup(void) {
 TfLiteStatus sarsa_inference( float* input_seq, float* out_logits) {
     // int seq_len, int num_feats
-    tflite::MicroMutableOpResolver<24> micro_op_resolver;
+   // tflite::MicroMutableOpResolver<24> micro_op_resolver;
     micro_op_resolver.AddStridedSlice();
     micro_op_resolver.AddPack();
     micro_op_resolver.AddConv2D();
@@ -620,7 +686,7 @@ TfLiteStatus sarsa_inference( float* input_seq, float* out_logits) {
     micro_op_resolver.AddMean();
     micro_op_resolver.AddAbs();
     micro_op_resolver.AddConcatenation();  
-    init_model(1); 
+    init_model(INFER_CASE); 
     // 微调示意：更新权重，EWC参与 
     parse_ewc_assets();   
  
@@ -649,7 +715,7 @@ TfLiteStatus sarsa_inference( float* input_seq, float* out_logits) {
   
 TfLiteStatus img_inference( float* input_seq, float* out_logits) {
     // int seq_len, int num_feats
-    tflite::MicroMutableOpResolver<24> micro_op_resolver;
+    //tflite::MicroMutableOpResolver<24> micro_op_resolver;
     micro_op_resolver.AddStridedSlice();
     micro_op_resolver.AddPack();
     micro_op_resolver.AddConv2D();
@@ -697,16 +763,52 @@ TfLiteStatus img_inference( float* input_seq, float* out_logits) {
 
 float input_seq[SEQ_LEN * FEATURE_DIM] = {0.0};  // 从传感器读取
 float logits[NUM_CLASSES]= {0.0};
+
+void prepare_lstm_input() {
+    // 获取输入张量
+     
+    
+    // 检查输入维度
+    ESP_LOGI("INFERENCE", "Input dimensions: %dD", input_tensor->dims->size);
+    for (int i = 0; i < input_tensor->dims->size; i++) {
+        ESP_LOGI("INFERENCE", "  dim[%d]: %d", i, input_tensor->dims->data[i]);
+    }
+    
+    // 输入应该是 [1, 10, 7] - batch=1, timesteps=10, features=7
+    if (input_tensor->dims->size != 3 || 
+        input_tensor->dims->data[0] != 1 || 
+        input_tensor->dims->data[1] != 10 || 
+        input_tensor->dims->data[2] != 7) {
+        ESP_LOGE("INFERENCE", "Unexpected input shape");
+        return;
+    }
+    
+    // 准备输入数据 - 需要10个时间步，每个时间步7个特征
+    float* input_data = input_tensor->data.f;
+    
+    // 示例：填充10个时间步的数据
+    for (int timestep = 0; timestep < 10; timestep++) {
+        for (int feature = 0; feature < 7; feature++) {
+            // 这里根据您的实际数据填充
+            // 例如：input_data[timestep * 7 + feature] = your_sensor_data[feature];
+            input_data[timestep * 7 + feature] = 0.0f; // 临时用0填充
+        }
+    }
+}
+
 int load_up_input_seq(void)
 {
       int cnt=0;
 
 #if INFER_CASE == PPO_CASE
+ 
+    
     input_seq[cnt*FEATURE_DIM + 0] = (float)0.0;
     input_seq[cnt*FEATURE_DIM + 1] = (float)bp_pid_th.t_feed;
     input_seq[cnt*FEATURE_DIM + 2] = (float)bp_pid_th.h_feed;
     input_seq[cnt*FEATURE_DIM + 3] = (float)bp_pid_th.l_feed;
-    input_seq[cnt*FEATURE_DIM + 4] = (float)bp_pid_th.c_feed;
+    input_seq[cnt*FEATURE_DIM + 4] = (float)bp_pid_th.c_feed; 
+      
 #elif INFER_CASE == SARSACASE
     int h_idx=-1;
     uint8_t geer[6];
@@ -737,6 +839,9 @@ int load_up_input_seq(void)
     cnt=cnt%SEQ_LEN;
     return (cnt);
 }
+
+
+
 //u_int8_t get_tensor_state(void);
 esp_err_t  lll_tensor_run(void) 
 {
@@ -779,8 +884,9 @@ esp_err_t  lll_tensor_run(void)
         ml_pid_out_speed.speed[port] += out_speed.speed[port];
     }
     
+    int ret=load_up_input_seq(); 
      
-    if(load_up_input_seq()==0)
+    if(ret==0)
     {    
 #if INFER_CASE == PPO_CASE 
         if( kTfLiteError == ppo_inference(input_seq))  

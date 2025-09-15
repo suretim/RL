@@ -148,7 +148,7 @@ static void _Init(void)
 
 	//IIC1_init();  // for sc05b key, pcf8563 rtc, ex-humid sensor sht40 and etc.
     //IIC2_init();  // for zone sht3c, ex-humid sensor sht40 and etc.
-
+#if 0  //tim modify
 	ReadAdvance();	// outlet 时， ReadAllParam 中有处理 ADV ， 所以先读ADV
 	ReadAllParam(); 
 	InitRunData(); // 读取 设备已经运行的时间 sysClk1s 以及 定时模式的剩余时间
@@ -158,7 +158,7 @@ static void _Init(void)
 		Clear_Log_Data();
 		Clear_RunData();
 	}
-
+#endif
 //#if (_TYPE_of(VER_HARDWARE) == _TYPE_(_CTRLER))
 //		key_init(); // touch key ic
 //#endif
@@ -449,7 +449,7 @@ void main_task(void *pvParameters)
 	
 	_Init();
 
-	powerON_Pro();
+	//powerON_Pro();
     
 	while (1)
 	{
@@ -474,7 +474,12 @@ void main_task(void *pvParameters)
 		    if (flask_state_flag[FLASH_DOWN_LOAD_MODEL]==true && flag_100ms>=100)
 			{
 				flag_100ms = 0;	
-				lll_tensor_run();	
+				if(	lll_tensor_run()==ESP_FAIL){
+					 
+					break;
+
+				}
+				 	
 				//ai_check_plug_in(1);   // called per sec
 				// ESP_LOGW(TAG, "heap free=%ld, min=%ld",esp_get_free_heap_size(),esp_get_minimum_free_heap_size() );
 				//ESP_LOGW(TAG, "inter heap free=%ld, min=%d",esp_get_free_internal_heap_size(), heap_caps_get_minimum_free_size( MALLOC_CAP_8BIT | MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL ) );

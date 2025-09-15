@@ -1618,9 +1618,9 @@ pid_run_output_st pid_run_rule(pid_run_input_st* input)
 	 
 	ESP_LOGI(TAG,"t_feed %f ", bp_pid_th.t_feed); 
 	pid_run_output_st output1=	bp_pid_th_proc( dev_type,input->dev_type); 
-	pid_run_output_st output2= nn_ppo_infer() ;
+	//pid_run_output_st output2= nn_ppo_infer() ;
 	for(int i=0;i<4;i++)
-		output.speed[i]=  output1.speed[i]+output2.speed[i];
+		output.speed[i]=  output1.speed[i];//+output2.speed[i];
     
     return output;
 }

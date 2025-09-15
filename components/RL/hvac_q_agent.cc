@@ -116,10 +116,10 @@ ESP32EWCModel ewcppoModel;
 // 从 Flash 分区读取模型
 void read_model_from_flash(void) {
     const esp_partition_t *partition = esp_partition_find_first(
-        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "model");
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "spiffs2");
 
     if (!partition) {
-        ESP_LOGE(TAG, "Model partition not found!");
+        ESP_LOGE(TAG, "spiffs2 partition not found!");
         return;
     }
 
@@ -207,22 +207,23 @@ void app_test(void) {
 }
 
 // 从 SPIFFS 读取模型验证
-void read_model_from_spiffs(void) {
-    FILE *f = fopen("/spiffs/esp32_optimized_model.tflite", "rb");
+uint8_t * read_model_from_spiffs(const char *spi_file_name) {
+    //"/spiffs/esp32_optimized_model.tflite"
+    FILE *f = fopen(spi_file_name, "rb");
     if (!f) {
         ESP_LOGE(TAG, "Failed to open model file for reading");
-        return;
+        return nullptr;
     }
 
     fseek(f, 0, SEEK_END);
     long file_size = ftell(f);
     rewind(f);
 
-    uint8_t *buf =(uint8_t *) malloc(file_size);
+    static uint8_t *buf =(uint8_t *) malloc(file_size);
     if (!buf) {
         ESP_LOGE(TAG, "malloc failed");
         fclose(f);
-        return;
+        return nullptr;
     }
 
     fread(buf, 1, file_size, f);
@@ -230,20 +231,21 @@ void read_model_from_spiffs(void) {
 
     ESP_LOGI(TAG, "Model read back, size=%ld bytes", file_size);
 
-    free(buf);
+    //free(buf);
+    return buf;
 }
 
-// 保存模型到 SPIFFS
-bool save_model_to_spiffs(const char *b64_str) {
-    size_t bin_len = strlen(b64_str) * 3 / 4;  // 预估长度
+// 保存模型到 SPIFFS "/spiffs/esp32_optimized_model.tflite"
+bool save_model_to_spiffs(const char *b64_str,const char *spi_file_name) {
+    size_t bin_len = strlen(b64_str) * 3 / 4;
     uint8_t *model_bin =(uint8_t *) malloc(bin_len);
     if (!model_bin) {
         ESP_LOGE(TAG, "malloc failed");
         return false;
     }
 
-     
     size_t decoded_len = 0;
+     
     int ret = mbedtls_base64_decode(model_bin, bin_len, &decoded_len,
                                     (const unsigned char *)b64_str,
                                     strlen(b64_str));
@@ -256,7 +258,7 @@ bool save_model_to_spiffs(const char *b64_str) {
  
     ESP_LOGI(TAG, "Model decoded, length=%d", decoded_len);
 
-    FILE *f = fopen("/spiffs/esp32_optimized_model.tflite", "wb");
+    FILE *f = fopen(spi_file_name, "wb");
     if (f) {
         fwrite(model_bin, 1, decoded_len, f);
         fclose(f);
@@ -266,14 +268,17 @@ bool save_model_to_spiffs(const char *b64_str) {
     }
 
     free(model_bin);
-    read_model_from_spiffs();
+    read_model_from_spiffs(spi_file_name);
     return true;
 }
 
-void parse_model_json(const char *json_str) {
-    cJSON *root = cJSON_Parse(json_str);
+void parse_policy_model_json(const char *json_str) {
+    
+    //printf("Raw JSON string: %s\n", json_str); // 直接使用，不需要.c_str()
+    //printf("JSON string length: %d\n", strlen(json_str)); // 使用strlen函数
+    cJSON *root = cJSON_Parse(json_str); // 直接使用，不需要.c_str()
     if (!root) {
-        ESP_LOGE(TAG, "Failed to parse JSON");
+        ESP_LOGE(TAG, "Failed to parse_model_json JSON");
         return;
     }
 
@@ -292,22 +297,22 @@ void parse_model_json(const char *json_str) {
         size_t bin_len = strlen(b64_str) * 3 / 4;  // 预估长度
         uint8_t *model_bin =(uint8_t *) malloc(bin_len);
         if (model_bin) {
-            #include "mbedtls/base64.h"
+           // #include "mbedtls/base64.h"
 
-size_t decoded_len = 0;
-int ret = mbedtls_base64_decode(model_bin, bin_len, &decoded_len,
-                                (const unsigned char *)b64_str,
-                                strlen(b64_str));
-if (ret != 0) {
-    ESP_LOGE(TAG, "Base64 decode failed, ret=%d", ret);
-    free(model_bin);
-    return  ;
-}
-ESP_LOGI(TAG, "Model decoded, length=%zu", decoded_len);
+            size_t decoded_len = 0;
+            int ret = mbedtls_base64_decode(model_bin, bin_len, &decoded_len,
+                                            (const unsigned char *)b64_str,
+                                            strlen(b64_str));
+            if (ret != 0) {
+                ESP_LOGE(TAG, "Base64 decode failed, ret=%d", ret);
+                free(model_bin);
+                return  ;
+            }
+            ESP_LOGI(TAG, "Model decoded, length=%zu", decoded_len);
 
 
-            //save_model_to_spiffs(b64_str);
-            save_model_to_flash(b64_str);
+            save_model_to_spiffs(b64_str,"/spiffs/esp32_optimized_model.tflite");
+            //save_model_to_flash(b64_str);
             // TODO: 存到 SPIFFS / PSRAM / Flash 分区
             free(model_bin);
         }
@@ -344,29 +349,74 @@ ESP_LOGI(TAG, "Model decoded, length=%zu", decoded_len);
     cJSON_Delete(root);
 }
 
+
+// 添加全局变量或使用静态变量来存储数据
+static std::string http_response_data;
+
+// HTTP事件处理器
+esp_err_t _http_event_model_json_handler(esp_http_client_event_t *evt) {
+    switch (evt->event_id) {
+        case HTTP_EVENT_ON_DATA:
+            // 接收到数据时追加到字符串
+            if (evt->data_len > 0) {
+                http_response_data.append((char*)evt->data, evt->data_len);
+            }
+            break;
+        case HTTP_EVENT_ON_FINISH:
+            // 请求完成
+            ESP_LOGI(TAG, "HTTP request finished, received %d bytes", http_response_data.length());
+            break;
+        default:
+            break;
+    }
+    return ESP_OK;
+}
+
 void http_get_model_json(void *pvParameters) {
+    http_response_data.clear(); // 清空之前的数据
+    
     esp_http_client_config_t config = {
-        .url = HTTP_GET_MODEL_JSON_URL,
+        .url = HTTP_GET_MODEL_JSON_URL,        
+        .timeout_ms = 10000,
+        .event_handler = _http_event_model_json_handler, // 设置事件处理器
     };
+    
     esp_http_client_handle_t client = esp_http_client_init(&config);
+    
     esp_err_t err = esp_http_client_perform(client);
     if (err == ESP_OK) {
-        int content_len = esp_http_client_get_content_length(client);
-        char *buffer =(char*) malloc(content_len + 1);
-        if (buffer) {
-            esp_http_client_read(client, buffer, content_len);
-            buffer[content_len] = '\0';
-            parse_model_json(buffer);
-            free(buffer);
+        int status_code = esp_http_client_get_status_code(client);
+        ESP_LOGI(TAG, "HTTP Status Code: %d", status_code);
+        
+        if (status_code == 200) {
+            ESP_LOGI(TAG, "Total received data length: %d", http_response_data.length());
+            
+            if (!http_response_data.empty()) {
+                // 调试输出：打印前100个字符
+                //ESP_LOGI(TAG, "First 100 chars: %.100s", http_response_data.c_str());
+                
+                // 打印前16字节的十六进制
+                //ESP_LOGI(TAG, "First 16 bytes in hex:");
+                //for (int i = 0; i < std::min(16, (int)http_response_data.length()); i++) {
+                //    printf("%02X ", (unsigned char)http_response_data[i]);
+                //}
+                //printf("\n");
+                
+                // 解析JSON
+                parse_policy_model_json(http_response_data.c_str());
+            } else {
+                ESP_LOGE(TAG, "No data received");
+            }
+        } else {
+            ESP_LOGE(TAG, "HTTP request failed with status: %d", status_code);
         }
     } else {
         ESP_LOGE(TAG, "HTTP GET failed: %s", esp_err_to_name(err));
     }
+    
     esp_http_client_cleanup(client);
     vTaskDelete(NULL);
 }
-
- 
 
 
 void flask_init_exporter_task(void *pvParameters) {
@@ -425,7 +475,7 @@ void flask_init_exporter_task(void *pvParameters) {
 }
 
 //print(f"GET http://{ip}:{port}/api/model?name=esp32_policy")
-static void flask_download_model_task(void *param) {
+void flask_download_model_task(void *param) {
     ESP_LOGI("MEM", "Before OTA: Heap free=%d, internal free=%d, largest=%d",
              (int)esp_get_free_heap_size(),
              (int)esp_get_free_internal_heap_size(),
@@ -776,7 +826,7 @@ extern "C" pid_run_output_st nn_ppo_infer(void) {
 
     // 初始化 PPO 推理网络
     NN  ppoNN(5, 32, 4);  // state_dim=5, hidden=32, action_dim=4
-    if (ppoNN.loadWeights("/spiffs/model.bin")==false) {
+    if (ppoNN.loadWeights("/spiffs1/model.bin")==false) {
         ESP_LOGI(TAG, "Failed to load weights\n");
         output_speed.speed[0] =11;
         return output_speed;

@@ -68,13 +68,15 @@ def ota_model_md5():
 if __name__ == "__main__":
     ip = get_local_ip()
     port = 5001
-    app.run(host="0.0.0.0", port=port, debug=True, use_reloader=False)
 
-    print(f"💡 你的局域网 IP 是: {ip}")
-    print(f"👉 ESP32 OTA URL : http://{ip}:{port}/ota_model")
-    print(f"👉 ESP32 MD5 URL : http://{ip}:{port}/ota_model_md5")
+
+    print(f" 你的局域网 IP 是: {ip}")
+    print(f" ESP32 OTA URL : http://{ip}:{port}/ota_model")
+    print(f" ESP32 MD5 URL : http://{ip}:{port}/ota_model_md5")
     print(f"GET http://{ip}:{port}/api/model?name=esp32_policy")
     print(f"spiffs esp32_optimized_model.tflite")
+
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
     # 启动 Flask
 
 

@@ -242,11 +242,20 @@ std::vector<std::vector<int>> parse_layer_shapes(const std::string& json_str)
 {
     std::vector<std::vector<int>> shapes;
 
+    printf("Raw JSON string: %s\n", json_str.c_str());
+    printf("JSON string length: %d\n", json_str.length());
+
     cJSON *root = cJSON_Parse(json_str.c_str());
     if (!root) {
-        printf("Failed to parse JSON\n");
-        return shapes;   
+        const char *error_ptr = cJSON_GetErrorPtr();
+        if (error_ptr != NULL) {
+            printf("Error before: %s\n", error_ptr);
+        }
+        printf("Failed to parse_layer_shapes JSON. String: %s\n", json_str.c_str());
+        return shapes;
     }
+
+     
 
     int array_size = cJSON_GetArraySize(root);
     for (int i = 0; i < array_size; i++) {
@@ -292,7 +301,7 @@ static size_t hex_to_bytes(const char *hex_str, uint8_t *out_buf, size_t out_buf
 void mqtt_data_handler(const char *payload) {
     cJSON *root = cJSON_Parse(payload);
     if (!root) {
-        ESP_LOGE(TAG, "JSON parse failed");
+        ESP_LOGE(TAG, "JSON parse mqtt_data_handler failed");
         return;
     }
 
@@ -437,7 +446,7 @@ static esp_err_t mqtt_event_handler_cb (esp_mqtt_event_handle_t event) {
 void handle_mqtt_message(const char *json_str) {
     cJSON *root = cJSON_Parse(json_str);
     if (!root) {
-        printf("Failed to parse JSON\n");
+        printf("Failed to parse handle_mqtt_message JSON\n");
         return;
     }
 
