@@ -180,6 +180,57 @@ static void wifi_apsta_event_handler(void *arg, esp_event_base_t event_base,
 } 
 
 
+
+
+void wifi_init_apsta(void) {
+    ESP_LOGI(TAG, "Initializing Wi-Fi AP+STA mode...");
+    
+    // 创建事件组
+    s_wifi_event_group = xEventGroupCreate();
+    if (s_wifi_event_group == NULL) {
+        ESP_LOGE(TAG, "Failed to create event group");
+        return;
+    }
+
+    // 创建默认网络接口
+    esp_netif_create_default_wifi_sta();
+    esp_netif_create_default_wifi_ap();
+
+    // WiFi初始化配置
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    // 注册事件处理器
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_apsta_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_apsta_event_handler, NULL));
+
+    // STA配置
+    wifi_config_t sta_config = {0};
+    strlcpy((char *)sta_config.sta.ssid, WIFI_SSID_STA, sizeof(sta_config.sta.ssid));
+    strlcpy((char *)sta_config.sta.password, WIFI_PASS_STA, sizeof(sta_config.sta.password));
+    sta_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+
+    // AP配置
+    wifi_config_t ap_config = {0};
+    strlcpy((char *)ap_config.ap.ssid, WIFI_SSID_AP, sizeof(ap_config.ap.ssid));
+    strlcpy((char *)ap_config.ap.password, WIFI_PASS_AP, sizeof(ap_config.ap.password));
+    ap_config.ap.ssid_len = strlen(WIFI_SSID_AP);
+    ap_config.ap.max_connection = 4;
+    ap_config.ap.authmode = (strlen(WIFI_PASS_AP) == 0) ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA_WPA2_PSK;
+
+    // 设置WiFi模式
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_config));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
+    
+    // 启动WiFi
+    ESP_ERROR_CHECK(esp_wifi_start());
+
+    ESP_LOGI(TAG, "Wi-Fi AP+STA Initialized Successfully");
+    ESP_LOGI(TAG, "AP SSID: %s", WIFI_SSID_AP);
+    ESP_LOGI(TAG, "STA connecting to: %s", WIFI_SSID_STA);
+}
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -261,55 +312,6 @@ void wifi_init_ap(void)
     ESP_LOGI(TAG, "got ip:" IPSTR "\n", IP2STR(&ip_info.ip));
 }
 
-
-void wifi_init_apsta(void) {
-    ESP_LOGI(TAG, "Initializing Wi-Fi AP+STA mode...");
-    
-    // 创建事件组
-    s_wifi_event_group = xEventGroupCreate();
-    if (s_wifi_event_group == NULL) {
-        ESP_LOGE(TAG, "Failed to create event group");
-        return;
-    }
-
-    // 创建默认网络接口
-    esp_netif_create_default_wifi_sta();
-    esp_netif_create_default_wifi_ap();
-
-    // WiFi初始化配置
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-
-    // 注册事件处理器
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_apsta_event_handler, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_apsta_event_handler, NULL));
-
-    // STA配置
-    wifi_config_t sta_config = {0};
-    strlcpy((char *)sta_config.sta.ssid, WIFI_SSID_STA, sizeof(sta_config.sta.ssid));
-    strlcpy((char *)sta_config.sta.password, WIFI_PASS_STA, sizeof(sta_config.sta.password));
-    sta_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
-
-    // AP配置
-    wifi_config_t ap_config = {0};
-    strlcpy((char *)ap_config.ap.ssid, WIFI_SSID_AP, sizeof(ap_config.ap.ssid));
-    strlcpy((char *)ap_config.ap.password, WIFI_PASS_AP, sizeof(ap_config.ap.password));
-    ap_config.ap.ssid_len = strlen(WIFI_SSID_AP);
-    ap_config.ap.max_connection = 4;
-    ap_config.ap.authmode = (strlen(WIFI_PASS_AP) == 0) ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA_WPA2_PSK;
-
-    // 设置WiFi模式
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_config));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
-    
-    // 启动WiFi
-    ESP_ERROR_CHECK(esp_wifi_start());
-
-    ESP_LOGI(TAG, "Wi-Fi AP+STA Initialized Successfully");
-    ESP_LOGI(TAG, "AP SSID: %s", WIFI_SSID_AP);
-    ESP_LOGI(TAG, "STA connecting to: %s", WIFI_SSID_STA);
-}
 
  
 

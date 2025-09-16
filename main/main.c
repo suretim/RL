@@ -34,7 +34,8 @@
 SemaphoreHandle_t mutex_mainTask;
 EventGroupHandle_t main_eventGroup;
 extern void ai_check_plug_in(uint8_t track_cc);
-extern bool flask_state_flag[NUM_FLASK_TASK];
+extern uint8_t flask_state_get_flag[FLASK_STATE_GET_COUNT];
+extern uint8_t flask_state_put_flag[FLASK_STATE_PUT_COUNT];
 
 /*
 ****************************************************************************************************
@@ -89,21 +90,9 @@ static void maintask_timer10ms_Init(void)
 	/* Start the timers */
 	ESP_ERROR_CHECK(esp_timer_start_periodic(periodic_timer, 10000));
 	ESP_LOGI(TAG, "%s() Started timers, time since boot: %lld us", __func__, esp_timer_get_time());
-}
-/*
-****************************************************************************************************
-*    函数名称：
-*    功能说明：
-*    参    数：
-*    返 回 值：
-*    
-_Init
-gpio_init
+} 
 
 
-
-****************************************************************************************************
-*/
 
 static void _Init(void)
 {
@@ -469,11 +458,28 @@ void main_task(void *pvParameters)
 			run_per100ms();	
 			main_flash_heart();
 			// ai_check_plug_in(1);   // called per sec
-
-			flag_100ms++;
-		    if (flask_state_flag[FLASH_DOWN_LOAD_MODEL]==true && flag_100ms>=100)
+			if(flag_100ms==0) 
 			{
-				flag_100ms = 0;	
+				
+				for(int i=0;i<FLASK_STATE_GET_COUNT;i++)
+				{
+					vTaskDelay(pdMS_TO_TICKS(10000));
+					if(flask_state_get_flag[i]==SPIFFS_MODEL_EMPTY)
+					{
+						wifi_get_package(i);    
+					}
+					if(flask_state_get_flag[SPIFFS_DOWN_LOAD_MODEL]==SPIFFS_MODEL_SAVED){
+						//flag_100ms=FLASK_STATE_GET_COUNT;
+						break;
+					}
+					 
+				}
+			}
+			
+			flag_100ms++;
+		    if (  flask_state_get_flag[SPIFFS_DOWN_LOAD_MODEL]==SPIFFS_MODEL_SAVED  && flag_100ms>=100)
+			{
+				flag_100ms = FLASK_STATE_GET_COUNT;	
 				if(	lll_tensor_run()==ESP_FAIL){
 					 
 					break;
@@ -486,7 +492,7 @@ void main_task(void *pvParameters)
 				// heap_caps_print_heap_info( MALLOC_CAP_SPIRAM );
 				// heap_caps_print_heap_info( MALLOC_CAP_INTERNAL );
 		    }
-			
+			vTaskDelay(pdMS_TO_TICKS(100));
 		#if ((_TYPE_of(VER_HARDWARE) == _TYPE_(_OUTLET)))
 			switch_sync_sta();
 		#endif
@@ -530,11 +536,11 @@ void plant_env_make_task(void *pvParameters)
 	while(1)
 	{  
 		//for(int i=0;i<NUM_FLASK_TASK;i++)
-        for(int i=0;i<1;i++)
+        for(int i=0;i<FLASK_STATE_PUT_COUNT;i++)
         {
             vTaskDelay(pdMS_TO_TICKS(10000));
-            if(flask_state_flag[i]==false)
-                wifi_ota_ppo_package(i);    
+            if(flask_state_put_flag[i]==SPIFFS_MODEL_EMPTY)
+                wifi_put_package(i);    
 
         }
 		if(plant_env_step() ==0){

@@ -304,27 +304,36 @@ class TensorFlowESP32Exporter(ESP32BaseExporter):
 
 
     # 壓縮
-    def compress_for_esp32(self, tflite_bytes: bytes) -> Dict[str, Any]:
-        print("Compressing model for ESP32...")
-        comp = zlib.compress(tflite_bytes)
-        original_size = len(tflite_bytes)
-        compressed_size = len(comp)
-        compression_ratio = original_size / compressed_size if compressed_size > 0 else float('inf')
-        print(f"Compression ratio: {compression_ratio:.2f}x")
-        print(f"Original: {original_size} bytes, Compressed: {compressed_size} bytes")
-        return {
-            'compressed_model': comp,
-            'original_size': original_size,
-            'compressed_size': compressed_size,
-            'compression_ratio': compression_ratio,  # FIX: 供 metadata 使用
-        }
+    def compress_for_esp32(self, tflite_bytes, compress=False):  # 添加compress参数
+        """
+        为ESP32压缩模型数据
 
-    # OTA 組包
+        Args:
+            tflite_bytes: TFLite模型字节数据
+            compress: 是否进行压缩，默认为True
+        """
+        if compress:
+            # 压缩逻辑
+            compressed = zlib.compress(tflite_bytes)
+            compression_ratio = len(tflite_bytes) / len(compressed)
+            return {
+                'compressed_model': compressed,
+                'compression_ratio': compression_ratio,
+                'compressed': True
+            }
+        else:
+            # 不压缩，直接返回原始数据
+            return {
+                'compressed_model': tflite_bytes,
+                'compression_ratio': 1.0,
+                'compressed': False
+            }
     def create_ota_package(self,
                            representative_data: np.ndarray,
                            firmware_version: str = "1.0.0",
                            fine_tune_data=None,  #fine_tune_data=(x_train, y_train)
                            prune: bool = True,
+                           compress=False,
                            quantize: bool = True) -> Dict[str, Any]:
         print("Creating OTA package...")
         if prune:
@@ -341,7 +350,7 @@ class TensorFlowESP32Exporter(ESP32BaseExporter):
             converter = tf.lite.TFLiteConverter.from_keras_model(self.model)
             tflite_bytes = converter.convert()
 
-        comp = self.compress_for_esp32(tflite_bytes)
+        comp = self.compress_for_esp32(tflite_bytes, compress=compress)
         simplified_fisher = self._simplify_fisher_matrix()
         metadata = {
             'firmware_version': firmware_version,

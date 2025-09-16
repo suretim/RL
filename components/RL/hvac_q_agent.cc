@@ -10,13 +10,13 @@
 #include "esp_event.h"
 #include "esp_wifi.h"
 #include "esp_http_client.h"
-#include "config_mqtt.h"
 #include "ota_model_updater.h"
 #include "esp32_model_loader.h"
 #include "ml_pid.h"
 #include "nn.h" 
 #include "hvac_q_agent.h"
-
+#include "config_wifi.h"
+#include "config_mqtt.h"
  
 #include "cJSON.h"
  #include "mbedtls/base64.h"
@@ -27,58 +27,30 @@
 #include "cJSON.h"
 //#include "esp_base64.h"   // ESP-IDF 自带 base64
 #include "esp_err.h"
- 
-#include <string.h> 
-#include "esp_system.h"
+  
 #include "esp_partition.h"   
 
 
 #define CURRENT_VERSION  "1.0.0"
-extern const char * spiffs_model_path ;
+//extern const char * spiffs_model_path ;
 static const char *TAG = "OTA HVAC";
 
-bool flask_state_flag[NUM_FLASK_TASK]={false};
-
-// ---------------- NN Placeholder ----------------
-// 权重向量示例
-std::vector<float> W1, W2, b1, b2, Vw;
-float Vb = 0.0f;
+  uint8_t flask_state_get_flag[FLASK_STATE_GET_COUNT]={0};
+  uint8_t flask_state_put_flag[FLASK_STATE_PUT_COUNT]={0};
 extern std::vector<float> health_result;
 
-#define H1          32
-#define H2          4
-const char *spiffs_model_path ="/spiffs/esp32_optimized_model.tflite";
-
-void parse_model_weights(uint8_t *buffer, size_t size) {
-    ESP_LOGI(TAG, "Parsing model weights... (%d bytes)", size);
-
-    // 将 buffer 强制转换为 float*
-    float* ptr = reinterpret_cast<float*>(buffer);
-    size_t offset = 0;
-
-    // 清空之前的 vector 并填充新数据
-    W1.assign(ptr + offset, ptr + offset + H1 * INPUT_DIM);
-    offset += H1 * INPUT_DIM;
-
-    b1.assign(ptr + offset, ptr + offset + H1);
-    offset += H1;
-
-    W2.assign(ptr + offset, ptr + offset + H2 * H1);
-    offset += H2 * H1;
-
-    b2.assign(ptr + offset, ptr + offset + H2);
-    offset += H2;
-
-    Vw.assign(ptr + offset, ptr + offset + H2);
-    offset += H2;
-
-    Vb = *(ptr + offset);
-    offset += 1;
-
-    ESP_LOGI(TAG, "Model weights parsed successfully. Total floats = %d", offset);
-} 
  
- 
+//const int num_flask_task=3;
+char flask_get_name[FLASK_STATE_GET_COUNT][64]={
+    spiffs_model_path,
+    spiffs_ppo_model_bin_path
+};
+//const int num_flask_task=3;
+char flask_put_name[FLASK_STATE_PUT_COUNT][64]={
+    post_data, 
+};
+bool save_model_to_spiffs(uint8_t type,const char *b64_str,const char *spi_file_name);
+uint8_t * read_model_from_spiffs(const char *spi_file_name) ;
 // ---------------- OTA Callback ----------------
 esp_err_t _http_down_load_event_handler(esp_http_client_event_t *evt) {
     static FILE *f_model = NULL;
@@ -110,176 +82,15 @@ esp_err_t _http_down_load_event_handler(esp_http_client_event_t *evt) {
  
 // ======= PPO 模型 =======
 ESP32EWCModel ewcppoModel;
-
-
-
-// 从 Flash 分区读取模型
-void read_model_from_flash(void) {
-    const esp_partition_t *partition = esp_partition_find_first(
-        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "spiffs2");
-
-    if (!partition) {
-        ESP_LOGE(TAG, "spiffs2 partition not found!");
-        return;
-    }
-
-    size_t size = partition->size;
-    uint8_t *buf = (uint8_t *) malloc(size);
-    if (!buf) {
-        ESP_LOGE(TAG, "malloc failed");
-        return;
-    }
-
-    ESP_ERROR_CHECK(esp_partition_read(partition, 0, buf, size));
-
-    ESP_LOGI(TAG, "Model read back, first 16 bytes:");
-    for (int i = 0; i < 16 && i < size; i++) {
-        printf("%02X ", buf[i]);
-    }
-    printf("\n");
-
-    free(buf);
-    flask_state_flag[FLASH_DOWN_LOAD_MODEL] = true;
-}
-
-// 保存模型到自定义 Flash 分区
-bool save_model_to_flash(const char *b64_str) {
-    size_t bin_len = strlen(b64_str) * 3 / 4;
-    uint8_t *model_bin =(uint8_t *) malloc(bin_len);
-    if (!model_bin) {
-        ESP_LOGE(TAG, "malloc failed");
-        return false;
-    }
-
  
-    size_t decoded_len = 0;
-    int ret = mbedtls_base64_decode(model_bin, bin_len, &decoded_len,
-                                    (const unsigned char *)b64_str,
-                                    strlen(b64_str));
-    if (ret != 0) {
-        ESP_LOGE(TAG, "Base64 decode failed, ret=%d", ret);
-        free(model_bin);
-        return false;
-    }
-    ESP_LOGI(TAG, "Model decoded, length=%zu", decoded_len);
-
-  
-    // 查找 "spiffs2" 分区
-    const esp_partition_t *partition = esp_partition_find_first(
-        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "spiffs2");
-
-    if (!partition) {
-        ESP_LOGE(TAG, "spiffs2 partition not found!");
-        free(model_bin);
-        return false;
-    }
-
-    // 擦除并写入
-    ESP_ERROR_CHECK(esp_partition_erase_range(partition, 0, partition->size));
-    ESP_ERROR_CHECK(esp_partition_write(partition, 0, model_bin, decoded_len));
-
-    ESP_LOGI(TAG, "Model saved to Flash partition (size=%d)", decoded_len);
-
-    free(model_bin);
-    read_model_from_flash();
-    return true;
-}
-
-void app_test(void) {
-    // 模拟一个 JSON，里面包含 base64 模型
-    const char *json_str = "{ \"model_data_b64\": \"QUJDREVGRw==\" }"; // "ABCDEFG"
-
-    cJSON *root = cJSON_Parse(json_str);
-    if (!root) {
-        ESP_LOGE(TAG, "Failed to parse JSON");
-        return;
-    }
-
-    cJSON *model_b64 = cJSON_GetObjectItem(root, "model_data_b64");
-    if (model_b64 && cJSON_IsString(model_b64)) {
-        save_model_to_flash(model_b64->valuestring);
-    }
-
-    cJSON_Delete(root);
-
-    // 验证读取
-    read_model_from_flash();
-}
-
-// 从 SPIFFS 读取模型验证
-uint8_t * read_model_from_spiffs(const char *spi_file_name) {
-    //"/spiffs/esp32_optimized_model.tflite"
-    FILE *f = fopen(spi_file_name, "rb");
-    if (!f) {
-        ESP_LOGE(TAG, "Failed to open model file for reading");
-        return nullptr;
-    }
-
-    fseek(f, 0, SEEK_END);
-    long file_size = ftell(f);
-    rewind(f);
-
-    static uint8_t *buf =(uint8_t *) malloc(file_size);
-    if (!buf) {
-        ESP_LOGE(TAG, "malloc failed");
-        fclose(f);
-        return nullptr;
-    }
-
-    fread(buf, 1, file_size, f);
-    fclose(f);
-
-    ESP_LOGI(TAG, "Model read back, size=%ld bytes", file_size);
-
-    //free(buf);
-    return buf;
-}
-
-// 保存模型到 SPIFFS "/spiffs/esp32_optimized_model.tflite"
-bool save_model_to_spiffs(const char *b64_str,const char *spi_file_name) {
-    size_t bin_len = strlen(b64_str) * 3 / 4;
-    uint8_t *model_bin =(uint8_t *) malloc(bin_len);
-    if (!model_bin) {
-        ESP_LOGE(TAG, "malloc failed");
-        return false;
-    }
-
-    size_t decoded_len = 0;
+bool parse_policy_model_json(const char *json_str) {
      
-    int ret = mbedtls_base64_decode(model_bin, bin_len, &decoded_len,
-                                    (const unsigned char *)b64_str,
-                                    strlen(b64_str));
-    if (ret != 0) {
-        ESP_LOGE(TAG, "Base64 decode failed, ret=%d", ret);
-        free(model_bin);
-        return false;
-    }
-    ESP_LOGI(TAG, "Model decoded, length=%zu", decoded_len);
- 
-    ESP_LOGI(TAG, "Model decoded, length=%d", decoded_len);
-
-    FILE *f = fopen(spi_file_name, "wb");
-    if (f) {
-        fwrite(model_bin, 1, decoded_len, f);
-        fclose(f);
-        ESP_LOGI(TAG, "Model saved to SPIFFS");
-    } else {
-        ESP_LOGE(TAG, "Failed to open file for writing");
-    }
-
-    free(model_bin);
-    read_model_from_spiffs(spi_file_name);
-    return true;
-}
-
-void parse_policy_model_json(const char *json_str) {
-    
     //printf("Raw JSON string: %s\n", json_str); // 直接使用，不需要.c_str()
     //printf("JSON string length: %d\n", strlen(json_str)); // 使用strlen函数
     cJSON *root = cJSON_Parse(json_str); // 直接使用，不需要.c_str()
     if (!root) {
         ESP_LOGE(TAG, "Failed to parse_model_json JSON");
-        return;
+        return false;
     }
 
     // 解析 metadata
@@ -306,12 +117,12 @@ void parse_policy_model_json(const char *json_str) {
             if (ret != 0) {
                 ESP_LOGE(TAG, "Base64 decode failed, ret=%d", ret);
                 free(model_bin);
-                return  ;
+                return  false;
             }
             ESP_LOGI(TAG, "Model decoded, length=%zu", decoded_len);
 
 
-            save_model_to_spiffs(b64_str,"/spiffs/esp32_optimized_model.tflite");
+            save_model_to_spiffs(  1,b64_str,spiffs_model_path);
             //save_model_to_flash(b64_str);
             // TODO: 存到 SPIFFS / PSRAM / Flash 分区
             free(model_bin);
@@ -347,11 +158,13 @@ void parse_policy_model_json(const char *json_str) {
     }
 
     cJSON_Delete(root);
+    return true;
 }
 
 
 // 添加全局变量或使用静态变量来存储数据
 static std::string http_response_data;
+static std::string http_put_response_data;
 
 // HTTP事件处理器
 esp_err_t _http_event_model_json_handler(esp_http_client_event_t *evt) {
@@ -372,9 +185,14 @@ esp_err_t _http_event_model_json_handler(esp_http_client_event_t *evt) {
     return ESP_OK;
 }
 
+
+
+ 
+
 void http_get_model_json(void *pvParameters) {
+     
     http_response_data.clear(); // 清空之前的数据
-    
+    flask_state_get_flag[SPIFFS_DOWN_LOAD_MODEL]=SPIFFS_MODEL_ERR;
     esp_http_client_config_t config = {
         .url = HTTP_GET_MODEL_JSON_URL,        
         .timeout_ms = 10000,
@@ -406,6 +224,7 @@ void http_get_model_json(void *pvParameters) {
                 parse_policy_model_json(http_response_data.c_str());
             } else {
                 ESP_LOGE(TAG, "No data received");
+                
             }
         } else {
             ESP_LOGE(TAG, "HTTP request failed with status: %d", status_code);
@@ -418,10 +237,352 @@ void http_get_model_json(void *pvParameters) {
     vTaskDelete(NULL);
 }
 
+ 
+ 
+
+
+ char local_md5[64]={0};
+ char server_md5[64]={0};
+
+ 
+typedef struct {
+    FILE *file;
+    int total_bytes;
+} download_ctx_t;
+
+
+bool calc_file_md5(const char *file_path, char *md5_str) {
+    FILE *f = fopen(file_path, "rb");
+    if (!f) return false;
+
+    mbedtls_md5_context ctx;
+    unsigned char digest[16];
+    unsigned char buf[1024];
+    size_t len;
+
+    mbedtls_md5_init(&ctx);
+    mbedtls_md5_starts(&ctx);  
+
+    while ((len = fread(buf, 1, sizeof(buf), f)) > 0) {
+        mbedtls_md5_update(&ctx, buf, len);   
+    }
+
+    mbedtls_md5_finish(&ctx, digest);  
+    mbedtls_md5_free(&ctx);
+    fclose(f);
+
+    for (int i = 0; i < 16; i++) {
+        sprintf(md5_str + i*2, "%02x", digest[i]);
+    }
+    md5_str[32] = 0;
+    return true;
+}
+
+
+esp_err_t download_event_md5_handler(esp_http_client_event_t *evt) {
+    download_ctx_t *ctx = (download_ctx_t *)evt->user_data;
+
+    switch (evt->event_id) {
+        case HTTP_EVENT_ON_DATA:
+            ESP_LOGI(TAG, "HTTP_EVENT_ON_DATA, len=%d", evt->data_len);
+            if (ctx && ctx->file && evt->data_len > 0) {
+                size_t written = fwrite(evt->data, 1, evt->data_len, ctx->file);
+                ctx->total_bytes += written;
+                ESP_LOGI(TAG, "Written %d bytes, total: %d", written, ctx->total_bytes);
+            }
+            break;
+
+        case HTTP_EVENT_ON_FINISH:
+            ESP_LOGI(TAG, "HTTP_EVENT_ON_FINISH");
+            break;
+
+        default:
+            break;
+    }
+    return ESP_OK;
+}
+
+esp_err_t ota_download_md5_event_based(const char *url, const char *save_path) {
+    ESP_LOGI(TAG, "Event-based download from: %s", url);
+
+    download_ctx_t ctx = {0};
+    
+    // 删除旧文件
+    remove(save_path);
+
+    ctx.file = fopen(save_path, "wb");
+    if (!ctx.file) {
+        ESP_LOGE(TAG, "Failed to open file for writing %s",save_path);
+        
+        return ESP_FAIL;
+    }
+
+    esp_http_client_config_t config = {
+        .url = url,
+        .timeout_ms = 30000,
+        .event_handler = download_event_md5_handler,
+        .user_data = &ctx
+    };
+
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) {
+        fclose(ctx.file);
+        ESP_LOGE(TAG, "HTTP client init failed");
+        
+        return ESP_FAIL;
+    }
+
+    esp_err_t err = esp_http_client_perform(client);
+    int status = esp_http_client_get_status_code(client);
+
+    fclose(ctx.file);
+    esp_http_client_cleanup(client);
+
+    if (err != ESP_OK || status != 200) {
+        ESP_LOGE(TAG, "Download failed: %s, status=%d", esp_err_to_name(err), status);
+        
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "Download MODEL_BIN_PPO_MD5 completed: %d bytes", ctx.total_bytes);
+    //spiffs_token=true;
+    flask_state_get_flag[MODEL_BIN_PPO_MD5]=SPIFFS_MODEL_SAVED;
+    return ESP_OK;
+}
+
+void download_ota_md5_model(void *pvParameters) {
+
+    //const char *ota_url = "http://192.168.30.132:5001/ota_model";
+    char task_str[32]="ota_model";
+        char task_url[128];
+        sprintf(task_url, "http://%s:%s/%s", BASE_URL,POLICY_PORT,task_str);
+          
+ 
+    if (ota_download_md5_event_based(task_url, spiffs_ppo_model_bin_path) != ESP_OK) {
+        ESP_LOGE(TAG, "OTA download failed");
+        flask_state_get_flag[MODEL_BIN_PPO_MD5]=SPIFFS_MODEL_ERR;
+        vTaskDelete(NULL); 
+        return;
+    }
+    ESP_LOGI(TAG, "OTA download Suceess!");
+    // 验证下载的文件
+    if (!calc_file_md5(spiffs_ppo_model_bin_path, local_md5)) {
+        ESP_LOGI(TAG, "Local MD5 calculation ppo_model.bin empty");
+        //vTaskDelete(NULL);
+        //return;
+    
+        if (  strcmp(server_md5, local_md5) == 0) {
+            ESP_LOGI(TAG, "Md5 verified equally!");
+                
+        } else {
+            ESP_LOGI(TAG, "Md5 verified not equally!");
+        }   
+    }
+    vTaskDelete(NULL);
+ 
+}
+
+
+// JSON 解析函数（简单版本）
+char* extract_md5_from_json(const char* json_str) {
+    char* md5_start = strstr(json_str, "\"md5\":\"");
+    if (md5_start == NULL) {
+        ESP_LOGE(TAG, "MD5 field not found in JSON");
+        return NULL;
+    }
+    
+    md5_start += 7; // 跳过 "\"md5\":\""
+    char* md5_end = strchr(md5_start, '"');
+    if (md5_end == NULL) {
+        ESP_LOGE(TAG, "Invalid JSON format");
+        return NULL;
+    }
+    
+    size_t md5_len = md5_end - md5_start;
+    char* md5 = (char*) malloc(md5_len + 1);
+    strncpy(md5, md5_start, md5_len);
+    md5[md5_len] = '\0';
+    memcpy(server_md5, md5, sizeof(server_md5));
+     
+    return md5;
+}
+ 
+
+// HTTP 事件处理函数
+esp_err_t http_md5_event_handler(esp_http_client_event_t *evt) {
+    static char* response_buffer = NULL;
+    static size_t response_len = 0;
+
+    switch (evt->event_id) {
+        case HTTP_EVENT_ON_DATA:
+            ESP_LOGI(TAG, "Received data, len=%d", evt->data_len);
+            // 累积接收到的数据
+            response_buffer = (char*)realloc(response_buffer, response_len + evt->data_len + 1);
+            memcpy(response_buffer + response_len, evt->data, evt->data_len);
+            response_len += evt->data_len;
+            response_buffer[response_len] = '\0';
+            break;
+            
+        case HTTP_EVENT_ON_FINISH:
+            ESP_LOGI(TAG, "HTTP request finished");
+            if (response_buffer != NULL) {
+                ESP_LOGI(TAG, "Full response: %s", response_buffer);
+                
+                // 解析 MD5
+                char *md5 = extract_md5_from_json(response_buffer);
+                
+                if (md5 != NULL) {
+                    ESP_LOGI(TAG, "Extracted MD5: %s", md5);
+                    // if (strcmp(md5, local_md5) == 0) {
+                    //     ESP_LOGI(TAG, "MD5 match! OTA success.");
+                    // } 
+                    // else {
+                    //     ESP_LOGE(TAG, "MD5 mismatch! OTA corrupted.");
+                    //     free(md5);
+                    //     return ESP_FAIL;
+                    // }
+                    free(md5);
+                }
+                
+                free(response_buffer);
+                response_buffer = NULL;
+                response_len = 0;
+            }
+            break;
+            
+        case HTTP_EVENT_ON_CONNECTED:
+            ESP_LOGI(TAG, "Connected to server");
+            break;
+            
+        case HTTP_EVENT_DISCONNECTED:
+            ESP_LOGI(TAG, "Disconnected from server");
+            if (response_buffer != NULL) {
+                free(response_buffer);
+                response_buffer = NULL;
+                response_len = 0;
+            }
+            break;
+            
+        default:
+            break;
+    }
+    return ESP_OK;
+}
+  
+
+void get_ota_model_md5(void *pvParameters ) { 
+        char task_str[32]="ota_model_md5";
+        char task_url[128];
+        sprintf(task_url, "http://%s:%s/%s", BASE_URL,POLICY_PORT,task_str);
+     
+
+    esp_http_client_config_t config = {
+        .url =  task_url   ,//"http://192.168.30.132:5001/ota_model_md5",
+        .timeout_ms = 10000,
+        .event_handler = http_md5_event_handler,
+    };
+
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    
+    ESP_LOGI(TAG, "Performing HTTP GET request...");
+    esp_err_t err = esp_http_client_perform(client);
+
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "HTTP GET request successful");
+        int status_code = esp_http_client_get_status_code(client);
+        ESP_LOGI(TAG, "Status code: %d", status_code);
+    } else {
+        ESP_LOGE(TAG, "HTTP GET request failed: %s", esp_err_to_name(err));
+        server_md5[0]=0;
+    }
+
+    esp_http_client_cleanup(client);
+ 
+
+    vTaskDelete(NULL);
+} 
+
+ 
+void ota_update_ppo_model_md5_process(void *pvParameters) {
+     
+    while(flask_state_get_flag[MODEL_BIN_PPO_MD5]==SPIFFS_MODEL_EMPTY){
+        xTaskCreate(download_ota_md5_model, "download_model", 16384, NULL, 5, NULL);
+        vTaskDelay(10000 / portTICK_PERIOD_MS);
+    }
+    flask_state_get_flag[MODEL_BIN_PPO_MD5]=SPIFFS_MODEL_ERR;
+    ESP_LOGI(TAG, "Starting OTA update process...");
+
+    // 1. 获取服务器 MD5
+    //get_server_md5();
+    xTaskCreate(get_ota_model_md5, "get_ota_model_md5", 8192, NULL, 5, NULL);
+    vTaskDelay(5000 / portTICK_PERIOD_MS);
+    if (server_md5[0] == 0) {
+        ESP_LOGE(TAG, "Failed to get server MD5");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    ESP_LOGI(TAG, "Server MD5: %s", server_md5);
+
+    // 2. 计算本地 MD5
+     
+    if (!calc_file_md5(spiffs_ppo_model_bin_path, local_md5)) {
+        ESP_LOGI(TAG, "Local MD5 calculation Model Empty");
+        //vTaskDelete(NULL);
+        //return;
+    }
+    ESP_LOGI(TAG, "Local  MD5: %s", local_md5);
+    // 3. 比较 MD5，决定是否需要下载
+    if (  strcmp(server_md5, local_md5) != 0) {
+        ESP_LOGI(TAG, "MD5 different, downloading new model...");
+        //download_model();
+        
+        
+    } else {
+        ESP_LOGI(TAG, "Model is up to date, no download needed");
+    }
+
+    // 清理内存
+    //free(server_md5);
+    //if (local_md5 != NULL) free(local_md5);
+    
+    // 在 download_model 函数末尾添加验证
+    //verify_downloaded_file(spiffs_ppo_model_bin_path);
+    //spiffs_flag[1]=true;
+    flask_state_get_flag[MODEL_BIN_PPO_MD5]=SPIFFS_MODEL_SAVED;
+    vTaskDelete(NULL);
+}
+
+ 
+void (*functionGetArray[FLASK_STATE_GET_COUNT])(void *pvParameters) = {
+    http_get_model_json,  
+    ota_update_ppo_model_md5_process,
+};
+
+
+
+// HTTP事件处理器
+esp_err_t _http_event_exporter_handler(esp_http_client_event_t *evt) {
+    switch (evt->event_id) {
+        case HTTP_EVENT_ON_DATA:
+            // 接收到数据时追加到字符串
+            if (evt->data_len > 0) {
+                http_put_response_data.append((char*)evt->data, evt->data_len);
+            }
+            break;
+        case HTTP_EVENT_ON_FINISH:
+            // 请求完成
+            ESP_LOGI(TAG, "http_put_response_data finished, received %d bytes", http_put_response_data.length());
+            break;
+        default:
+            break;
+    }
+    return ESP_OK;
+}
+
 
 void flask_init_exporter_task(void *pvParameters) {
-        flask_state_flag[INIT_EXPORTER]=false;
-
+        flask_state_put_flag[INIT_EXPORTER]=SPIFFS_MODEL_ERR;
         //const char* base_url ="192.168.0.57:5000";
         char task_str[32]="init_exporter";
         char task_url_str[128];
@@ -430,7 +591,8 @@ void flask_init_exporter_task(void *pvParameters) {
         //sprintf(url, "http://%s/init_exporter", BASE_URL);
         esp_http_client_config_t config = {
             //.url = "http://<SERVER_IP>:5000/init_exporter",   // Flask 服务器地址
-            .url = task_url_str,    
+            .url = task_url_str,   
+            .event_handler = _http_event_exporter_handler, // 设置事件处理器 
         };
 
         esp_http_client_handle_t client = esp_http_client_init(&config);
@@ -439,301 +601,80 @@ void flask_init_exporter_task(void *pvParameters) {
         //const char *post_data = "{\"model_path\": \"./saved_models/my_model.keras\"}";
          
  
-       const char *post_data = "{\"model_path\": \"./saved_models/ppo_policy_actor\"}";
+        //const char *post_data = "{\"model_path\": \"./saved_models/ppo_policy_actor\"}";
         esp_http_client_set_method(client, HTTP_METHOD_POST);
         esp_http_client_set_header(client, "Content-Type", "application/json");
-        esp_http_client_set_post_field(client, post_data, strlen(post_data));
+        esp_http_client_set_post_field(client, flask_put_name[INIT_EXPORTER], strlen(flask_put_name[INIT_EXPORTER]));
 
-        esp_err_t err = esp_http_client_perform(client);
-        if (err == ESP_OK) {
-            ESP_LOGI(TAG, "Status = %d, content_length = %lld",
-                    esp_http_client_get_status_code(client),
-                    esp_http_client_get_content_length(client));
-
-                    
-            // 获取响应头的大小
+        
      
+    esp_err_t err = esp_http_client_perform(client);
+    if (err == ESP_OK) {
+        int status_code = esp_http_client_get_status_code(client);
+        ESP_LOGI(TAG, "HTTP Status Code: %d", status_code);
+        
+        if (status_code == 200) {
+            ESP_LOGI(TAG, "Total received data length: %d", http_put_response_data.length());
             
-            int cont_len=esp_http_client_get_content_length(client);
-            char buffer[512];
-            if(cont_len<=512){
+            if (!http_put_response_data.empty()) {
+                // 调试输出：打印前100个字符
+                if(http_put_response_data.length()>=16)
+                 ESP_LOGI(TAG, "First 16 chars: %.16s", http_put_response_data.c_str());
                 
-                //int data_len = esp_http_client_read_response(client, buffer, sizeof(buffer) - 1);
-                int data_len = esp_http_client_read_response(client, buffer, cont_len);
-                if (data_len >= 0) {
-                    buffer[data_len] = 0;
-                    ESP_LOGI(TAG, "Response = %s", buffer);
-                    flask_state_flag[INIT_EXPORTER]=true;
-                }
+                // 打印前16字节的十六进制
+                //ESP_LOGI(TAG, "First 16 bytes in hex:");
+                //for (int i = 0; i < std::min(16, (int)http_put_response_data.length()); i++) {
+                //    printf("%02X ", (unsigned char)http_put_response_data[i]);
+                //}
+                //printf("\n");
+                 flask_state_put_flag[INIT_EXPORTER]=SPIFFS_MODEL_SAVED;
+            } else {
+                
+                ESP_LOGE(TAG, "No data received");
             }
         } else {
-            ESP_LOGE(TAG, "HTTP POST request failed: %s", esp_err_to_name(err));
-        } 
-
-        esp_http_client_cleanup(client);
-        vTaskDelete(NULL);
-}
-
-//print(f"GET http://{ip}:{port}/api/model?name=esp32_policy")
-void flask_download_model_task(void *param) {
-    ESP_LOGI("MEM", "Before OTA: Heap free=%d, internal free=%d, largest=%d",
-             (int)esp_get_free_heap_size(),
-             (int)esp_get_free_internal_heap_size(),
-             (int)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
-        flask_state_flag[DOWN_LOAD_MODEL]=false;
-
-    // 删除旧模型 
-    remove(spiffs_model_path);
-    static FILE *f_model =fopen(spiffs_model_path, "wb");
-    if (!f_model) {
-        ESP_LOGE("OTA", "Failed to open file for OTA");
-        vTaskDelete(NULL);
-        return;
-    }
- 
-    esp_http_client_config_t config = {0}; // 初始化为全零
-    char task_str[32]="api/bin-update";
-        char task_url_str[128];
-        sprintf(task_url_str, "http://%s:%s/%s", BASE_URL,BASE_PORT,task_str); 
-        ESP_LOGI(TAG, "URL: %s", task_url_str);
-    //sprintf(url, "http://%s:%d/api/bin-update",BASE_PORT, BASE_URL);
-    //ESP_LOGE(TAG, "Server URL: %s",url);
-    config.url = task_url_str;
-    config.timeout_ms = 10000;
-    config.user_data = f_model;
-    config.event_handler = _http_down_load_event_handler;
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-    //esp_http_client_set_buffer_size(client, 4096); 
-    //FlaskState state = FlaskState::INIT_EXPORTER; 
-    if (!client) {
-        ESP_LOGE("OTA", "esp_http_client_init failed");
-        fclose(f_model);
-        f_model = NULL;
-        vTaskDelete(NULL);
-    }
-
-    esp_err_t err = esp_http_client_perform(client);
-    if (err == ESP_OK) {
-        ESP_LOGI("OTA", "Model downloaded successfully (%d bytes)",
-                 (int)esp_http_client_get_content_length(client));
-         flask_state_flag[DOWN_LOAD_MODEL]=true;
-
+            ESP_LOGE(TAG, "HTTP request failed with status: %d", status_code);
+        }
     } else {
-        ESP_LOGE("OTA", "HTTP request failed: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "HTTP GET failed: %s", esp_err_to_name(err));
     }
-
+    
     esp_http_client_cleanup(client);
-    fclose(f_model);
-    f_model = NULL;
-
-    ESP_LOGI("MEM", "After OTA: Heap free=%d, internal free=%d",
-             (int)esp_get_free_heap_size(),
-             (int)esp_get_free_internal_heap_size());
-
     vTaskDelete(NULL);
+ 
 }
+
   
 
-
-void ota_check_update(void) {
-    char url[128];
-    snprintf(url, sizeof(url), "%s/api/ota/check-update?version=%s", OTA_SERVER_URL, CURRENT_VERSION);
-
-    esp_http_client_config_t config = {
-        .url = url,
-    };
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-
-    esp_err_t err = esp_http_client_perform(client);
-    if (err == ESP_OK) {
-        int status = esp_http_client_get_status_code(client);
-        if (status == 200) {
-            int len = esp_http_client_get_content_length(client);
-            char *buffer =(char*) malloc(len + 1);
-            esp_http_client_read(client, buffer, len);
-            buffer[len] = '\0';
-            
-            ESP_LOGI(TAG, "Response: %s", buffer);
-
-            // 解析 JSON
-            cJSON *root = cJSON_Parse(buffer);
-            if (root) {
-                cJSON *update_available = cJSON_GetObjectItem(root, "update_available");
-                if (cJSON_IsTrue(update_available)) {
-                    ESP_LOGI(TAG, "New version available: %s", 
-                             cJSON_GetObjectItem(root, "latest_version")->valuestring);
-                } else {
-                    ESP_LOGI(TAG, "No update available");
-                }
-                cJSON_Delete(root);
-            }
-            free(buffer);
-        }
-    } else {
-        ESP_LOGE(TAG, "HTTP GET request failed: %s", esp_err_to_name(err));
-    }
-
-    esp_http_client_cleanup(client);
-} 
-
-// CRC32 計算
-static uint32_t calc_crc32(const uint8_t *data, size_t len) {
-    return esp_crc32_le(0, data, len);
-}
-
-void ota_download_package(void) {
-    esp_http_client_config_t config = {
-        .url = OTA_SERVER_URL "/api/ota/package",
-    };
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-
-    esp_err_t err = esp_http_client_perform(client);
-    if (err == ESP_OK) {
-        int status = esp_http_client_get_status_code(client);
-        if (status == 200) {
-            int len = esp_http_client_get_content_length(client);
-            char *buffer = (char *)malloc(len + 1);
-            if (!buffer) {
-                ESP_LOGE(TAG, "malloc failed");
-                esp_http_client_cleanup(client);
-                return;
-            }
-
-            int read_len = esp_http_client_read(client, buffer, len);
-            buffer[read_len] = '\0';
-
-            ESP_LOGI(TAG, "OTA Package JSON: %s", buffer);
-
-            // === 1. 解析 JSON ===
-            cJSON *root = cJSON_Parse(buffer);
-            if (!root) {
-                ESP_LOGE(TAG, "JSON parse error");
-                free(buffer);
-                esp_http_client_cleanup(client);
-                return;
-            }
-
-            // 假設 OTA 包 JSON 格式:
-            // { "data": "<base64 string>", "crc32": 12345678 }
-            cJSON *data_b64 = cJSON_GetObjectItem(root, "data");
-            cJSON *crc_item = cJSON_GetObjectItem(root, "crc32");
-
-            if (!cJSON_IsString(data_b64) || !cJSON_IsNumber(crc_item)) {
-                ESP_LOGE(TAG, "Invalid JSON format");
-                cJSON_Delete(root);
-                free(buffer);
-                esp_http_client_cleanup(client);
-                return;
-            }
-
-            const char *b64_str = data_b64->valuestring;
-            uint32_t expected_crc = (uint32_t)crc_item->valuedouble;
-
-            // === 2. base64 decode ===
-
-            size_t out_len = 0;
-            int ret = mbedtls_base64_decode(NULL, 0, &out_len,
-                                            (const unsigned char *)b64_str, strlen(b64_str));
-            if (ret != 0 && ret != MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL) {
-                ESP_LOGE(TAG, "Base64 length calc failed (%d)", ret);
-                return;
-            }
-
-            uint8_t *bin_data =(uint8_t *) malloc(out_len);
-            if (!bin_data) {
-                ESP_LOGE(TAG, "malloc failed");
-                return;
-            }
-
-            ret = mbedtls_base64_decode(bin_data, out_len, &out_len,
-                                        (const unsigned char *)b64_str, strlen(b64_str));
-            if (ret != 0) {
-                ESP_LOGE(TAG, "Base64 decode failed (%d)", ret);
-                free(bin_data);
-                return;
-            }
-
-            ESP_LOGI(TAG, "Decoded length = %d", (int)out_len);
-
-
+void (*functionPutArray[FLASK_STATE_PUT_COUNT])(void *pvParameters) = {
+    flask_init_exporter_task,  
+};
  
 
-            // === 3. CRC32 校驗 ===
-            uint32_t actual_crc = calc_crc32(bin_data, out_len);
-            if (actual_crc == expected_crc) {
-                ESP_LOGI(TAG, "CRC32 OK (0x%d)",(int) actual_crc);
-
-                // TODO: 把 bin_data 寫到 Flash / SPIFFS / 模型加載
-            } else {
-                ESP_LOGE(TAG, "CRC32 mismatch! expected=0x%d, got=0x%d",
-                        (int)  expected_crc, (int) actual_crc);
-            }
-
-            // 釋放
-            free(bin_data);
-            cJSON_Delete(root);
-            free(buffer);
-        }
-    } else {
-        ESP_LOGE(TAG, "Failed to download OTA package: %s", esp_err_to_name(err));
-    }
-
-    esp_http_client_cleanup(client);
-}
-
- 
-
-void flask_download_model_ota_task(void *param){
-     // ======= OTA 更新模型 =======otaUpdater.downloadModel()
-        char download_str[32]="api/download-update";
-        char download_url[128];
-        sprintf(download_url, "http://%s:%s/%s", BASE_URL,BASE_PORT,download_str); 
-        ESP_LOGI(TAG, "download_url URL: %s", download_url);
-    //char download_url[128];
-    //sprintf(download_url, "http://%s/api/download-update", BASE_URL);
-        char check_str[48]="api/check-update/device001/1.0.0";
-        char check_url[128];
-        sprintf(check_url, "http://%s:%s/%s", BASE_URL,BASE_PORT,check_str); 
-        ESP_LOGI(TAG, "check_url URL: %s", check_url);
-    //char check_url[128];
-    //sprintf(check_url, "http://%s/api/check-update/device001/1.0.0", BASE_URL);
-      
-     ModelOTAUpdater otaUpdater(check_url, download_url, "/spiffs/model.tflite","0.0.1");
-        flask_state_flag[DOWN_LOAD_MODEL_OTA]=false;
-
-    if (otaUpdater.checkUpdate()) {
-        ESP_LOGI(TAG, "Model OTA update completed!");
-         
-        flask_state_flag[DOWN_LOAD_MODEL_OTA]=true;
-         
-    } else {
-        ESP_LOGW(TAG, "Model OTA update failed or no update available");
-    }
-return  ;
-}
-
-void (*functionArray[NUM_FLASK_TASK])(void *pvParameters) = {
-    http_get_model_json,
-    flask_init_exporter_task, 
-    flask_download_model_task, 
-    flask_download_model_ota_task
-};
-
-//const int num_flask_task=3;
-char flask_name[NUM_FLASK_TASK][64]={
-    "http_get_model_json",
-    "flask_init_exporter_task",
-    "flask_download_model_task",
-    "flask_download_model_ota_task"
-};
-
-extern "C" void wifi_ota_ppo_package(int type ) {
-    if(type>=0 && type<NUM_FLASK_TASK)
+extern "C" void wifi_get_package(int type ) {
+    if(type>=0 && type<FLASK_STATE_GET_COUNT)
     //if(type==0)
     {
         xTaskCreatePinnedToCore(
-        functionArray[type],  //download_model_ota_task,download_model_task
-        flask_name[type],
+        functionGetArray[type],  //download_model_ota_task,download_model_task
+        flask_get_name[type],
+        8 * 1024,       // 栈大小，可根据实际增加
+        NULL,
+        tskIDLE_PRIORITY + 1,
+        NULL,
+        0);   
+
+    } 
+    return   ;
+}
+
+extern "C" void wifi_put_package(int type ) {
+    if(type>=0 && type<FLASK_STATE_PUT_COUNT)
+    //if(type==0)
+    {
+        xTaskCreatePinnedToCore(
+        functionPutArray[type],  //download_model_ota_task,download_model_task
+        flask_put_name[type],
         8 * 1024,       // 栈大小，可根据实际增加
         NULL,
         tskIDLE_PRIORITY + 1,
@@ -745,7 +686,7 @@ extern "C" void wifi_ota_ppo_package(int type ) {
 }
 
  
-  
+//load model.tflite  
 extern "C" void hvac_agent(void) {
      
     vTaskDelay(pdMS_TO_TICKS(5000)); // 等 WiFi 連線
@@ -808,6 +749,7 @@ extern "C" void hvac_agent(void) {
  
 }
  
+//load model.bin
 extern "C" pid_run_output_st nn_ppo_infer(void) {
     pid_run_output_st output_speed;
 

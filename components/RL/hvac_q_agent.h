@@ -1,3 +1,6 @@
+#pragma once
+
+
 #ifndef HVAC_Q_AGENT_H
 #define HVAC_Q_AGENT_H
 
@@ -5,32 +8,41 @@
 
 // 假设状态维度 5：health + ac_target + dehum_target + light + humidity
 #define STATE_DIM 5
-#define NUM_FLASK_TASK 4
+//#define NUM_FLASK_GET_TASK 2
+//#define NUM_FLASK_PUT_TASK 1
 
-enum flask_state{
-    FLASH_DOWN_LOAD_MODEL=0,
-    INIT_EXPORTER=1,
-    DOWN_LOAD_MODEL=2,
-    DOWN_LOAD_MODEL_OTA=3,
+enum enum_flask_state{
+    SPIFFS_MODEL_EMPTY=0, 
+    SPIFFS_MODEL_SAVED=1, 
+    SPIFFS_MODEL_READED=2,
+    SPIFFS_MODEL_ERR=3,
+};
+
+enum enum_flask_get_state {
+    SPIFFS_DOWN_LOAD_MODEL = 0, 
+    MODEL_BIN_PPO_MD5 = 1,
+    FLASK_STATE_GET_COUNT // This automatically becomes 2, useful for array sizing
+};
+
+ 
+enum enum_flask_put_state{
+     
+    INIT_EXPORTER=0, 
+    FLASK_STATE_PUT_COUNT
 };
 // ======= WiFi 與 OTA 配置 ======= 
-#if 0
-     #define BASE_URL  "192.168.68.237"     
-#else
-    //#define BASE_URL  "192.168.0.57" 
-    #define BASE_URL  "192.168.30.132" 
+#if 1
     
-
-#define HTTP_GET_MODEL_JSON_URL "http://192.168.30.132:5001/api/model?name=esp32_policy"
-#define OTA_SERVER_URL          "http://192.168.30.132:5001"   // 换成你的 PC IP
-    //const char* check_url = "http://192.168.0.57:5000/api/check-update/device001/1.0.0";
-    //const char* download_url = "http://192.168.0.57:5000/api/download-update";
-    //const char* download_bin_url = "http://192.168.0.57:5000/api/bin-update";
-    //#define OTA_BIN_UPDATE_URL "http://192.168.0.57:5000/api/bin-update"
+    #define HTTP_GET_MODEL_JSON_URL "http://192.168.30.132:5001/api/model?name=esp32_policy"
+    #define OTA_SERVER_URL          "http://192.168.30.132:5001"   // 换成你的 PC IP
+#else
+    
+    #define HTTP_GET_MODEL_JSON_URL "http://192.168.30.132:5001/api/model?name=esp32_policy"
+    #define OTA_SERVER_URL          "http://192.168.30.132:5001"   // 换成你的 PC IP
 #endif
-#define BASE_PORT "5000"
-#define POLICY_PORT "5001"
-
+#define  spiffs_model_path  "/spiffs/esp32_optimized_model.tflite" 
+#define  spiffs_ppo_model_bin_path  "/spiffs/ppo_model.bin" 
+#define  post_data   "{\"model_path\": \"./saved_models/ppo_policy_actor\"}" 
 #if 0
 const int STATE_SIZES[STATE_DIM] = {2, 2, 2, 3, 3}; // 例：health 0/1, light 0/1/2 等
 

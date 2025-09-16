@@ -228,11 +228,13 @@ if __name__ == "__main__":
         fine_tune_data=(representative_data, y_train),
         firmware_version="1.0.0",
         prune=True,  # 启用剪枝
+        compress=False,
         quantize=True  # 启用量化
     )
     ota_package = exporter.create_ota_package(representative_data, quantize=True)
     compressed_bytes = base64.b64decode(ota_package['model_data_b64'])
-    decompressed_bytes = zlib.decompress(compressed_bytes)
+    #decompressed_bytes = zlib.decompress(compressed_bytes)
+    decompressed_bytes=compressed_bytes
     path_policy_tflite = os.path.join(MODEL_DIR, "esp32_optimized_model.tflite")
     with open(path_policy_tflite, 'wb') as f:
         f.write(decompressed_bytes)

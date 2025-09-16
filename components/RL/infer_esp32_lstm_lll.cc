@@ -243,7 +243,7 @@ bool init_model(int type)
     }
     ESP_LOGI(TAG,"Model loadding..."); //
     //if(type == PPO_CASE && load_model_from_flash()==false) {
-    if(type == PPO_CASE && init_spiffs_model("/model/lstm_encoder_contrastive.tflite")==false) {
+    if(type == PPO_CASE && init_spiffs_model( spiffs_model_path)==false) {
         ESP_LOGE(TAG,"Failed to load model"); 
         return false;
     }
