@@ -145,7 +145,7 @@ class TensorFlowESP32Exporter(ESP32BaseExporter):
         self.quantized_model_bytes: Optional[bytes] = None
         self.fisher_matrix: Optional[Dict[str, np.ndarray]] = None
         self.optimal_params: Optional[Dict[str, np.ndarray]] = None
-
+        self.ota_package=None
     # 量化
     def apply_quantization(self, representative_data: np.ndarray) -> bytes:
         """
@@ -334,7 +334,7 @@ class TensorFlowESP32Exporter(ESP32BaseExporter):
                            fine_tune_data=None,  #fine_tune_data=(x_train, y_train)
                            prune: bool = True,
                            compress=False,
-                           quantize: bool = True) -> Dict[str, Any]:
+                           quantize: bool = False) -> Dict[str, Any]:
         print("Creating OTA package...")
         if prune:
             if fine_tune_data is not None:
@@ -348,6 +348,7 @@ class TensorFlowESP32Exporter(ESP32BaseExporter):
             tflite_bytes = self.apply_quantization(representative_data)
         else:
             converter = tf.lite.TFLiteConverter.from_keras_model(self.model)
+            converter.optimizations = []
             tflite_bytes = converter.convert()
 
         comp = self.compress_for_esp32(tflite_bytes, compress=compress)
@@ -398,18 +399,18 @@ class TensorFlowESP32Exporter(ESP32BaseExporter):
     def _calculate_crc(self, data: bytes) -> int:
         return zlib.crc32(data)
 
-    def save_ota_package(self, output_path: str, representative_data: np.ndarray,fine_tune_data=None, **kwargs) -> None:
-        ota = self.create_ota_package(representative_data,fine_tune_data=fine_tune_data, **kwargs)
+    def save_ota_package(self, output_path: str, representative_data=None,fine_tune_data=None, **kwargs) -> None:
+        self.ota_package = self.create_ota_package(representative_data,fine_tune_data=fine_tune_data, **kwargs)
 
         # JSON 檔（Base64 模型）
         with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(ota, f, indent=2, ensure_ascii=False)
+            json.dump(self.ota_package, f, indent=2, ensure_ascii=False)
 
         # 二進位（含 bytes）— 使用 pickle
         binary_path = output_path.replace('.json', '.bin')
         import pickle
         with open(binary_path, 'wb') as f:
-            pickle.dump(ota, f)
+            pickle.dump(self.ota_package, f)
 
         print(f"OTA package saved to {output_path} and {binary_path}")
         print(f"JSON size: {os.path.getsize(output_path)} bytes")

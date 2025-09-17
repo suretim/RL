@@ -31,15 +31,7 @@ enum enum_flask_put_state{
     FLASK_STATE_PUT_COUNT
 };
 // ======= WiFi 與 OTA 配置 ======= 
-#if 1
-    
-    #define HTTP_GET_MODEL_JSON_URL "http://192.168.30.132:5001/api/model?name=esp32_policy"
-    #define OTA_SERVER_URL          "http://192.168.30.132:5001"   // 换成你的 PC IP
-#else
-    
-    #define HTTP_GET_MODEL_JSON_URL "http://192.168.30.132:5001/api/model?name=esp32_policy"
-    #define OTA_SERVER_URL          "http://192.168.30.132:5001"   // 换成你的 PC IP
-#endif
+
 #define  spiffs_model_path  "/spiffs/esp32_optimized_model.tflite" 
 #define  spiffs_ppo_model_bin_path  "/spiffs/ppo_model.bin" 
 #define  post_data   "{\"model_path\": \"./saved_models/ppo_policy_actor\"}" 

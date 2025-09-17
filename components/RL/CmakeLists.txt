@@ -1,7 +1,8 @@
  
 # TFLite 模型文件
  
-set(TFLITE_META_SRCS "../../fed_server/models/meta_model.tflite")
+# set(TFLITE_META_SRCS "../../fed_server/models/meta_model.tflite")
+set(TFLITE_META_SRCS "../../fed_server/models/esp32_optimized_model.tflite")
  
   
 
@@ -17,7 +18,7 @@ set(APPLICATION_SRCS
     "model.pb.c"
 )
 
-# 主组件注册
+# 主组件注册 
 idf_component_register(
     SRCS 
         "${APPLICATION_SRCS}"
@@ -29,7 +30,8 @@ idf_component_register(
     PRIV_INCLUDE_DIRS 
         "."
 
-    EMBED_FILES "${TFLITE_META_SRCS}"
+    EMBED_FILES 
+        "${TFLITE_META_SRCS}"
     REQUIRES
         spiffs
         esp_http_client

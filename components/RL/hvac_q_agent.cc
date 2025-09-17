@@ -50,7 +50,7 @@ char flask_put_name[FLASK_STATE_PUT_COUNT][64]={
     post_data, 
 };
 bool save_model_to_spiffs(uint8_t type,const char *b64_str,const char *spi_file_name);
-uint8_t * read_model_from_spiffs(const char *spi_file_name) ;
+//uint8_t* load_model_from_spiffs(const char* filename, size_t* out_size);
 // ---------------- OTA Callback ----------------
 esp_err_t _http_down_load_event_handler(esp_http_client_event_t *evt) {
     static FILE *f_model = NULL;

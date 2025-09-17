@@ -3,6 +3,7 @@ import tensorflow as tf
 from tensorflow import keras
 import numpy as np
 import zlib
+import sys
 import json
 import os
 import base64
@@ -169,6 +170,182 @@ def env_pipe_trainer(lll_model=None,num_tasks=3,latent_dim=64,num_classes=3,num_
         trainer.update_ewc(latent_features, labels)
 
 
+def verify_tflite_model(file_path):
+    """正确的TFLite模型验证函数"""
+    try:
+        with open(file_path, 'rb') as f:
+            model_data = f.read()
+
+        if len(model_data) < 16:
+            print("❌ 文件太小")
+            return False
+
+        print(f"📊 文件大小: {len(model_data)} 字节")
+        print(f"📊 前16字节: {model_data[:16].hex(' ')}")
+
+        # 正确的TFLite魔术数字检测（从第5字节开始）
+        if len(model_data) >= 8:
+            if model_data[4:8] == b'TFL3':
+                print("✅ 检测到有效的TFLite魔术数字 (TFL3)")
+                magic_ok = True
+            else:
+                print(f"❌ 无效的TFLite魔术数字: {model_data[4:8].hex(' ')}")
+                magic_ok = False
+        else:
+            magic_ok = False
+
+        # 用TensorFlow验证（这是最可靠的）
+        try:
+            interpreter = tf.lite.Interpreter(model_content=model_data)
+            interpreter.allocate_tensors()
+            print("✅ TensorFlow验证成功")
+            tf_ok = True
+        except Exception as e:
+            print(f"❌ TensorFlow验证失败: {e}")
+            tf_ok = False
+
+        # 最终结果：只要TensorFlow验证成功就认为有效
+        if tf_ok:
+            if not magic_ok:
+                print("⚠️  注意：文件结构特殊，但TensorFlow可以加载")
+            return True
+        else:
+            return False
+
+    except Exception as e:
+        print(f"❌ 文件读取失败: {e}")
+        return False
+
+def debug_model_creation(representative_data):
+    print("🔍 开始详细调试模型创建过程...")
+
+    # 1. 创建OTA包
+    ota_package = exporter.create_ota_package(representative_data, quantize=True)
+    print(f"✅ OTA包创建成功")
+    print(f"OTA包键值: {list(ota_package.keys())}")
+
+    # 2. 检查model_data_b64
+    model_data_b64 = ota_package['model_data_b64']
+    print(f"Base64数据长度: {len(model_data_b64)} 字符")
+    print(f"Base64前50字符: {repr(model_data_b64[:50])}")
+
+    # 3. Base64解码
+    try:
+        raw_bytes = base64.b64decode(model_data_b64)
+        print(f"✅ Base64解码成功")
+        print(f"解码后大小: {len(raw_bytes)} 字节")
+        print(f"前32字节: {raw_bytes[:32].hex(' ')}")
+    except Exception as e:
+        print(f"❌ Base64解码失败: {e}")
+        return False
+
+    # 4. 分析数据格式
+    print("\n🔍 数据分析:")
+
+    # 检查是否是TFLite格式 - 修正后的逻辑
+    if len(raw_bytes) >= 8:  # 需要至少8字节才能检查真正的魔术数字
+        # 真正的TFLite魔术数字在第5-8字节（索引4-7）
+        magic = raw_bytes[4:8]
+        if magic == b'TFL3':
+            print("✅ 检测到有效的TFLite魔术数字 (TFL3)")
+            print(f"魔术数字位置: 字节4-7: {magic.hex(' ')}")
+        else:
+            print(f"❌ 不是TFLite格式: 字节4-7 = {magic.hex(' ')}")
+            print(f"期望: 54 46 4C 33 (TFL3)")
+
+        # 显示完整的前16字节用于调试
+        print(f"前16字节完整数据: {raw_bytes[:16].hex(' ')}")
+        print(f"字节0-3: {raw_bytes[:4].hex(' ')} (FlatBuffer头)")
+        print(f"字节4-7: {raw_bytes[4:8].hex(' ')} (TFLite魔术数字)")
+        print(f"字节8-15: {raw_bytes[8:16].hex(' ')} (其他元数据)")
+    else:
+        print("❌ 数据太短，无法检查TFLite魔术数字")
+
+    # 检查是否是其他格式
+    common_formats = {
+        b'\x78\x9C': 'Zlib压缩',
+        b'\x1F\x8B': 'Gzip压缩',
+        b'PK': 'Zip压缩',
+        b'{': 'JSON格式',
+        b'<': 'XML格式',
+    }
+
+    for magic, format_name in common_formats.items():
+        if raw_bytes.startswith(magic):
+            print(f"⚠️  检测到可能是 {format_name}")
+
+    # 5. 尝试直接验证
+    try:
+        interpreter = tf.lite.Interpreter(model_content=raw_bytes)
+        interpreter.allocate_tensors()
+        print("✅ 直接验证成功 - 数据已经是TFLite格式")
+
+        # 保存文件
+        path = os.path.join(MODEL_DIR, "esp32_optimized_model.tflite")
+        with open(path, 'wb') as f:
+            f.write(raw_bytes)
+        print(f"✅ 模型保存成功: {path}")
+        return True
+
+    except Exception as e:
+        print(f"❌ 直接验证失败: {e}")
+
+    # 6. 尝试作为文本解码（可能是错误信息）
+    try:
+        text_content = raw_bytes.decode('utf-8')
+        print(f"⚠️  数据可以解码为文本:")
+        print(f"文本内容: {text_content[:200]}...")
+
+        # 如果是JSON，尝试解析
+        if text_content.strip().startswith('{'):
+            import json
+            try:
+                json_data = json.loads(text_content)
+                print(f"✅ 是JSON格式: {list(json_data.keys())}")
+            except:
+                print("❌ 不是有效的JSON")
+
+    except UnicodeDecodeError:
+        print("⚠️  数据不是文本格式")
+
+    return False
+
+
+def analyze_model_details(model_bytes):
+    """详细分析模型内容"""
+    interpreter0 = tf.lite.Interpreter(model_content=model_bytes)
+    interpreter0.allocate_tensors()
+
+    print("=== 模型详细信息 ===")
+    print(f"TensorFlow Lite版本: {tf.__version__}")
+
+    # 获取所有操作符
+    print("\n=== 操作符列表 ===")
+    for i, op in enumerate(interpreter0._get_ops_details()):
+        print(f"{i}: {op['op_name']} (index: {op['index']})")
+
+    # 输入输出详情
+    print("\n=== 输入张量 ===")
+    for i, detail in enumerate(interpreter0.get_input_details()):
+        print(f"Input {i}: {detail['name']} {detail['shape']} {detail['dtype']}")
+
+    print("\n=== 输出张量 ===")
+    for i, detail in enumerate(interpreter0.get_output_details()):
+        print(f"Output {i}: {detail['name']} {detail['shape']} {detail['dtype']}")
+
+    # 检查是否包含不支持的操作符
+    micro_supported_ops = ['FULLY_CONNECTED', 'SOFTMAX', 'RESHAPE', 'QUANTIZE', 'DEQUANTIZE']
+    all_ops = [op['op_name'] for op in interpreter0._get_ops_details()]
+
+    print("\n=== 兼容性检查 ===")
+    for op in all_ops:
+        if op not in micro_supported_ops:
+            print(f"⚠️  可能不支持的操作符: {op}")
+        else:
+            print(f"✅ 支持的操作符: {op}")
+
+
+
 # -----------------------------
 # 使用範例（修正成可 load 的完整模型檔）
 # -----------------------------
@@ -215,12 +392,13 @@ if __name__ == "__main__":
 
 
     policy_agent=ESP32OnlinePPOFisherAgent(fisher_matrix=agent.fisher_matrix,optimal_params=agent.optimal_params)
-    path_policy_h5 = os.path.join(MODEL_DIR, "esp32_policy.h5")
+    path_policy_h5 = os.path.join(MODEL_DIR, "esp32_OnlinePPOFisher.h5")
     policy_agent.actor.save(path_policy_h5)
     policy_agent.actor.summary()
     # 4. 创建导出器并生成OTA包
     exporter = TensorFlowESP32Exporter(path_policy_h5)
     path_policy_json = os.path.join(MODEL_DIR, "esp32_policy.json")
+
     # 5. 生成并保存OTA包
     exporter.save_ota_package(
         output_path=path_policy_json,
@@ -229,16 +407,85 @@ if __name__ == "__main__":
         firmware_version="1.0.0",
         prune=True,  # 启用剪枝
         compress=False,
-        quantize=True  # 启用量化
+        quantize=False  # 启用量化
     )
-    ota_package = exporter.create_ota_package(representative_data, quantize=True)
+    #ota_package = exporter.create_ota_package(representative_data, quantize=True)
+    ota_package=exporter.ota_package
     compressed_bytes = base64.b64decode(ota_package['model_data_b64'])
-    #decompressed_bytes = zlib.decompress(compressed_bytes)
-    decompressed_bytes=compressed_bytes
+
+    # 正确的解压方式（确保使用zlib解压）
+    try:
+        decompressed_bytes = zlib.decompress(compressed_bytes)
+    except:
+        # 如果解压失败，可能数据没有被压缩
+        decompressed_bytes = compressed_bytes
+
+    # 验证TFLite模型有效性
+    try:
+        # 尝试加载模型来验证
+        interpreter = tf.lite.Interpreter(model_content=decompressed_bytes)
+        interpreter.allocate_tensors()
+        print("✓ TFLite模型验证成功")
+    except Exception as e:
+        print(f"✗ TFLite模型无效: {e}")
+        sys.exit(1)
+        # 验证TFLite模型
+    # 使用
+    analyze_model_details(decompressed_bytes)
+
+    # 获取所有张量详细信息
+    tensor_details = interpreter.get_tensor_details()
+
+    print("🤖 TFLite 模型完整层信息")
+    print("=" * 80)
+    print(f"{'索引':<5} {'名称':<25} {'形状':<15} {'数据类型':<12} {'量化信息'}")
+    print("=" * 80)
+
+    for tensor in tensor_details:
+        # 正确处理量化信息（可能是元组或None）
+        quantization = tensor.get('quantization', ())
+
+        if quantization and isinstance(quantization, (list, tuple)) and len(quantization) >= 2:
+            scale, zero_point = quantization[0], quantization[1]
+            quant_info = f"scale:{scale}, zero_point:{zero_point}"
+        else:
+            quant_info = "无量化"
+
+        print(
+            f"{tensor['index']:<5} {str(tensor['name'])[:24]:<25} {str(tensor['shape']):<15} {str(tensor['dtype']):<12} {quant_info}")
+
+    print("=" * 80)
+    print(f"📊 总层数: {len(tensor_details)}")
+    print(f"💾 模型大小: {len(decompressed_bytes):,} 字节")
     path_policy_tflite = os.path.join(MODEL_DIR, "esp32_optimized_model.tflite")
     with open(path_policy_tflite, 'wb') as f:
         f.write(decompressed_bytes)
 
+    print(f"✓ 模型已保存到: {path_policy_tflite}")
+    print(f"模型大小: {len(decompressed_bytes)} 字节")
+
+    # 使用Post-Training Quantization进行量化
+    #model = tf.keras.models.load_model(path_policy_h5)
+
+    #quantize_model = tf.quantization.quantize(model)
+
+    # 将量化后的模型保存为 TFLite 格式
+    #converter = tf.lite.TFLiteConverter.from_keras_model(quantize_model)
+    #converter.optimizations = [tf.lite.Optimize.DEFAULT]
+
+    # 设置支持量化的操作
+    #converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+    #converter.representative_dataset = representative_data
+    #tflite_model = converter.convert()
+    #with open(path_policy_tflite, 'wb') as f:
+    #    f.write(tflite_model)
+    # 运行调试
+    debug_model_creation(representative_data)
+    # 在保存后立即验证
+    if verify_tflite_model(path_policy_tflite):
+        print("PC端验证通过，可以上传到ESP32")
+    else:
+        print("PC端验证失败，请检查模型生成过程")
     # 也可單獨呼叫
     #_ = exporter.apply_quantization(representative_data)
     #_ = exporter.compute_fisher_matrix(representative_data)

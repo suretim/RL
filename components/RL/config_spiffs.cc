@@ -49,60 +49,7 @@ extern std::vector<float> health_result;
 #define H1          32
 #define H2          4
 
-// 在读取模型后立即验证
-bool verify_model_integrity(const void* model_data, size_t model_size) {
-    if (model_size < 16) {
-        ESP_LOGE(TAG, "模型文件太小");
-        return false;
-    }
-    
-    // 检查FlatBuffer标识符
-    const uint8_t* data = static_cast<const uint8_t*>(model_data);
-    if (data[0] != 'T' || data[1] != 'F' || data[2] != 'L' || data[3] != '3') {
-        ESP_LOGE(TAG, "Invalid TFLite model header");
-        return false;
-    }
-    
-    return true;
-}
-
-// 从 SPIFFS 读取模型验证
-uint8_t * read_model_from_spiffs(const char *spi_file_name) {
-    static uint8_t *buf = nullptr;
-    if(buf!=nullptr){
-        ESP_LOGI(TAG, "Model already readed");
-        return buf;
-    }
-    //"/spiffs/esp32_optimized_model.tflite"
-    FILE *f = fopen(spi_file_name, "rb");
-    if (!f) {
-        ESP_LOGE(TAG, "Failed to open model file for reading");
-        return nullptr;
-    }
-
-    fseek(f, 0, SEEK_END);
-    long file_size = ftell(f);
-    rewind(f);
-
-    buf =(uint8_t *) malloc(file_size);
-    if (!buf) {
-        ESP_LOGE(TAG, "malloc failed");
-        fclose(f);
-        return nullptr;
-    }
-
-    fread(buf, 1, file_size, f);
-    fclose(f);
-
-    ESP_LOGI(TAG, "Model read back, size=%ld bytes", file_size);
-    if(verify_model_integrity(buf, file_size)==true){
-        flask_state_get_flag[SPIFFS_DOWN_LOAD_MODEL]=SPIFFS_MODEL_READED;
-        free(buf);
-        buf=nullptr;
-    }
-    //free(buf);
-    return buf;
-}
+ 
 bool save_model_to_spiffs(uint8_t type, const char *b64_str, const char *spi_file_name) {
     size_t bin_len;
     uint8_t *model_bin = NULL;
@@ -141,13 +88,19 @@ bool save_model_to_spiffs(uint8_t type, const char *b64_str, const char *spi_fil
     }
 
     // 验证模型头（可选但推荐）
-    if (decoded_len >= 4) {
-        if (model_bin[0] == 'T' && model_bin[1] == 'F' && 
-            model_bin[2] == 'L' && model_bin[3] == '3') {
-            ESP_LOGI(TAG, "TFLite model header verified");
+    if (decoded_len >= 16) {  // 确保文件至少有 16 字节
+        // 检查 FlatBuffer 头（字节0-3）
+        if (model_bin[0] == 0x20 && model_bin[1] == 0x00 && model_bin[2] == 0x00 && model_bin[3] == 0x00 &&
+            model_bin[4] == 'T' && model_bin[5] == 'F' && model_bin[6] == 'L' && model_bin[7] == '3') {
+            // 验证 TFLite 魔术数字（字节 4-7）
+            ESP_LOGI(TAG, "TFLite model save_model_to_spiffs verified");
         } else {
             ESP_LOGW(TAG, "Unknown file format, may not be TFLite");
+            return false;
         }
+    } else {
+        ESP_LOGW(TAG, "Model file is too short, cannot verify header");
+        return false;
     }
 
     // 保存到SPIFFS

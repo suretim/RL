@@ -93,7 +93,7 @@ void read_all_sensor_trigger(void )
 		ESP_LOGI(TAG, "target t=%f, h=%f, v=%f", bp_pid_th.t_target, bp_pid_th.h_target, bp_pid_th.v_target);
 		ESP_LOGW(TAG, "light:%f co2:%f ",bp_pid_th.l_feed,bp_pid_th.c_feed);
 
-		ESP_LOGI(TAG, "傳感器正常运行");
+		ESP_LOGI(TAG, "Sensor Working Normal");
 
 }
 
