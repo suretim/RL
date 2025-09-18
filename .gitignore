@@ -19,7 +19,7 @@ components/*
 !components/ml/ml_rule.h
 
 managed_components/
-
+sdkconfig
 sdkconfig.old
 sdkconfig.bak
 sdkconfig.bk

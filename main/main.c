@@ -469,7 +469,7 @@ void main_task(void *pvParameters)
 						wifi_get_package(i);    
 					}
 					if(flask_state_get_flag[SPIFFS_DOWN_LOAD_MODEL]==SPIFFS_MODEL_SAVED){
-						flag_100ms=1;
+						 
 						break;
 					}
 					 
@@ -477,7 +477,7 @@ void main_task(void *pvParameters)
 			}
 			
 			flag_100ms++;
-		    if (  flask_state_get_flag[SPIFFS_DOWN_LOAD_MODEL]==SPIFFS_MODEL_SAVED  && flag_100ms>=100)
+		    if (  flag_100ms>=100 && flask_state_get_flag[SPIFFS_DOWN_LOAD_MODEL]==SPIFFS_MODEL_SAVED )
 			{
 				flag_100ms = 1;	
 				if(	lll_tensor_run()==ESP_FAIL){

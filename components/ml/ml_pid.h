@@ -137,6 +137,10 @@
 #define c_pid_temp_max			40
 #define c_pid_humi_min			10
 #define c_pid_humi_max			100
+#define c_pid_light_min			100
+#define c_pid_light_max			800
+#define c_pid_co2_min			100
+#define c_pid_co2_max			1000
 #define c_pid_vpd_min			0
 #define c_pid_vpd_max			4
 #define c_pid_ptch_min			-400

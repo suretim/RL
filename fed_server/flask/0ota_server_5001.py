@@ -76,7 +76,7 @@ if __name__ == "__main__":
     print(f"GET http://{ip}:{port}/api/model?name=esp32_policy")
     print(f"spiffs esp32_optimized_model.tflite")
 
-    app.run(host="192.168.0.57", port=port, debug=False, use_reloader=False)
+    app.run(host="192.168.68.237", port=port, debug=False, use_reloader=False)
     # 启动 Flask
 
 

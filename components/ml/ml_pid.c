@@ -384,7 +384,7 @@ static void  derivative_tanh(double *dx,double *x,s16 len)
 
 
 
-static float pid_map(float x, float in_min, float in_max, float out_min, float out_max)
+float pid_map(float x, float in_min, float in_max, float out_min, float out_max)
 {
     if(x < in_min) return out_min;
 	if(x > in_max) return out_max;

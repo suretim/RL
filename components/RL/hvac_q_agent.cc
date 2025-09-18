@@ -107,28 +107,9 @@ bool parse_policy_model_json(const char *json_str) {
     cJSON *model_b64 = cJSON_GetObjectItem(root, "model_data_b64");
     if (model_b64 && cJSON_IsString(model_b64)) {
         const char *b64_str = model_b64->valuestring;
-        size_t bin_len = strlen(b64_str) * 3 / 4;  // 预估长度
-        uint8_t *model_bin =(uint8_t *) malloc(bin_len);
-        if (model_bin) {
-           // #include "mbedtls/base64.h"
-
-            size_t decoded_len = 0;
-            int ret = mbedtls_base64_decode(model_bin, bin_len, &decoded_len,
-                                            (const unsigned char *)b64_str,
-                                            strlen(b64_str));
-            if (ret != 0) {
-                ESP_LOGE(TAG, "Base64 decode failed, ret=%d", ret);
-                free(model_bin);
-                return  false;
-            }
-            ESP_LOGI(TAG, "Model decoded, length=%zu", decoded_len);
-
-
-            save_model_to_spiffs( HTTP_DATA_TYPE_BIN,model_bin,spiffs1_model_path[SPIFFS_DOWN_LOAD_MODEL]);
-            //save_model_to_flash(b64_str);
-            // TODO: 存到 SPIFFS / PSRAM / Flash 分区
-            free(model_bin);
-        }
+        save_model_to_spiffs( HTTP_DATA_TYPE_B64,b64_str,spiffs1_model_path[SPIFFS_DOWN_LOAD_MODEL]);
+        //save_model_to_flash(b64_str); 
+        
     }
 
     // 解析 optimal_params

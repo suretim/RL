@@ -2,7 +2,7 @@
 
 //#include "esp_event.h"
  
-#if 1
+#if 0
   #define BASE_URL  "192.168.30.132" 
   #define MQTT_BROKER_URI "mqtt://192.168.30.132:1883"  
   #define HTTP_GET_MODEL_JSON_URL "http://192.168.30.132:5001/api/model?name=esp32_policy"
@@ -23,8 +23,8 @@
 #else
   #define BASE_URL  "192.168.68.237"
   #define MQTT_BROKER_URI "mqtt://192.168.68.237:1883"   
-  #define HTTP_GET_MODEL_JSON_URL "http://192.168.30.132:5001/api/model?name=esp32_policy"
-  #define OTA_SERVER_URL        "http://192.168.30.132:5001"   // 换成你的 PC IP 
+  #define HTTP_GET_MODEL_JSON_URL "http://192.168.68.237:5001/api/model?name=esp32_policy"
+  #define OTA_SERVER_URL        "http://192.168.68.237:5001"   // 换成你的 PC IP 
   
   #define WIFI_SSID_STA      "JD803"
   #define WIFI_PASS_STA      "18825213948"

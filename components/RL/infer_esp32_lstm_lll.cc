@@ -221,8 +221,7 @@ bool verify_model_integrity(const void* model_data, size_t model_size) {
     // 验证模型头（可选但推荐）
     if (model_size >= 16) {  // 确保文件至少有 16 字节
         // 检查 FlatBuffer 头（字节0-3）
-        if (data[0] == 0x20 && data[1] == 0x00 && data[2] == 0x00 && data[3] == 0x00 &&
-            data[4] == 'T' && data[5] == 'F' && data[6] == 'L' && data[7] == '3') {
+        if (data[4] == 'T' && data[5] == 'F' && data[6] == 'L' && data[7] == '3') {
             // 验证 TFLite 魔术数字（字节 4-7）
             ESP_LOGI(TAG, "verify model integrity TFLite model header verified");
         } else {
@@ -624,19 +623,25 @@ pid_run_input_st lll_tensor_run_input = {0};
 pid_run_output_st ml_pid_out_speed;
 
 CLASSIFIER_Prams classifier_params;
-
+extern float pid_map(float x, float in_min, float in_max, float out_min, float out_max);
 int load_up_input_seq(int type,int seq_len)
 {
-      int cnt=0;
-
+    int cnt=0;
+    float v_feed  = pid_map(bp_pid_th.v_feed,  c_pid_vpd_min, c_pid_vpd_max, 0, 1);
+    float t_feed  = pid_map(bp_pid_th.t_feed,  c_pid_temp_min, c_pid_temp_max, 0, 1);
+    float h_feed  = pid_map(bp_pid_th.h_feed,  c_pid_humi_min, c_pid_humi_max, 0, 1);
+    float l_feed  = pid_map(bp_pid_th.l_feed,  c_pid_light_min, c_pid_light_max, 0, 1);
+    float c_feed  = pid_map(bp_pid_th.c_feed,  c_pid_co2_min, c_pid_co2_max, 0, 1);
     if(type == PPO_CASE)
     {
         
-        input_seq[cnt*FEATURE_DIM + 0] = (float)1.0;
-        input_seq[cnt*FEATURE_DIM + 1] = (float)bp_pid_th.t_feed;
-        input_seq[cnt*FEATURE_DIM + 2] = (float)bp_pid_th.h_feed;
-        input_seq[cnt*FEATURE_DIM + 3] = (float)bp_pid_th.l_feed;
-        input_seq[cnt*FEATURE_DIM + 4] = (float)bp_pid_th.c_feed; 
+        
+        input_seq[cnt*FEATURE_DIM + 0] = (float) v_feed;
+        input_seq[cnt*FEATURE_DIM + 1] = (float) t_feed ;
+        input_seq[cnt*FEATURE_DIM + 2] = (float) h_feed ;
+        input_seq[cnt*FEATURE_DIM + 3] = (float) l_feed;
+        input_seq[cnt*FEATURE_DIM + 4] = (float) c_feed; 
+       
     }     
     if(type == META_CASE)
     {
@@ -658,9 +663,9 @@ int load_up_input_seq(int type,int seq_len)
             if(h_idx>=0)
                 geer[h_idx] = ml_pid_out_speed.speed[port];
         }
-        input_seq[cnt*FEATURE_DIM + 0] = (float)bp_pid_th.t_feed;
-        input_seq[cnt*FEATURE_DIM + 1] = (float)bp_pid_th.h_feed;
-        input_seq[cnt*FEATURE_DIM + 2] = (float)bp_pid_th.l_feed;
+        input_seq[cnt*FEATURE_DIM + 0] = (float) t_feed;
+        input_seq[cnt*FEATURE_DIM + 1] = (float) h_feed;
+        input_seq[cnt*FEATURE_DIM + 2] = (float) l_feed;
         input_seq[cnt*FEATURE_DIM + 3] = (float)geer[0];
         input_seq[cnt*FEATURE_DIM + 4] = (float)geer[1];
         input_seq[cnt*FEATURE_DIM + 5] = (float)geer[2];

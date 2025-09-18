@@ -46,7 +46,26 @@ bool save_model_to_spiffs(uint8_t type, const char *b64_str, const char *spi_fil
     uint8_t *model_bin = nullptr;
     size_t decoded_len = 0;
 
-     
+     if (type == HTTP_DATA_TYPE_B64) {
+        // Base64解码
+        // 更准确的长度计算
+        bin_len = (strlen(b64_str) * 3 + 3) / 4;
+        model_bin = (uint8_t *)malloc(bin_len + 1);  // +1 for safety
+        if (!model_bin) {
+            ESP_LOGE(TAG, "malloc failed");
+            return false;
+        }
+
+        int ret = mbedtls_base64_decode(model_bin, bin_len, &decoded_len,
+                                        (const unsigned char *)b64_str,
+                                        strlen(b64_str));
+        if (ret != 0) {
+            ESP_LOGE(TAG, "Base64 decode failed, ret=%d", ret);
+            free(model_bin);
+            return false;
+        }
+        ESP_LOGI(TAG, "Base64 Model decoded, length=%zu", decoded_len);
+    }
      if (type == HTTP_DATA_TYPE_BIN)    
      {
         // 直接二进制数据
@@ -68,8 +87,7 @@ bool save_model_to_spiffs(uint8_t type, const char *b64_str, const char *spi_fil
     // 验证模型头（可选但推荐）
     if (decoded_len >= 16) {  // 确保文件至少有 16 字节
         // 检查 FlatBuffer 头（字节0-3）
-        if (model_bin[0] == 0x20 && model_bin[1] == 0x00 && model_bin[2] == 0x00 && model_bin[3] == 0x00 &&
-            model_bin[4] == 'T' && model_bin[5] == 'F' && model_bin[6] == 'L' && model_bin[7] == '3') {
+        if (model_bin[4] == 'T' && model_bin[5] == 'F' && model_bin[6] == 'L' && model_bin[7] == '3') {
             // 验证 TFLite 魔术数字（字节 4-7）
             ESP_LOGI(TAG, "TFLite model save_model_to_spiffs verified");
         } else {
