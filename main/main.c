@@ -34,8 +34,8 @@
 SemaphoreHandle_t mutex_mainTask;
 EventGroupHandle_t main_eventGroup;
 extern void ai_check_plug_in(uint8_t track_cc);
-extern uint8_t flask_state_get_flag[FLASK_STATE_GET_COUNT];
-extern uint8_t flask_state_put_flag[FLASK_STATE_PUT_COUNT];
+extern uint8_t flask_state_get_flag[FLASK_GET_COUNT];
+extern uint8_t flask_state_put_flag[FLASK_PUT_COUNT];
 
 /*
 ****************************************************************************************************
@@ -461,7 +461,7 @@ void main_task(void *pvParameters)
 			if(flag_100ms==0) 
 			{
 				
-				for(int i=0;i<FLASK_STATE_GET_COUNT;i++)
+				for(int i=0;i<FLASK_STATES_GET_COUNT;i++)
 				{
 					vTaskDelay(pdMS_TO_TICKS(10000));
 					if(flask_state_get_flag[i]==SPIFFS_MODEL_EMPTY)
@@ -469,7 +469,7 @@ void main_task(void *pvParameters)
 						wifi_get_package(i);    
 					}
 					if(flask_state_get_flag[SPIFFS_DOWN_LOAD_MODEL]==SPIFFS_MODEL_SAVED){
-						//flag_100ms=FLASK_STATE_GET_COUNT;
+						flag_100ms=1;
 						break;
 					}
 					 
@@ -479,7 +479,7 @@ void main_task(void *pvParameters)
 			flag_100ms++;
 		    if (  flask_state_get_flag[SPIFFS_DOWN_LOAD_MODEL]==SPIFFS_MODEL_SAVED  && flag_100ms>=100)
 			{
-				flag_100ms = FLASK_STATE_GET_COUNT;	
+				flag_100ms = 1;	
 				if(	lll_tensor_run()==ESP_FAIL){
 					 
 					break;
@@ -536,7 +536,7 @@ void plant_env_make_task(void *pvParameters)
 	while(1)
 	{  
 		//for(int i=0;i<NUM_FLASK_TASK;i++)
-        for(int i=0;i<FLASK_STATE_PUT_COUNT;i++)
+        for(int i=0;i<FLASK_PUT_COUNT;i++)
         {
             vTaskDelay(pdMS_TO_TICKS(10000));
             if(flask_state_put_flag[i]==SPIFFS_MODEL_EMPTY)

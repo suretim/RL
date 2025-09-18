@@ -26,12 +26,13 @@ char bin_str[2][10]={"clf_bin","fish_bin"};
 
 
 // 全局存放权重和偏置
-float classifier_weights[FEATURE_DIM * NUM_CLASSES];
-float classifier_bias[NUM_CLASSES];
+float classifier_weights[MAX_FEATURE_DIM * MAX_NUM_CLASSES];
+float classifier_bias[MAX_NUM_CLASSES];
 
 static const char* TAG = "ClassifierStorage";
 
 constexpr int FisherArenaSize = FISHER_LAYER * 256 *sizeof(float); // 调整大小
+
 
 void free_fisher_matrix()
 {

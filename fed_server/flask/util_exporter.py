@@ -129,7 +129,7 @@ class ESP32BaseExporter:
 # 獨立的 TensorFlow → ESP32 匯出器（不再繼承 Agent）
 # -----------------------------
 class TensorFlowESP32Exporter(ESP32BaseExporter):
-    def __init__(self, model_or_path: Union[str, tf.keras.Model]):
+    def __init__(self, model_or_path: Union[str, tf.keras.Model], quantize: bool = False):
         super().__init__(model_or_path)
         """
         Args:
@@ -146,11 +146,26 @@ class TensorFlowESP32Exporter(ESP32BaseExporter):
         self.fisher_matrix: Optional[Dict[str, np.ndarray]] = None
         self.optimal_params: Optional[Dict[str, np.ndarray]] = None
         self.ota_package=None
+        self.quantize = quantize
+
+    def convert_model_to_tflite(self) -> bytes:
+        """
+        Converts the model to TFLite without applying quantization.
+        """
+        print("Converting model to TFLite without quantization...")
+        converter = tf.lite.TFLiteConverter.from_keras_model(self.model)
+        converter.optimizations = []  # No optimizations (no quantization)
+        tflite_model = converter.convert()
+        return tflite_model
     # 量化
     def apply_quantization(self, representative_data: np.ndarray) -> bytes:
         """
         將模型量化為 int8,適合 ESP32。
         """
+        if not self.quantize:
+            print("Quantization is disabled. Returning the original model.")
+            # Return the original model if quantization is disabled
+            return self.convert_model_to_tflite()
         print("Applying post-training quantization...")
 
         converter = tf.lite.TFLiteConverter.from_keras_model(self.model)
@@ -349,7 +364,13 @@ class TensorFlowESP32Exporter(ESP32BaseExporter):
         else:
             converter = tf.lite.TFLiteConverter.from_keras_model(self.model)
             converter.optimizations = []
+            converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS]
+            converter.inference_input_type = tf.float32  # 确保输入类型为 float32
+            converter.inference_output_type = tf.float32  # 确保输出类型为 float32
             tflite_bytes = converter.convert()
+            print("converter.optimizations=[]")
+            for layer in self.model.layers:
+                print(f"Layer {layer.name}: {layer.__class__}")
 
         comp = self.compress_for_esp32(tflite_bytes, compress=compress)
         simplified_fisher = self._simplify_fisher_matrix()
@@ -399,8 +420,10 @@ class TensorFlowESP32Exporter(ESP32BaseExporter):
     def _calculate_crc(self, data: bytes) -> int:
         return zlib.crc32(data)
 
-    def save_ota_package(self, output_path: str, representative_data=None,fine_tune_data=None, **kwargs) -> None:
-        self.ota_package = self.create_ota_package(representative_data,fine_tune_data=fine_tune_data, **kwargs)
+    def save_ota_package(self, output_path: str, representative_data=None,fine_tune_data=None, quantize=False, **kwargs) -> None:
+        self.ota_package = self.create_ota_package(representative_data=representative_data,
+                                                   fine_tune_data=fine_tune_data,
+                                                   quantize= quantize, **kwargs)
 
         # JSON 檔（Base64 模型）
         with open(output_path, 'w', encoding='utf-8') as f:

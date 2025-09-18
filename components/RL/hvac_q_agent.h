@@ -11,6 +11,18 @@
 //#define NUM_FLASK_GET_TASK 2
 //#define NUM_FLASK_PUT_TASK 1
 
+enum enum_spiffs_data_type{
+    SPIFFS_DATA_TYPE_WEIGHT=0, 
+    SPIFFS_DATA_TYPE_MODEL=1, 
+    SPIFFS_DATA_TYPE_COUNT=2,
+};
+
+enum enum_http_data_type{
+    HTTP_DATA_TYPE_BIN=0, 
+    HTTP_DATA_TYPE_B64=1, 
+    HTTP_DATA_TYPE_COUNT=2,
+};
+
 enum enum_flask_state{
     SPIFFS_MODEL_EMPTY=0, 
     SPIFFS_MODEL_SAVED=1, 
@@ -20,20 +32,21 @@ enum enum_flask_state{
 
 enum enum_flask_get_state {
     SPIFFS_DOWN_LOAD_MODEL = 0, 
-    MODEL_BIN_PPO_MD5 = 1,
-    FLASK_STATE_GET_COUNT // This automatically becomes 2, useful for array sizing
+    META_MODEL = 1, 
+    IMG_MODEL=2,
+    MODEL_BIN_PPO_MD5 = 3,
+    ACTOR_MODEL = 4,
+    FLASK_GET_COUNT, // This automatically becomes 2, useful for array sizing
 };
-
+#define FLASK_STATES_GET_COUNT 2
  
 enum enum_flask_put_state{
      
     INIT_EXPORTER=0, 
-    FLASK_STATE_PUT_COUNT
+    FLASK_PUT_COUNT
 };
-// ======= WiFi 與 OTA 配置 ======= 
 
-#define  spiffs_model_path  "/spiffs/esp32_optimized_model.tflite" 
-#define  spiffs_ppo_model_bin_path  "/spiffs/ppo_model.bin" 
+
 #define  post_data   "{\"model_path\": \"./saved_models/ppo_policy_actor\"}" 
 #if 0
 const int STATE_SIZES[STATE_DIM] = {2, 2, 2, 3, 3}; // 例：health 0/1, light 0/1/2 等

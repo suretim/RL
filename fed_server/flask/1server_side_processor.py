@@ -71,12 +71,12 @@ class xESP32PPOAgent:
     def save_model(self, path="trained_policy_tf.keras"):
         """保存 policy 模型"""
         self.policy.save(path)
-        print(f"✅ 模型已保存到 {path}")
+        print(f" 模型已保存到 {path}")
 
     def load_model(self, path="trained_policy_tf.keras"):
         """載入 policy 模型"""
         self.policy = keras.models.load_model(path)
-        print(f"✅ 模型已從 {path} 載入")
+        print(f" 模型已從 {path} 載入")
 
 def generate_smart_representative_data(env, num_samples=1000, mode_weights=None, return_labels=False):
     """
@@ -177,7 +177,7 @@ def verify_tflite_model(file_path):
             model_data = f.read()
 
         if len(model_data) < 16:
-            print("❌ 文件太小")
+            print(" 文件太小")
             return False
 
         print(f"📊 文件大小: {len(model_data)} 字节")
@@ -186,10 +186,10 @@ def verify_tflite_model(file_path):
         # 正确的TFLite魔术数字检测（从第5字节开始）
         if len(model_data) >= 8:
             if model_data[4:8] == b'TFL3':
-                print("✅ 检测到有效的TFLite魔术数字 (TFL3)")
+                print(" 检测到有效的TFLite魔术数字 (TFL3)")
                 magic_ok = True
             else:
-                print(f"❌ 无效的TFLite魔术数字: {model_data[4:8].hex(' ')}")
+                print(f" 无效的TFLite魔术数字: {model_data[4:8].hex(' ')}")
                 magic_ok = False
         else:
             magic_ok = False
@@ -198,22 +198,22 @@ def verify_tflite_model(file_path):
         try:
             interpreter = tf.lite.Interpreter(model_content=model_data)
             interpreter.allocate_tensors()
-            print("✅ TensorFlow验证成功")
+            print(" TensorFlow验证成功")
             tf_ok = True
         except Exception as e:
-            print(f"❌ TensorFlow验证失败: {e}")
+            print(f" TensorFlow验证失败: {e}")
             tf_ok = False
 
         # 最终结果：只要TensorFlow验证成功就认为有效
         if tf_ok:
             if not magic_ok:
-                print("⚠️  注意：文件结构特殊，但TensorFlow可以加载")
+                print("️  注意：文件结构特殊，但TensorFlow可以加载")
             return True
         else:
             return False
 
     except Exception as e:
-        print(f"❌ 文件读取失败: {e}")
+        print(f" 文件读取失败: {e}")
         return False
 
 def debug_model_creation(representative_data):
@@ -340,9 +340,9 @@ def analyze_model_details(model_bytes):
     print("\n=== 兼容性检查 ===")
     for op in all_ops:
         if op not in micro_supported_ops:
-            print(f"⚠️  可能不支持的操作符: {op}")
+            print(f"️  可能不支持的操作符: {op}")
         else:
-            print(f"✅ 支持的操作符: {op}")
+            print(f" 支持的操作符: {op}")
 
 
 
@@ -407,7 +407,7 @@ if __name__ == "__main__":
         firmware_version="1.0.0",
         prune=True,  # 启用剪枝
         compress=False,
-        quantize=False  # 启用量化
+        quantize=False
     )
     #ota_package = exporter.create_ota_package(representative_data, quantize=True)
     ota_package=exporter.ota_package
@@ -431,12 +431,19 @@ if __name__ == "__main__":
         sys.exit(1)
         # 验证TFLite模型
     # 使用
-    analyze_model_details(decompressed_bytes)
-
+    #analyze_model_details(decompressed_bytes)
     # 获取所有张量详细信息
     tensor_details = interpreter.get_tensor_details()
+    print("TFLite 模型完整层信息")
+    print("=" * 80)
+    print(f"{'索引':<5} {'名称':<25} {'形状':<15} {'数据类型':<12} {'量化信息'}")
+    print("=" * 80)
 
-    print("🤖 TFLite 模型完整层信息")
+    for tensor in tensor_details:
+        print(
+            f"{tensor['index']:<5} {tensor['name']:<25} {str(tensor['shape']):<15} {str(tensor['dtype']):<12} {tensor.get('quantization', 'None')}")
+
+    print("TFLite 模型完整层信息")
     print("=" * 80)
     print(f"{'索引':<5} {'名称':<25} {'形状':<15} {'数据类型':<12} {'量化信息'}")
     print("=" * 80)
@@ -449,14 +456,14 @@ if __name__ == "__main__":
             scale, zero_point = quantization[0], quantization[1]
             quant_info = f"scale:{scale}, zero_point:{zero_point}"
         else:
-            quant_info = "无量化"
+            quant_info = "quantization free"
 
         print(
             f"{tensor['index']:<5} {str(tensor['name'])[:24]:<25} {str(tensor['shape']):<15} {str(tensor['dtype']):<12} {quant_info}")
 
     print("=" * 80)
-    print(f"📊 总层数: {len(tensor_details)}")
-    print(f"💾 模型大小: {len(decompressed_bytes):,} 字节")
+    print(f" 总层数: {len(tensor_details)}")
+    print(f" 模型大小: {len(decompressed_bytes):,} 字节")
     path_policy_tflite = os.path.join(MODEL_DIR, "esp32_optimized_model.tflite")
     with open(path_policy_tflite, 'wb') as f:
         f.write(decompressed_bytes)

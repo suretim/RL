@@ -1,8 +1,9 @@
  
 # TFLite 模型文件
  
-# set(TFLITE_META_SRCS "../../fed_server/models/meta_model.tflite")
-set(TFLITE_META_SRCS "../../fed_server/models/esp32_optimized_model.tflite")
+set(TFLITE_META_SRCS "../../fed_server/models/meta_model.tflite")
+set(TFLITE_OPTI_SRCS "../../fed_server/models/esp32_optimized_model.tflite")
+set(TFLITE_STUDENT_SRCS "../../fed_server/models/student_model.tflite")
  
   
 
@@ -32,6 +33,8 @@ idf_component_register(
 
     EMBED_FILES 
         "${TFLITE_META_SRCS}"
+        "${TFLITE_OPTI_SRCS}"
+        "${TFLITE_STUDENT_SRCS}"
     REQUIRES
         spiffs
         esp_http_client

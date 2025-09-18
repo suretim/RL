@@ -34,47 +34,21 @@ static const char *TAG = "OTA SPIFFS";
 //extern const unsigned char meta_model_tflite[];
 //extern const unsigned int meta_model_tflite_len;
 //bool spiffs_token=false;
-extern uint8_t  flask_state_get_flag[FLASK_STATE_GET_COUNT] ;
-extern uint8_t  flask_state_put_flag[FLASK_STATE_PUT_COUNT] ;
+extern uint8_t  flask_state_get_flag[FLASK_GET_COUNT] ;
+extern uint8_t  flask_state_put_flag[FLASK_PUT_COUNT] ;
 extern float *fisher_matrix;
 extern float *theta ; 
 extern bool ewc_ready; 
 
-// ---------------- NN Placeholder ----------------
-// 权重向量示例
-std::vector<float> W1, W2, b1, b2, Vw;
-float Vb = 0.0f;
-extern std::vector<float> health_result;
-
-#define H1          32
-#define H2          4
-
  
 bool save_model_to_spiffs(uint8_t type, const char *b64_str, const char *spi_file_name) {
     size_t bin_len;
-    uint8_t *model_bin = NULL;
+    uint8_t *model_bin = nullptr;
     size_t decoded_len = 0;
 
-    if (type == 1) {
-        // Base64解码
-        // 更准确的长度计算
-        bin_len = (strlen(b64_str) * 3 + 3) / 4;
-        model_bin = (uint8_t *)malloc(bin_len + 1);  // +1 for safety
-        if (!model_bin) {
-            ESP_LOGE(TAG, "malloc failed");
-            return false;
-        }
-
-        int ret = mbedtls_base64_decode(model_bin, bin_len, &decoded_len,
-                                        (const unsigned char *)b64_str,
-                                        strlen(b64_str));
-        if (ret != 0) {
-            ESP_LOGE(TAG, "Base64 decode failed, ret=%d", ret);
-            free(model_bin);
-            return false;
-        }
-        ESP_LOGI(TAG, "Base64 Model decoded, length=%zu", decoded_len);
-    } else {
+     
+     if (type == HTTP_DATA_TYPE_BIN)    
+     {
         // 直接二进制数据
         decoded_len = strlen(b64_str);  // 注意：这里假设b64_str包含二进制数据
         bin_len = decoded_len;
@@ -86,7 +60,11 @@ bool save_model_to_spiffs(uint8_t type, const char *b64_str, const char *spi_fil
         memcpy(model_bin, b64_str, bin_len);
         ESP_LOGI(TAG, "Binary Model copied, length=%zu", decoded_len);
     }
-
+    if(model_bin==nullptr)
+    {
+        ESP_LOGE(TAG, "model_bin is null");
+        return false;
+    }
     // 验证模型头（可选但推荐）
     if (decoded_len >= 16) {  // 确保文件至少有 16 字节
         // 检查 FlatBuffer 头（字节0-3）
@@ -95,7 +73,7 @@ bool save_model_to_spiffs(uint8_t type, const char *b64_str, const char *spi_fil
             // 验证 TFLite 魔术数字（字节 4-7）
             ESP_LOGI(TAG, "TFLite model save_model_to_spiffs verified");
         } else {
-            ESP_LOGW(TAG, "Unknown file format, may not be TFLite");
+            ESP_LOGW(TAG, "Unknown file format, may not be TFLite header %x",model_bin[0]);
             return false;
         }
     } else {
@@ -130,63 +108,12 @@ bool save_model_to_spiffs(uint8_t type, const char *b64_str, const char *spi_fil
  
 
 
-void parse_model_weights(uint8_t *buffer, size_t size) {
-    ESP_LOGI(TAG, "Parsing model weights... (%d bytes)", size);
-
-    // 将 buffer 强制转换为 float*
-    float* ptr = reinterpret_cast<float*>(buffer);
-    size_t offset = 0;
-
-    // 清空之前的 vector 并填充新数据
-    W1.assign(ptr + offset, ptr + offset + H1 * INPUT_DIM);
-    offset += H1 * INPUT_DIM;
-
-    b1.assign(ptr + offset, ptr + offset + H1);
-    offset += H1;
-
-    W2.assign(ptr + offset, ptr + offset + H2 * H1);
-    offset += H2 * H1;
-
-    b2.assign(ptr + offset, ptr + offset + H2);
-    offset += H2;
-
-    Vw.assign(ptr + offset, ptr + offset + H2);
-    offset += H2;
-
-    Vb = *(ptr + offset);
-    offset += 1;
-
-    ESP_LOGI(TAG, "Model weights parsed successfully. Total floats = %d", offset);
-} 
- 
-// ---------------- Local fallback ----------------
-bool load_local_model() {
-    FILE *f = fopen(spiffs_ppo_model_bin_path, "rb");
-    if (!f) {
-        ESP_LOGE(TAG, "Local model not found!");
-        return false;
-    }
-    fseek(f, 0, SEEK_END);
-    size_t size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    uint8_t *buffer = (uint8_t*)malloc(size);
-    if (!buffer) { fclose(f); return false; }
-    fread(buffer, 1, size, f);
-    fclose(f);
-    parse_model_weights(buffer, size);
-    free(buffer);
-    ESP_LOGI(TAG, "Local model loaded successfully!");
-    return true;
-}
-
-
-
 /**
  * 从 SPIFFS 加载二进制 float 文件
  */
-float* xload_float_bin0(const char* path, size_t &length) {
+float* load_float_bin(const char* path, size_t &length) {
     char full_path[64];
-    snprintf(full_path, sizeof(full_path), "/spiffs/%s", path);
+    snprintf(full_path, sizeof(full_path), "/spiffs1/%s", path);
 
     FILE* f = fopen(full_path, "rb");
     if (f == NULL) {
@@ -230,7 +157,7 @@ float* xload_float_bin0(const char* path, size_t &length) {
 extern "C" void spiffs_init(void) {
     // 第一個 SPIFFS，用於普通文件
     esp_vfs_spiffs_conf_t conf1 = {
-        .base_path = "/spiffs",
+        .base_path = "/spiffs1",
         .partition_label = "spiffs1",  // 分區名
         .max_files = 5,
         .format_if_mount_failed = true
@@ -243,7 +170,7 @@ extern "C" void spiffs_init(void) {
 
     // 第二個 SPIFFS，用於模型文件
     esp_vfs_spiffs_conf_t conf2 = {
-        .base_path = "/models",
+        .base_path = "/spiffs2",
         .partition_label = "spiffs2",  // 分區名
         .max_files = 5,
         .format_if_mount_failed = true

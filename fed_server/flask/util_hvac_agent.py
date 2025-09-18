@@ -411,7 +411,7 @@ class ESP32PPOAgent(PPOBaseAgent):
         self._tflite_models[model_type] = tflite_model
         return tflite_model
 
-    def convert_to_tflite(self, model_type='actor', quantize=True, optimize_size=True):
+    def convert_to_tflite(self, model_type='actor', quantize=False, optimize_size=False):
         """
         將模型轉換為TFLite格式,針對ESP32優化
         """

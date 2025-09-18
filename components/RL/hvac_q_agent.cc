@@ -35,22 +35,24 @@
 //extern const char * spiffs_model_path ;
 static const char *TAG = "OTA HVAC";
 
-  uint8_t flask_state_get_flag[FLASK_STATE_GET_COUNT]={0};
-  uint8_t flask_state_put_flag[FLASK_STATE_PUT_COUNT]={0};
+  uint8_t flask_state_get_flag[FLASK_GET_COUNT]={0};
+  uint8_t flask_state_put_flag[FLASK_PUT_COUNT]={0};
 extern std::vector<float> health_result;
+extern const char* spiffs1_model_path[3];
+//extern const char optimized_model_path[];
+//extern const char spiffs_ppo_model_bin_path[];
 
- 
 //const int num_flask_task=3;
-char flask_get_name[FLASK_STATE_GET_COUNT][64]={
-    spiffs_model_path,
-    spiffs_ppo_model_bin_path
+char flask_get_name[FLASK_STATES_GET_COUNT][64]={
+     "optimized_model_path",
+     "spiffs_ppo_model_bin_path"
 };
 //const int num_flask_task=3;
-char flask_put_name[FLASK_STATE_PUT_COUNT][64]={
+char flask_put_name[FLASK_PUT_COUNT][64]={
     post_data, 
 };
 bool save_model_to_spiffs(uint8_t type,const char *b64_str,const char *spi_file_name);
-//uint8_t* load_model_from_spiffs(const char* filename, size_t* out_size);
+ 
 // ---------------- OTA Callback ----------------
 esp_err_t _http_down_load_event_handler(esp_http_client_event_t *evt) {
     static FILE *f_model = NULL;
@@ -66,7 +68,7 @@ esp_err_t _http_down_load_event_handler(esp_http_client_event_t *evt) {
             if (f_model) {
                 fclose(f_model);
                 f_model = NULL;
-                ESP_LOGI(TAG, "OTA file saved to %s", spiffs_model_path);
+                ESP_LOGI(TAG, "OTA file saved to %s", spiffs1_model_path[SPIFFS_DOWN_LOAD_MODEL]);
             }
             break;
         case HTTP_EVENT_DISCONNECTED:
@@ -122,7 +124,7 @@ bool parse_policy_model_json(const char *json_str) {
             ESP_LOGI(TAG, "Model decoded, length=%zu", decoded_len);
 
 
-            save_model_to_spiffs(  1,b64_str,spiffs_model_path);
+            save_model_to_spiffs( HTTP_DATA_TYPE_BIN,model_bin,spiffs1_model_path[SPIFFS_DOWN_LOAD_MODEL]);
             //save_model_to_flash(b64_str);
             // TODO: 存到 SPIFFS / PSRAM / Flash 分区
             free(model_bin);
@@ -358,7 +360,7 @@ void download_ota_md5_model(void *pvParameters) {
         sprintf(task_url, "http://%s:%s/%s", BASE_URL,POLICY_PORT,task_str);
           
  
-    if (ota_download_md5_event_based(task_url, spiffs_ppo_model_bin_path) != ESP_OK) {
+    if (ota_download_md5_event_based(task_url, spiffs1_model_path[MODEL_BIN_PPO_MD5]) != ESP_OK) {
         ESP_LOGE(TAG, "OTA download failed");
         flask_state_get_flag[MODEL_BIN_PPO_MD5]=SPIFFS_MODEL_ERR;
         vTaskDelete(NULL); 
@@ -366,7 +368,7 @@ void download_ota_md5_model(void *pvParameters) {
     }
     ESP_LOGI(TAG, "OTA download Suceess!");
     // 验证下载的文件
-    if (!calc_file_md5(spiffs_ppo_model_bin_path, local_md5)) {
+    if (!calc_file_md5(spiffs1_model_path[MODEL_BIN_PPO_MD5], local_md5)) {
         ESP_LOGI(TAG, "Local MD5 calculation ppo_model.bin empty");
         //vTaskDelete(NULL);
         //return;
@@ -526,7 +528,7 @@ void ota_update_ppo_model_md5_process(void *pvParameters) {
 
     // 2. 计算本地 MD5
      
-    if (!calc_file_md5(spiffs_ppo_model_bin_path, local_md5)) {
+    if (!calc_file_md5(spiffs1_model_path[MODEL_BIN_PPO_MD5], local_md5)) {
         ESP_LOGI(TAG, "Local MD5 calculation Model Empty");
         //vTaskDelete(NULL);
         //return;
@@ -554,7 +556,7 @@ void ota_update_ppo_model_md5_process(void *pvParameters) {
 }
 
  
-void (*functionGetArray[FLASK_STATE_GET_COUNT])(void *pvParameters) = {
+void (*functionGetArray[2])(void *pvParameters) = {
     http_get_model_json,  
     ota_update_ppo_model_md5_process,
 };
@@ -646,13 +648,13 @@ void flask_init_exporter_task(void *pvParameters) {
 
   
 
-void (*functionPutArray[FLASK_STATE_PUT_COUNT])(void *pvParameters) = {
+void (*functionPutArray[FLASK_PUT_COUNT])(void *pvParameters) = {
     flask_init_exporter_task,  
 };
  
 
 extern "C" void wifi_get_package(int type ) {
-    if(type>=0 && type<FLASK_STATE_GET_COUNT)
+    if(type>=0 && type<FLASK_STATES_GET_COUNT)
     //if(type==0)
     {
         xTaskCreatePinnedToCore(
@@ -669,7 +671,7 @@ extern "C" void wifi_get_package(int type ) {
 }
 
 extern "C" void wifi_put_package(int type ) {
-    if(type>=0 && type<FLASK_STATE_PUT_COUNT)
+    if(type>=0 && type<FLASK_PUT_COUNT)
     //if(type==0)
     {
         xTaskCreatePinnedToCore(

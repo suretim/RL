@@ -4,7 +4,7 @@ import json
 import os
 from tf_utils import create_representative_dataset_from_ESP32BaseExporter
 from util_hvac_agent import ESP32PPOAgent,PPOBaseAgent
-from util_exporter import TensorFlowESP32BaseExporter
+from util_exporter import TensorFlowESP32Exporter
 
 
 def train_and_export():
@@ -16,7 +16,7 @@ def train_and_export():
     agent.save("trained_policy_tf")
 
     # 3. 创建导出器
-    exporter = TensorFlowESP32BaseExporter(agent.policy)
+    exporter = TensorFlowESP32Exporter(agent.policy)
 
     # 4. 生成代表性数据
     representative_data = create_representative_dataset_from_ESP32BaseExporter(
@@ -35,7 +35,7 @@ def train_and_export():
 
 def create_representative_dataset_from_generator(policy, env, num_samples=1000):
     """从生成器创建代表性数据集"""
-    exporter = TensorFlowESP32BaseExporter(policy)
+    exporter = TensorFlowESP32Exporter(policy)
     return exporter.create_representative_dataset(env, num_samples)
 
 # cc62673 (flak and esp32 v.1.4)
