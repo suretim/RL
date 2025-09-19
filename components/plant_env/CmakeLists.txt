@@ -17,10 +17,15 @@ idf_component_register(
         "hvac_env"
         "fl_client"
         "../RL"
+        "../ml"
+        "../bsp"
+        "../devices"
+        "../func/include"
  
     REQUIRES
-        "esp_http_client"
-        "json"
+        ml
+        esp_http_client
+        json
 )
 
 # C++ 特定设置

@@ -8,7 +8,7 @@ from collections import deque
 import threading
 import time
 import random
-from util_hvac_agent import TensorFlowESP32BaseExporter
+from util_exporter import TensorFlowESP32Exporter
 import tensorflow as tf
 
 import  queue
@@ -39,7 +39,7 @@ def init_exporter():
         return jsonify({"error": "model_path required"}), 400
 
     policy_model = tf.keras.models.load_model(model_path)
-    exporter = TensorFlowESP32BaseExporter(policy_model)
+    exporter = TensorFlowESP32Exporter(policy_model)
     return jsonify({"status": "exporter initialized"})
 # 模擬環境數據生成
 def simulate_env_data():

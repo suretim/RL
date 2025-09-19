@@ -6,11 +6,11 @@
 #include <map>
 #include <string>
 #include <functional>
-
+#include "version.h"
 // 前向声明
 class HVACEncoder;
 class PrototypeClassifierSimple;
-
+              // 存储每步的奖励
 class PlantHVACEnv {
 public:
     using SeqFetcher = std::function<std::vector<std::vector<float>>(int t)>;
@@ -23,10 +23,12 @@ public:
         float flower_prob;
         float temp;
         float humid;
+        float light;
+        float co2;
         float vpd;
 
         StepResult() : reward(0.0f), done(false), flower_prob(0.0f),
-                       temp(0.0f), humid(0.0f), vpd(0.0f) {}
+                       temp(0.0f), humid(0.0f),light(0.0f), co2(0.0f), vpd(0.0f) {}
     };
 
 private:
@@ -41,9 +43,12 @@ private:
 
     float temp;
     float humid;
+    float light;
+    float co2;
+    bool done;
     int health;
     int t;
-    std::array<int, 4> prev_action;
+    std::array<int,PORT_CNT> prev_action;
 
     SeqFetcher seq_fetcher;
 
@@ -51,7 +56,9 @@ private:
         {"energy_penalty", 0.1f},
         {"switch_penalty_per_toggle", 0.2f},
         {"vpd_target", 1.2f},
-        {"vpd_penalty", 2.0f}
+        {"vpd_penalty", 2.0f},
+        {"light_penalty", 0.3f},  // 光照惩罚系数
+        {"co2_penalty", 0.4f}     // CO2惩罚系数
     };
 
 public:
@@ -61,13 +68,22 @@ public:
 
     void set_seq_fetcher(SeqFetcher fetcher);
 
-    StepResult step(const std::array<int,4>& action,
+    StepResult step(const std::array<int,PORT_CNT>& action,
                     const std::map<std::string,float>& params = {});
 
     std::vector<float> get_state() const;
     void update_prototypes(const std::vector<std::vector<float>>& features,
                            const std::vector<int>& labels);
-
+    void reset() {
+            // 将环境状态重置为初始值
+            temp = 22.0f;  // 设定初始温度为22.0度
+            humid = 50.0f;     // 设定初始湿度为50%
+            light=300.0f; // 设定初始光照为300lux
+            co2=400.0f; // 设定初始CO2浓度为400ppm
+            done = false;         // 重置任务结束标志
+            
+          
+        };
 private:
     std::vector<float> _get_state() const;
     float get_param(const std::map<std::string,float>& params, const std::string& key) const;

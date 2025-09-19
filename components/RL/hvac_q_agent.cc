@@ -3,7 +3,6 @@
 #include <string>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "esp_log.h"
 #include "nvs_flash.h"
 #include "esp_spiffs.h"
 #include "esp_netif.h"
@@ -25,7 +24,9 @@
 #include <string.h> 
 #include "esp_system.h" 
 #include "cJSON.h"
-//#include "esp_base64.h"   // ESP-IDF 自带 base64
+#include "esp_system.h"
+#include "esp_log.h"
+
 #include "esp_err.h"
   
 #include "esp_partition.h"   
@@ -50,9 +51,7 @@ char flask_get_name[FLASK_STATES_GET_COUNT][64]={
 //const int num_flask_task=3;
 char flask_put_name[FLASK_PUT_COUNT][64]={
     post_data, 
-};
-bool save_model_to_spiffs(uint8_t type,const char *b64_str,const char *spi_file_name);
- 
+}; 
 // ---------------- OTA Callback ----------------
 esp_err_t _http_down_load_event_handler(esp_http_client_event_t *evt) {
     static FILE *f_model = NULL;
@@ -84,7 +83,58 @@ esp_err_t _http_down_load_event_handler(esp_http_client_event_t *evt) {
  
 // ======= PPO 模型 =======
 ESP32EWCModel ewcppoModel;
+uint32_t swap_endian(uint32_t value) {
+    return ((value >> 24) & 0xFF) | 
+           ((value << 8) & 0xFF0000) | 
+           ((value >> 8) & 0xFF00) | 
+           ((value << 24) & 0xFF000000);
+} 
+
+bool save_model_to_spiffs(unsigned int decoded_len,   unsigned char  *model_bin, const char *spi_file_name) {
+          
+    ESP_LOGI(TAG, "Binary Model copied, length=%zu", decoded_len);
+      
+    // 验证模型头（可选但推荐）
+    if (decoded_len >= 16) {  // 确保文件至少有 16 字节
+        // 检查 FlatBuffer 头（字节0-3）
+        if (model_bin[4] == 'T' && model_bin[5] == 'F' && model_bin[6] == 'L' && model_bin[7] == '3') {
+            // 验证 TFLite 魔术数字（字节 4-7）
+            ESP_LOGI(TAG, "TFLite model save_model_to_spiffs verified");
+        } else {
+            ESP_LOGW(TAG, "Unknown file format, may not be TFLite header %x",model_bin[0]);
+            return false;
+        }
+    } else {
+        ESP_LOGW(TAG, "Model file is too short, cannot verify header");
+        return false;
+    }
+
+    // 保存到SPIFFS
+    FILE *f = fopen(spi_file_name, "wb");
+    if (f) {
+        size_t written = fwrite(model_bin, 1, decoded_len, f);
+        fclose(f);
+        if (written == decoded_len) {
+            ESP_LOGI(TAG, "Model saved to SPIFFS: %s, size=%zu", spi_file_name, written);
+        } else {
+            ESP_LOGE(TAG, "Write incomplete: %zu/%zu", written, decoded_len);
+             
+            return false;
+        }
+    } else {
+        ESP_LOGE(TAG, "Failed to open file for writing: %s", spi_file_name);
+         
+        return false;
+    }
+
+     
+    flask_state_get_flag[SPIFFS_DOWN_LOAD_MODEL] = SPIFFS_MODEL_SAVED;
+     
+    return true;
+}
  
+ 
+
 bool parse_policy_model_json(const char *json_str) {
      
     //printf("Raw JSON string: %s\n", json_str); // 直接使用，不需要.c_str()
@@ -93,8 +143,7 @@ bool parse_policy_model_json(const char *json_str) {
     if (!root) {
         ESP_LOGE(TAG, "Failed to parse_model_json JSON");
         return false;
-    }
-
+    } 
     // 解析 metadata
     cJSON *metadata = cJSON_GetObjectItem(root, "metadata");
     if (metadata) {
@@ -102,14 +151,56 @@ bool parse_policy_model_json(const char *json_str) {
         const char *model_type = cJSON_GetObjectItem(metadata, "model_type")->valuestring;
         ESP_LOGI(TAG, "Firmware: %s, ModelType: %s", fw, model_type);
     }
+    // Parse CRC32
+    //const char * crc32_espect_str =nullptr;
+    cJSON *cjson_crc32_espect = cJSON_GetObjectItem(root, "crc32");
+    if (cjson_crc32_espect==NULL || !cJSON_IsString(cjson_crc32_espect)) {
+        ESP_LOGE(TAG, "cjson_crc32_espect failed");
+        return false;
+    } 
+    ESP_LOGI(TAG, "crc32_espect (hex): 0x%s", cjson_crc32_espect->valuestring);
 
-    // 解析 model_data_b64
+    //uint32_t crc32_espect = (uint32_t) strtol(cjson_crc32_espect->valuestring, NULL, 10);
+    uint32_t crc32_espect = strtoul(cjson_crc32_espect->valuestring, NULL, 10); 
+    //ESP_LOGI(TAG, "crc32_espect: %s ",  crc32_espect_str);
+
+    // Parse model_data_b64
     cJSON *model_b64 = cJSON_GetObjectItem(root, "model_data_b64");
     if (model_b64 && cJSON_IsString(model_b64)) {
         const char *b64_str = model_b64->valuestring;
-        save_model_to_spiffs( HTTP_DATA_TYPE_B64,b64_str,spiffs1_model_path[SPIFFS_DOWN_LOAD_MODEL]);
-        //save_model_to_flash(b64_str); 
+        size_t bin_len;
+        unsigned char *model_bin = nullptr;
+        unsigned int decoded_len = 0;
+
+        bin_len = (strlen(b64_str) * 3 + 3) / 4;
+        model_bin = (unsigned char *)malloc(bin_len + 1);  // +1 for safety
+        if (!model_bin) {
+            ESP_LOGE(TAG, "malloc failed");
+            return false;
+        }
+
+        int ret = mbedtls_base64_decode(model_bin, bin_len, &decoded_len,
+                                        (const unsigned char *)b64_str,
+                                        strlen(b64_str));
+        if (ret != 0) {
+            ESP_LOGE(TAG, "Base64 decode failed, ret=%d", ret);
+            free(model_bin);
+            return false;
+        }
+        ESP_LOGI(TAG, "Base64 Model decoded, length=%d",(int) decoded_len);
+        // Calculate CRC32 of the Base64 string (using strlen instead of sizeof)
+        uint32_t crc32_result = esp_crc32_le(0, (const uint8_t *)model_bin, decoded_len);
+        //crc32_result = swap_endian(crc32_result);
+        if (crc32_espect != crc32_result) {
+            ESP_LOGE(TAG, "CRC32 mismatch, expected %lx, got %lx", crc32_espect, crc32_result);
+            cJSON_Delete(root);
+            return false;
+        }
+         
+        // Save model to SPIFFS or Flash
+        save_model_to_spiffs(decoded_len, model_bin, spiffs1_model_path[SPIFFS_DOWN_LOAD_MODEL]);
         
+        // save_model_to_flash(b64_str); 
     }
 
     // 解析 optimal_params
@@ -676,7 +767,7 @@ extern "C" void hvac_agent(void) {
 
    
     // ======= 從 SPIFFS 加載模型 =======
-    if (ewcppoModel.loadModelFromSPIFFS("/spiffs/model.tflite")) {
+    if (ewcppoModel.loadModelFromSPIFFS("/spiffs1/model.tflite")) {
         ESP_LOGI(TAG, "Model loaded successfully");
     } else {
         ESP_LOGE(TAG, "Failed to load model");

@@ -1,6 +1,6 @@
 import tensorflow as tf
 import numpy as np
-#from util_hvac_agent import LifelongPPOBaseAgent
+
 import tensorflow_probability as tfp
 import tensorflow_model_optimization as tfmot
 import zlib
@@ -19,7 +19,8 @@ class ESP32BaseExporter:
         self.model = policy_model
         self.converter = None
 
-    def create_representative_dataset(self, env, num_samples=1000):
+
+    def rand_create_representative_dataset(self, env, num_samples=1000):
         """创建代表性数据集"""
         representative_data = []
         for _ in range(num_samples):
@@ -393,7 +394,7 @@ class TensorFlowESP32Exporter(ESP32BaseExporter):
             'model_data_b64': model_data_b64,
             'fisher_matrix': simplified_fisher,
             'optimal_params': self._prepare_optimal_params(),
-            'crc32': self._calculate_crc(comp['compressed_model']),
+            'crc32': f"{self._calculate_crc(comp['compressed_model'])}",
         }
         return ota_package
 

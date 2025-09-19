@@ -75,9 +75,25 @@ extern "C" {
 //extern const unsigned int lstm_encoder_contrastive_tflite_len;
 
 extern const unsigned char esp32_optimized_model_tflite[];
+//extern const size_t   esp32_optimized_model_tflite_len;
 extern const unsigned char meta_model_tflite[];
+//extern const size_t   meta_model_tflite_len;
+
 extern const unsigned char student_model_tflite[];
-const unsigned char* bin_model_tflite[3] = {esp32_optimized_model_tflite, meta_model_tflite, student_model_tflite};//unsigned char meta_model_tflite[1];
+//extern const size_t    student_model_tflite_len;
+
+const unsigned char* bin_model_tflite[3] = {
+    esp32_optimized_model_tflite, 
+    meta_model_tflite, 
+    student_model_tflite
+};
+// const unsigned int bin_model_tflite_len[3] = {
+//     esp32_optimized_model_tflite_len, 
+//     meta_model_tflite_len, 
+//     student_model_tflite_len
+// };
+
+
 //extern const unsigned char actor_tflite[];
 //extern const unsigned int meta_model_tflite_len;
 const char optimized_model_path[] = "/spiffs1/esp32_optimized_model.tflite" ;
@@ -224,6 +240,7 @@ bool verify_model_integrity(const void* model_data, size_t model_size) {
         if (data[4] == 'T' && data[5] == 'F' && data[6] == 'L' && data[7] == '3') {
             // 验证 TFLite 魔术数字（字节 4-7）
             ESP_LOGI(TAG, "verify model integrity TFLite model header verified");
+            
         } else {
             ESP_LOGW(TAG, "Unknown file format, may not be TFLite");
             return false;
@@ -268,21 +285,20 @@ void parse_model_weights(uint8_t *buffer, size_t size) {
 } 
   
  
-extern bool save_model_to_spiffs(uint8_t type, const char *b64_str, const char *spi_file_name);
+ 
 
-
-bool load_from_spiffs(int type, const char* filename ) {
+bool load_from_spiffs(int type, const char* filename) {
     // 打开文件
     FILE* file = fopen(filename, "rb");
     if (!file) {
-        char *bin_str=(char *)bin_model_tflite[type];
-        save_model_to_spiffs(HTTP_DATA_TYPE_BIN, bin_str, filename);
+        //char *bin_str=(char *)bin_model_tflite[type];
+        //save_model_to_spiffs(bin_model_tflite_len[type], bin_str, filename);
          
-        file = fopen(filename, "rb");    
-        if (!file) {
+        //file = fopen(filename, "rb");    
+        //if (!file) {
             ESP_LOGE(TAG, "Failed to open load_from_spiffs file: %s", filename);
             return false;
-        }
+        //}
     }
 
     // 获取文件大小
@@ -1083,6 +1099,7 @@ void catch_tensor_dim(enum CaseType type) {
     }
     
 }
+extern std::array<int,PORT_CNT> plant_action;
 //u_int8_t get_tensor_state(void);
 esp_err_t  lll_tensor_run(void) 
 {
@@ -1120,9 +1137,10 @@ esp_err_t  lll_tensor_run(void)
         lll_tensor_run_input.is_switch[port] = 1;
     }
     pid_run_output_st out_speed = pid_run_rule( &lll_tensor_run_input );
-    for(int port=1;port<9;port++)
+    for(int port=1;port< PORT_CNT;port++)
     {    
         ml_pid_out_speed.speed[port] += out_speed.speed[port];
+        plant_action[port-1]=ml_pid_out_speed.speed[port];
     }
     
     int ret=load_up_input_seq(classifier_params.infer_case,classifier_params.seq_len); 

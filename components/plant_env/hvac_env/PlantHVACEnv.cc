@@ -5,6 +5,7 @@
 #include <cmath>
 #include <iostream>
 
+#include "ml_pid.h"
 // 构建编码器
 HVACEncoder* build_hvac_encoder(int seq_len, int n_features, int latent_dim) {
     return new HVACEncoder(seq_len, n_features, latent_dim);
@@ -62,9 +63,9 @@ float PlantHVACEnv::get_param(const std::map<std::string,float>& params, const s
     if(def_it != default_params.end()) return def_it->second;
     return 0.0f;
 }
-
+//extern float pid_map(float x, float in_min, float in_max, float out_min, float out_max);
 // ==== Step 函数 ====
-PlantHVACEnv::StepResult PlantHVACEnv::step(const std::array<int,4>& action,
+PlantHVACEnv::StepResult PlantHVACEnv::step(const std::array<int,PORT_CNT>& action,
                                             const std::map<std::string,float>& params)
 {
     StepResult result;
@@ -75,6 +76,10 @@ PlantHVACEnv::StepResult PlantHVACEnv::step(const std::array<int,4>& action,
     int dehumi = action[3];
 
     // --- 环境动力学 ---
+    
+    float light_effect = get_param(params, "light_penalty") * (action[4] == 1 ? 0.1f : 0.0f);
+    float co2_effect = get_param(params, "co2_penalty") * (action[5] == 1 ? 0.1f : 0.0f);
+
     temp += (ac==1 ? -0.5f : 0.2f) + (heat==1 ? 0.5f : 0.0f);
     humid += (humi==1 ? 0.05f : -0.02f) + (heat==1 ? -0.03f : 0.0f) + (dehumi==1 ? -0.05f : 0.0f);
 
@@ -116,15 +121,23 @@ PlantHVACEnv::StepResult PlantHVACEnv::step(const std::array<int,4>& action,
     t++;
     bool done = t>=seq_len;
 
+
+    float v_feed  = pid_map((bp_pid_th.v_feed+vpd_current)/2.0,  c_pid_vpd_min, c_pid_vpd_max, 0, 1);
+    float t_feed  = pid_map((bp_pid_th.t_feed+temp)/2.0,  c_pid_temp_min, c_pid_temp_max, 0, 1);
+    float h_feed  = pid_map((bp_pid_th.h_feed+humid)/2.0,  c_pid_humi_min, c_pid_humi_max, 0, 1);
+    float l_feed  = pid_map((bp_pid_th.l_feed)/1.0,  c_pid_light_min, c_pid_light_max, 0, 1);
+    float c_feed  = pid_map((bp_pid_th.c_feed)/1.0,  c_pid_co2_min, c_pid_co2_max, 0, 1);
     // --- 填充结果 ---
     result.state = _get_state();
     result.reward = reward;
     result.done = done;
     result.latent_soft_label = soft_label;
     result.flower_prob = flower_prob;
-    result.temp = temp;
-    result.humid = humid;
-    result.vpd = vpd_current;
+    result.temp = t_feed;
+    result.humid = h_feed;
+    result.light = l_feed;
+    result.co2 =   c_feed;
+    result.vpd = v_feed;
 
     return result;
 }

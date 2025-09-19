@@ -547,6 +547,7 @@ void plant_env_make_task(void *pvParameters)
 			vTaskDelay(pdMS_TO_TICKS(1000));
 			break;
 		}
+		hvac_agent();
 		vTaskDelay(pdMS_TO_TICKS(10000));
 	} 
 }

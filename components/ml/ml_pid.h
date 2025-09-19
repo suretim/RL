@@ -1,10 +1,6 @@
 #ifndef _ML_PID_H_
 #define _ML_PID_H_
 
-#include "types.h"
-#include "define.h"
-#include "ai.h"
-#include "ai_out.h"
 
 #define NUM_PARTICLES 				24   //9		//20		//20 粒子数量
 #define NUM_GLOBAL					8    //5
@@ -174,6 +170,17 @@ static int iminarg1,iminarg2;
 #define bp_pid_dbg(format, ...)			printf("bp_pid_d "format, ##__VA_ARGS__)
 #define bp_pid_wave(format, ...)		printf("bp_pid_w "format, ##__VA_ARGS__)
 #define c_diff_wc1c2  1
+
+
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include "types.h"
+#include "define.h"
+#include "ai.h"
+#include "ai_out.h"
 typedef struct{
     uint8_t ml_run_sta;
     uint8_t dev_type[PORT_CNT];
@@ -196,7 +203,7 @@ typedef struct{
 extern pid_run_output_st pid_run_rule(pid_run_input_st* input);
 extern struct st_bp_pid_th    bp_pid_th ;
 extern dev_type_t devs_type_list[PORT_CNT]; 
- 
+extern float pid_map(float param1, float param2, float param3, float param4, float param5); 
 // struct st_pos_val_arg
 // {
 // 	float	t_target;
@@ -319,5 +326,14 @@ struct st_bp_pid_th
     //double ienerge[NUM_ENVDEV];
 
 };
+
+
+
+
+#ifdef __cplusplus
+}
+#endif
+
+
 
 #endif
