@@ -3,6 +3,101 @@ import numpy as np
 from util_hvac_agent import ESP32PPOAgent
 from util_env import PlantLLLHVACEnv
 
+class TFLitePPOTrainer:
+    def __init__(self):
+        self.model = self._build_tflite_compatible_model()
+
+    def _build_tflite_compatible_model(self):
+        """构建兼容TFLite的简单模型"""
+        model = tf.keras.Sequential([
+            tf.keras.layers.Dense(8, activation='relu', input_shape=(3,)),
+            tf.keras.layers.Dense(4, activation='sigmoid', name='action_probs')
+        ])
+        return model
+
+    def train(self, experiences):
+        """训练模型"""
+        # 简化训练逻辑
+        states = np.array([exp['state'] for exp in experiences])
+        advantages = np.array([exp['advantage'] for exp in experiences])
+
+        # 这里使用简化训练，实际应该用PPO算法
+        self.model.fit(states, advantages, epochs=10, verbose=0)
+
+    def convert_to_tflite(self, output_path):
+        """转换为TFLite模型"""
+        # 转换模型
+        converter = tf.lite.TFLiteConverter.from_keras_model(self.model)
+        converter.optimizations = [tf.lite.Optimize.DEFAULT]  # 优化模型大小
+        converter.target_spec.supported_ops = [
+            tf.lite.OpsSet.TFLITE_BUILTINS,  # 启用TFLite内置操作
+            tf.lite.OpsSet.SELECT_TF_OPS  # 启用TensorFlow操作
+        ]
+
+        tflite_model = converter.convert()
+
+        # 保存模型
+        with open(output_path, 'wb') as f:
+            f.write(tflite_model)
+
+        print(f"Model converted to TFLite: {output_path}")
+        print(f"Model size: {len(tflite_model)} bytes")
+
+        return tflite_model
+
+    def generate_c_array(self, tflite_model, output_path):
+        """生成C数组格式的模型"""
+        with open(output_path, 'w') as f:
+            f.write('#ifndef MODEL_DATA_H\n')
+            f.write('#define MODEL_DATA_H\n\n')
+            f.write('#include <cstdint>\n\n')
+            f.write(f'const unsigned char g_model[] = {{\n')
+
+            # 每行16个字节
+            for i in range(0, len(tflite_model), 16):
+                line = ', '.join(f'0x{byte:02x}' for byte in tflite_model[i:i + 16])
+                f.write(f'  {line},\n')
+
+            f.write('};\n')
+            f.write(f'const unsigned int g_model_len = {len(tflite_model)};\n')
+            f.write('#endif\n')
+
+        print(f"C array header generated: {output_path}")
+
+
+# 使用示例
+#if __name__ == "__main__":
+#    physical_devices = tf.config.list_physical_devices('GPU')
+#    if physical_devices:
+#        tf.config.experimental.set_memory_growth(physical_devices[0], True)
+#    train_LifelongPPOBaseAgent()
+
+
+
+    # 使用最简单的版本避免tf.function问题
+    # train_ppo_simple()
+    # 配置GPU
+
+    # 使用简化版本的智能体
+    # train_ppo_with_lll()
+    #
+    #    model.save("demo_model.keras")
+
+    '''
+    trainer = TFLitePPOTrainer()
+
+    # 模拟训练数据
+    dummy_experiences = [
+        {'state': [0, 25.0, 0.5], 'advantage': [0.8, 0.2, 0.1, 0.9]},
+        {'state': [1, 30.0, 0.8], 'advantage': [0.1, 0.9, 0.2, 0.8]}
+    ]
+
+    trainer.train(dummy_experiences)
+    tflite_model = trainer.convert_to_tflite('ppo_model.tflite')
+    trainer.generate_c_array(tflite_model, 'model_data.h')
+    '''
+
+
 class LLLTrainer():
     def __init__(self, lll_model=None,  learning_rate=0.001, ewc_lambda=0.4):
         #super().__init__(ewc_lambda)

@@ -7,8 +7,8 @@ import random
 import os
 
 from util_hvac_agent import PPOBuffer
-from util_hvac_agent import PlantHVACEnv,PlantLLLHVACEnv
-from util_hvac_agent import  LifelongESP32PPOAgent
+from util_env import PlantHVACEnv,PlantLLLHVACEnv
+from util_hvac_agent import  ESP32OnlinePPOFisherAgent
 from util_hvac_agent import process_experiences,compute_returns,compute_advantages,collect_experiences
 
 
@@ -483,7 +483,7 @@ def train_ppo_with_lll(state_dim=5, action_dim=4,):
     # 初始化环境和智能体
     env = PlantLLLHVACEnv()
     #agent = SimplePPOAgent(state_dim=3, action_dim=4)  # 使用简化版本
-    agent=LifelongESP32PPOAgent( state_dim=state_dim, action_dim=action_dim)
+    agent=ESP32OnlinePPOFisherAgent( state_dim=state_dim, action_dim=action_dim)
     buffer = PPOBuffer(state_dim=state_dim, action_dim=action_dim, buffer_size=2048)
     batch_size=30
     params = {
@@ -521,7 +521,7 @@ def buffer_train_ppo_with_lll(env=None,agent=None,state_dim=5, action_dim=4):
         env = PlantLLLHVACEnv()
     # agent = SimplePPOAgent(state_dim=3, action_dim=4)  # 使用简化版本
     if agent is None:
-        agent = LifelongESP32PPOAgent(state_dim=state_dim, action_dim=action_dim)
+        agent = ESP32OnlinePPOFisherAgent(state_dim=state_dim, action_dim=action_dim)
 
     params = {
         "energy_penalty": 0.1,
@@ -675,7 +675,7 @@ if __name__ == "__main__":
     if physical_devices:
         tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
-    agent = LifelongESP32PPOAgent(state_dim=5, action_dim=4, hidden_units=8)
+    agent = ESP32OnlinePPOFisherAgent(state_dim=5, action_dim=4, hidden_units=8)
     #agent = LifelongPPOAgent(state_dim=5, action_dim=4)
     trainbytask_lifelong_ppo( agent=agent)
     #buffer_train_ppo_with_lll(agent=agent)
