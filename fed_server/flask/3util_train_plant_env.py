@@ -6,10 +6,10 @@ import random
   
 import os
 
-from util_hvac_agent import PPOBuffer
+from util_agent import PPOBuffer
 from util_env import PlantHVACEnv,PlantLLLHVACEnv
-from util_hvac_agent import  ESP32OnlinePPOFisherAgent
-from util_hvac_agent import process_experiences,compute_returns,compute_advantages,collect_experiences
+from util_agent import  ESP32OnlinePPOFisherAgent
+from util_agent import process_experiences,compute_returns,compute_advantages,collect_experiences
 
 
 
@@ -289,147 +289,6 @@ def train_ppo_with_batching():
         print(f"Episode {episode}, Reward: {episode_reward:.2f}")
 
 
-# 最简单的版本：不使用tf.function
-class SimpleNoTFFunctionPPOAgent:
-    def __init__(self, state_dim, action_dim):
-        self.state_dim = state_dim
-        self.action_dim = action_dim
-        self.actor = self._build_actor()
-        self.critic = self._build_critic()
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.0003)
-
-    def _build_actor(self):
-        return tf.keras.Sequential([
-            tf.keras.layers.Dense(64, activation='relu', input_shape=(self.state_dim,)),
-            tf.keras.layers.Dense(64, activation='relu'),
-            tf.keras.layers.Dense(self.action_dim, activation='sigmoid')
-        ])
-
-    def _build_critic(self):
-        return tf.keras.Sequential([
-            tf.keras.layers.Dense(64, activation='relu', input_shape=(self.state_dim,)),
-            tf.keras.layers.Dense(64, activation='relu'),
-            tf.keras.layers.Dense(1, activation='linear')
-        ])
-
-    def select_action(self, state):
-        state_tensor = tf.convert_to_tensor([state], dtype=tf.float32)
-        action_probs = self.actor(state_tensor, training=False)
-        actions = [1 if np.random.random() < prob else 0 for prob in action_probs[0]]
-        return np.array(actions), action_probs.numpy()[0]
-
-    def get_value(self, state):
-        state_tensor = tf.convert_to_tensor([state], dtype=tf.float32)
-        return self.critic(state_tensor, training=False).numpy()[0, 0]
-
-    def train_step(self, states, actions, advantages, old_probs, returns):
-        """不使用tf.function的简单版本"""
-        with tf.GradientTape() as tape:
-            new_probs = self.actor(states, training=True)
-            new_values = self.critic(states, training=True)
-
-            # 计算损失
-            actions_float = tf.cast(actions, tf.float32)
-            old_action_probs = tf.reduce_sum(old_probs * actions_float + (1 - old_probs) * (1 - actions_float), axis=1)
-            new_action_probs = tf.reduce_sum(new_probs * actions_float + (1 - new_probs) * (1 - actions_float), axis=1)
-
-            ratio = new_action_probs / (old_action_probs + 1e-8)
-            clipped_ratio = tf.clip_by_value(ratio, 0.8, 1.2)
-
-            policy_loss = -tf.reduce_mean(tf.minimum(ratio * advantages, clipped_ratio * advantages))
-            value_loss = tf.reduce_mean(tf.square(returns - tf.squeeze(new_values)))
-            entropy = -tf.reduce_mean(new_probs * tf.math.log(new_probs + 1e-8))
-
-            total_loss = policy_loss + 0.5 * value_loss - 0.01 * entropy
-
-        grads = tape.gradient(total_loss, self.actor.trainable_variables + self.critic.trainable_variables)
-        self.optimizer.apply_gradients(zip(grads, self.actor.trainable_variables + self.critic.trainable_variables))
-
-        return total_loss
-
-
-# 或者使用更简单的方法：创建一个虚拟训练方法
-class SimplePPOAgent:
-    def __init__(self, state_dim, action_dim):
-        self.state_dim = state_dim
-        self.action_dim = action_dim
-
-        # 直接构建模型，不编译（因为我们使用自定义训练）
-        self.actor = self._build_actor()
-        self.critic = self._build_critic()
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.0003)
-
-    def _build_actor(self):
-        inputs = tf.keras.Input(shape=(self.state_dim,))
-        x = tf.keras.layers.Dense(64, activation='relu')(inputs)
-        x = tf.keras.layers.Dense(64, activation='relu')(x)
-        outputs = tf.keras.layers.Dense(self.action_dim, activation='sigmoid')(x)
-        return tf.keras.Model(inputs, outputs)
-
-    def _build_critic(self):
-        inputs = tf.keras.Input(shape=(self.state_dim,))
-        x = tf.keras.layers.Dense(64, activation='relu')(inputs)
-        x = tf.keras.layers.Dense(64, activation='relu')(x)
-        outputs = tf.keras.layers.Dense(1, activation='linear')(x)
-        return tf.keras.Model(inputs, outputs)
-
-    def select_action(self, state):
-        state_tensor = tf.convert_to_tensor([state], dtype=tf.float32)
-        action_probs = self.actor(state_tensor, training=False)
-
-        actions = []
-        for i in range(self.action_dim):
-            prob = action_probs[0, i].numpy()
-            actions.append(1 if np.random.random() < prob else 0)
-
-        return np.array(actions), action_probs.numpy()[0]
-
-    def get_value(self, state):
-        state_tensor = tf.convert_to_tensor([state], dtype=tf.float32)
-        return self.critic(state_tensor, training=False).numpy()[0, 0]
-
-    @tf.function
-    def train_step(self, states, actions, advantages, old_probs, returns):
-        with tf.GradientTape() as tape:
-            # Actor前向传播
-            new_probs = self.actor(states, training=True)
-            new_values = self.critic(states, training=True)
-
-            # 计算损失
-            policy_loss, value_loss, entropy = self._compute_loss(
-                new_probs, new_values, actions, advantages, old_probs, returns
-            )
-
-            total_loss = policy_loss + 0.5 * value_loss - 0.01 * entropy
-
-        grads = tape.gradient(total_loss, self.actor.trainable_variables + self.critic.trainable_variables)
-        self.optimizer.apply_gradients(zip(grads, self.actor.trainable_variables + self.critic.trainable_variables))
-
-        return total_loss
-
-    def _compute_loss(self, new_probs, new_values, actions, advantages, old_probs, returns):
-        actions_float = tf.cast(actions, tf.float32)
-
-        # 概率比
-        old_action_probs = tf.reduce_sum(old_probs * actions_float + (1 - old_probs) * (1 - actions_float), axis=1)
-        new_action_probs = tf.reduce_sum(new_probs * actions_float + (1 - new_probs) * (1 - actions_float), axis=1)
-
-        ratio = new_action_probs / (old_action_probs + 1e-8)
-        clipped_ratio = tf.clip_by_value(ratio, 0.8, 1.2)
-
-        # 策略损失
-        policy_loss = -tf.reduce_mean(tf.minimum(ratio * advantages, clipped_ratio * advantages))
-
-        # 价值损失
-        value_loss = tf.reduce_mean(tf.square(returns - tf.squeeze(new_values)))
-
-        # 熵
-        entropy = -tf.reduce_mean(new_probs * tf.math.log(new_probs + 1e-8))
-
-        return policy_loss, value_loss, entropy
-
-
-
 # 使用示例
 def trainbytask_lifelong_ppo(agent):
     # 创建环境和智能体
@@ -454,8 +313,8 @@ def trainbytask_lifelong_ppo(agent):
         states, actions, advantages, old_probs, returns = process_experiences(agent,experiences)
 
         # 训练多个epoch
-        for epoch in range(10):
-            loss = agent.train_step(states, actions, advantages, old_probs, returns, use_ewc=True)
+        for epoch in range(100):
+            loss = agent.train_ppo_step(states=states, actions=actions, advantages=advantages, old_probs=old_probs, returns=returns, use_ewc=True)
 
         # 保存当前任务知识
         agent.save_task_knowledge((states, actions, advantages, old_probs, returns))

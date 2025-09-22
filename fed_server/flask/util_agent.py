@@ -7,8 +7,8 @@ import datetime
 from collections import deque
 import os
 
-from util_env import PlantLLLHVACEnv, PlantHVACEnv
-
+from util_env import PlantLLLHVACEnv,PlantHVACEnv
+tfd = tfp.distributions
 
 # state_dim = 5  # 健康狀態、溫度、濕度、光照、CO2
 # action_dim = 4  # 4個控制動作
@@ -22,7 +22,7 @@ class PPOBaseAgent:
         self.value_coef = value_coef
         self.entropy_coef = entropy_coef
         self.ewc_lambda = ewc_lambda  # EWC正则化强度
-        self.env = PlantHVACEnv()
+        self.env=PlantHVACEnv()
         # 构建网络
         self.actor = self._build_actor()
         self.critic = self._build_critic()
@@ -41,6 +41,7 @@ class PPOBaseAgent:
             tf.keras.layers.Dense(self.action_dim, activation='sigmoid')
         ])
 
+
     def _build_critic(self):
         return tf.keras.Sequential([
             tf.keras.layers.Dense(64, activation='relu', input_shape=(self.state_dim,)),
@@ -54,12 +55,12 @@ class PPOBaseAgent:
         action = tf.cast(probs > 0.5, tf.float32)  # 二值化动作
         return action.numpy()[0], probs.numpy()[0]
 
-    def get_action(self, state, return_probs=False):
+    def get_action(self, state,return_probs=False):
         """Get action for environment interaction (same as select_action)"""
 
         action, probs = self.select_action(state)
         if return_probs:
-            return action, probs
+            return action,probs
         else:
             return action
 
@@ -72,60 +73,41 @@ class PPOBaseAgent:
         """計算模型參數數量"""
         return sum([tf.keras.backend.count_params(w) for w in model.trainable_weights])
 
-    def _compute_ewc_loss(self):
-        """ EWC(Elastic Weight Consolidation)Regulation Loss"""
-        ewc_loss = 0
-        if not self.fisher_matrices:
-            return ewc_loss
-
-        # 对每个之前学习的任务计算EWC损失
-        for task_id in self.fisher_matrices:
-            fisher_matrix = self.fisher_matrices[task_id]
-            optimal_params = self.optimal_params[task_id]
-
-            current_params = self.actor.trainable_variables + self.critic.trainable_variables
-
-            for i, (current_param, optimal_param, fisher) in enumerate(
-                    zip(current_params, optimal_params, fisher_matrix)):
-                # EWC损失: λ/2 * Σ F_i * (θ_i - θ*_i)^2
-                ewc_loss += tf.reduce_sum(
-                    self.ewc_lambda * 0.5 * fisher * tf.square(current_param - optimal_param)
-                )
-
-        return ewc_loss
-
     def _compute_fisher_matrix(self, experiences):
-        """计算Fisher信息矩阵来衡量参数的重要性"""
+        
         states, actions, _, old_probs, _ = experiences
+        # 确保 states/actions 是 tf.Tensor
+        states = tf.convert_to_tensor(states, dtype=tf.float32)
+        actions = tf.convert_to_tensor(actions, dtype=tf.float32)
 
-        fisher_matrix = []
-        with tf.GradientTape(persistent=True) as tape:
-            # 计算当前策略的概率
-            new_probs = self.actor(states, training=True)
-            actions_float = tf.cast(actions, tf.float32)
-
-            # 计算对数概率
-            new_action_probs = tf.reduce_sum(
-                new_probs * actions_float + (1 - new_probs) * (1 - actions_float), axis=1
-            )
-            log_probs = tf.math.log(new_action_probs + 1e-8)
-
-        # 计算每个参数的Fisher信息
         trainable_vars = self.actor.trainable_variables + self.critic.trainable_variables
-        for var in trainable_vars:
-            gradients = tape.gradient(log_probs, var)
-            if gradients is not None:
-                # Fisher信息 ≈ 梯度的平方
-                fisher_info = tf.reduce_mean(tf.square(gradients))
-                fisher_matrix.append(fisher_info)
-            else:
-                fisher_matrix.append(tf.constant(0.0, dtype=tf.float32))
+        # 初始化 fisher 为与每个 var 同形的 0 张量
+        fisher_accum = [tf.zeros_like(var, dtype=tf.float32) for var in trainable_vars]
+        n = tf.cast(tf.shape(states)[0], tf.float32)
 
-        return fisher_matrix
+        # 逐样本或小 batch 处理以节省内存（这里按整体计算）
+        with tf.GradientTape() as tape:
+            # 计算对数概率：对于独立的 Bernoulli 每维相乘 -> 对数相加
+            new_probs = self.actor(states, training=False)  # shape [B, action_dim]
+            actions_float = tf.cast(actions, tf.float32)
+            single_sample_probs = tf.reduce_sum(new_probs * actions_float + (1. - new_probs) * (1. - actions_float), axis=1)  # [B]
+            log_probs = tf.math.log(single_sample_probs + 1e-8)  # [B]
+            # 为得到标量，求均值
+            logp_mean = tf.reduce_mean(log_probs)
 
+        grads = tape.gradient(logp_mean, trainable_vars)  # grads 与 vars 对应
+        for i, g in enumerate(grads):
+            if g is None:
+                continue
+            # grads 是对均值求导，相当于对每个样本梯度平均，因此 Fisher ≈ E[grad^2]
+            fisher_accum[i] = tf.square(g)  # 与 var 同形
+
+        # 返回 list，元素与 trainable_vars 顺序一致
+        return fisher_accum
+    
+        
     def save_task_knowledge(self, task_experiences):
-        """保存当前任务的知识"""
-        # 保存最优参数
+
         self.optimal_params[self.current_task_id] = [
             tf.identity(var) for var in self.actor.trainable_variables + self.critic.trainable_variables
         ]
@@ -203,7 +185,7 @@ class PPOBaseAgent:
 
         return total_loss
 
-    def train_step(self, states, actions, advantages, old_probs, returns, use_ewc=True):
+    def train_step0(self, states, actions, advantages, old_probs, returns, use_ewc=True):
         """
         增强的训练步骤，兼容 one-hot actions 和单输出 critic
         states: [batch_size, state_dim]
@@ -268,8 +250,8 @@ class PPOBaseAgent:
         returns: (batch_size, action_dim)
         """
         with tf.GradientTape() as tape:
-            new_probs = self.actor(states, training=True)  # (batch_size, action_dim)
-            new_values = self.critic(states, training=True)  # (batch_size, action_dim)
+            new_probs = self.actor(states, training=True)        # (batch_size, action_dim)
+            new_values = self.critic(states, training=True)      # (batch_size, action_dim)
 
             # 选择动作对应概率
             new_action_probs = tf.reduce_sum(new_probs * actions, axis=1)
@@ -280,7 +262,7 @@ class PPOBaseAgent:
             # Advantage 只选择对应动作
             selected_advantages = tf.reduce_sum(advantages * actions, axis=1)
             policy_loss = -tf.reduce_mean(tf.minimum(ratio * selected_advantages,
-                                                     clipped_ratio * selected_advantages))
+                                                    clipped_ratio * selected_advantages))
 
             # Value loss 只选择动作对应列
             selected_values = tf.reduce_sum(new_values * actions, axis=1)
@@ -298,26 +280,44 @@ class PPOBaseAgent:
         return total_loss, policy_loss, value_loss, entropy, ewc_loss
 
     def test_task_performance(self, env, task_id=None):
-        """测试在特定任务上的性能"""
-        state = env.reset()
-        total_reward = 0
-        done = False
+            """测试在特定任务上的性能"""
+            state = env.reset()
+            total_reward = 0
+            done = False
 
-        while not done:
-            action, _ = self.select_action(state)
-            next_state, reward, done, _ = env.step(action)
-            total_reward += reward
-            state = next_state
+            while not done:
+                action, _ = self.select_action(state)
+                next_state, reward, done, _ = env.step(action)
+                total_reward += reward
+                state = next_state
 
-        return total_reward
+            return total_reward
 
+    def _compute_ewc_loss(self):
+        ewc_loss = 0.0
+        if not self.fisher_matrices:
+            return tf.constant(0.0, dtype=tf.float32)
+
+        current_params = self.actor.trainable_variables + self.critic.trainable_variables
+
+        for task_id in self.fisher_matrices:
+            fisher_list = self.fisher_matrices[task_id]  # list of tensors (same order)
+            optimal_params = self.optimal_params[task_id]  # list of numpy arrays or tensors
+
+            for var, opt_param, fisher in zip(current_params, optimal_params, fisher_list):
+                # 确保 opt_param/fisher 为 tf.Tensor
+                opt_t = tf.convert_to_tensor(opt_param, dtype=tf.float32)
+                fisher_t = tf.convert_to_tensor(fisher, dtype=tf.float32)
+                ewc_loss += 0.5 * self.ewc_lambda * tf.reduce_sum(fisher_t * tf.square(var - opt_t))
+
+        return ewc_loss
 
 class ESP32PPOAgent(PPOBaseAgent):
     """專為ESP32設計的輕量級PPO代理,繼承自LifelongPPOAgent"""
 
     def __init__(self, state_dim=5, action_dim=4,
                  clip_epsilon=0.2, value_coef=0.5, entropy_coef=0.01,
-                 ewc_lambda=500, memory_size=1000, hidden_units=8):
+                 ewc_lambda=0.4, memory_size=1000, hidden_units=8,is_discrete=False):
         """
         初始化ESP32專用代理
 
@@ -326,7 +326,10 @@ class ESP32PPOAgent(PPOBaseAgent):
         """
         super().__init__(state_dim, action_dim, clip_epsilon, value_coef,
                          entropy_coef, ewc_lambda, memory_size)
-
+        self.fisher_matrix = None
+        self.optimal_params = None
+        self.old_policy_params=None
+        self.ewc_lambda = ewc_lambda
         self.hidden_units = hidden_units
         self._tflite_models = {}
 
@@ -336,8 +339,9 @@ class ESP32PPOAgent(PPOBaseAgent):
 
         # 使用更小的學習率
         self.optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
-
+        self.is_discrete=is_discrete
         print(f"ESP32代理初始化完成: {hidden_units}隱藏單元")
+
 
     def _build_esp32_actor(self):
         """構建適合ESP32的輕量級Actor網絡"""
@@ -465,6 +469,7 @@ class ESP32PPOAgent(PPOBaseAgent):
 
         return size_info
 
+    
     def predict_with_tflite(self, state, model_type='actor'):
         """使用TFLite模型進行預測"""
         if model_type not in self._tflite_models:
@@ -704,16 +709,7 @@ void loop() {
 
         print("無法壓縮到目標大小")
         return False
-
-
-class ESP32PPOFisherAgent(PPOBaseAgent):
-    def __init__(self, state_dim=5, action_dim=4, hidden_units=8, ewc_lambda=0.4):
-
-        super().__init__(state_dim, action_dim, hidden_units)
-        self.ewc_lambda = ewc_lambda
-        self.fisher_matrix = None
-        self.optimal_params = None
-
+ 
     def compute_fisher_matrix(self, dataset: np.ndarray):
         """計算 Fisher 矩陣"""
         fisher = {}
@@ -748,36 +744,129 @@ class ESP32PPOFisherAgent(PPOBaseAgent):
     def save_fisher_and_params(self, path: str):
         np.savez_compressed(
             path,
-            fisher={k: v for k, v in self.fisher_matrix.items()},
-            optimal={k: v for k, v in self.optimal_params.items()}
+            fisher={k: v for k,v in self.fisher_matrix.items()},
+            optimal={k: v for k,v in self.optimal_params.items()}
         )
         print(f"  Fisher matrix & optimal params saved to {path}")
+
+    def policy(self, states):
+        hidden = self.actor(states)
+
+        if self.is_discrete:
+            return self.logits_layer(hidden)
+        else:
+            mean = self.actor(states)   # 直接取输出
+            log_std = self.log_std          # 可训练参数
+            std = tf.exp(log_std)
+            return mean, std
+
+    def ewc_loss(self):
+        # 保存策略网络的参数
+        # 初始化 optimal_params，确保它是 tf.Tensor 类型
+        if self.optimal_params is None:
+            self.optimal_params = [tf.Variable(param) for param in self.policy_params]
+
+        # 将 optimal_params 转换为 tf.Variable 类型
+        self.old_policy_params = [tf.Variable(param) for param in self.optimal_params]
+        ewc_loss = 0
+        for param, old_param, fisher_matrix in zip(self.optimal_params, self.old_policy_params, self.fisher_matrices):
+            ewc_loss += tf.reduce_sum(fisher_matrix * (param - old_param) ** 2)
+        return self.ewc_lambda * ewc_loss
+
+
+
+    def train_ppo_step(self, states, actions, advantages, old_probs, returns,clip_ratio=0.1, use_ewc=False):
+        """执行一次 PPO 更新"""
+        states = tf.convert_to_tensor(states, dtype=tf.float32)
+        actions = tf.convert_to_tensor(actions, dtype=tf.float32 if not self.is_discrete else tf.int32)
+        advantages = tf.convert_to_tensor(advantages, dtype=tf.float32)
+        old_probs = tf.convert_to_tensor(old_probs, dtype=tf.float32)
+        returns = tf.convert_to_tensor(returns, dtype=tf.float32)
+
+        with tf.GradientTape() as tape:
+            if self.is_discrete:
+                logits = self.policy(states)
+
+                if self.action_dim == 1:
+                    dist = tfp.distributions.Bernoulli(logits=logits)
+                else:
+                    dist = tfp.distributions.Categorical(logits=logits)
+                log_probs = dist.log_prob(actions)
+            else:
+                mean, log_std = self.policy(states)
+                std = tf.exp(log_std)
+                dist = tfp.distributions.Normal(mean, std)
+                log_probs = tf.reduce_sum(dist.log_prob(actions), axis=-1)
+            log_probs = tf.expand_dims(log_probs, axis=-1)
+            log_probs = tf.tile(log_probs, [1, 4])
+            old_probs = tf.squeeze(old_probs, axis=1)
+            ratio = tf.exp(log_probs - old_probs+ 1e-8)
+            surrogate1 = ratio * advantages
+            surrogate2 = tf.clip_by_value(ratio, 1.0 -  clip_ratio, 1.0 + clip_ratio) * advantages
+            policy_loss = -tf.reduce_mean(tf.minimum(surrogate1, surrogate2))
+
+            # Value loss
+            values = self.value_net(states)
+            value_loss = tf.reduce_mean((returns - tf.squeeze(values))**2)
+
+            # 总损失
+            loss = policy_loss + self.value_coef * value_loss - self.entropy_coef * tf.reduce_mean(dist.entropy())
+
+            if use_ewc:
+                loss += self._compute_ewc_loss()
+
+        grads = tape.gradient(loss, self.policy_params + self.value_params)
+        self.optimizer.apply_gradients(zip(grads, self.policy_params + self.value_params))
+
+        return loss
 
 
 class ESP32OnlinePPOFisherAgent(ESP32PPOAgent):
     """專為ESP32設計的輕量級PPO代理，支持 online EWC 和 TFLite 導出"""
 
-    def __init__(self, fisher_matrix=None, optimal_params=None, state_dim=5, action_dim=4,
+    def __init__(self,fisher_matrix=None, optimal_params=None, state_dim=5, action_dim=4,
                  clip_epsilon=0.2, value_coef=0.5, entropy_coef=0.01,
-                 ewc_lambda=500, memory_size=1000, hidden_units=8):
+                 ewc_lambda=500, memory_size=1000, hidden_units=8,  
+                 clip_ratio=0.2, actor_lr=1e-3, critic_lr=1e-3,is_discrete =False,
+                 gamma=0.99, lam=0.95):
         super().__init__(state_dim, action_dim, clip_epsilon, value_coef,
-                         entropy_coef, ewc_lambda, memory_size)
+                         entropy_coef, ewc_lambda, memory_size,is_discrete)
 
         self.hidden_units = hidden_units
         self._tflite_models = {}
         self.actor = self._build_esp32_actor()
         self.critic = self._build_esp32_critic()
         self.optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
+        self.value_net=self.critic
 
+
+        self.logits_layer = self.actor.layers[-1]
+        self.log_std = tf.Variable(initial_value=-0.5, trainable=True, dtype=tf.float32)
+        self.policy_params = self.actor.trainable_variables
+        self.value_params = self.critic.trainable_variables
         # EWC online
         self.online_fisher = fisher_matrix
         self.optimal_params = optimal_params
         self.ema_decay = 0.99
         self.fisher_update_frequency = 1
         self.update_counter = 0
+        self.state_dim = state_dim
+        self.action_dim = action_dim
 
+
+        self.log_std = tf.Variable(initial_value=-0.5 * tf.ones(action_dim), trainable=True)
+ 
+        self.clip_ratio = clip_ratio
+        self.gamma = gamma
+        self.lam = lam
+
+        self.actor_opt = tf.keras.optimizers.Adam(actor_lr)
+        self.critic_opt = tf.keras.optimizers.Adam(critic_lr)
+        self.is_discrete =is_discrete
         print(f"ESP32代理初始化完成: {hidden_units}隱藏單元")
 
+    def sigmoid(self,x):
+        return 1.0 / (1.0 + tf.exp(-x))
     def _build_esp32_actor(self):
         return tf.keras.Sequential([
             tf.keras.layers.Dense(self.hidden_units, activation='relu', input_shape=(self.state_dim,)),
@@ -790,15 +879,178 @@ class ESP32OnlinePPOFisherAgent(ESP32PPOAgent):
             tf.keras.layers.Dense(1, activation='linear')
         ], name='esp32_critic')
 
-    # ------------------ 新增 policy 方法 ------------------
-    def policy(self, obs):
-        """
-        返回動作分佈 (Bernoulli) 供 PPO loss 計算
-        obs: tf.Tensor, shape (batch_size, state_dim)
-        """
-        logits = self.actor(obs)
-        return tfp.Bernoulli(probs=logits)
+       
+    # ================= 收集一条 trajectory =================
+    def collect_trajectory(self, env, max_steps=200):
+        states, actions, rewards, log_probs, values = [], [], [], [], []
 
+        state, _ = env.reset()
+        for _ in range(max_steps):
+            action, log_prob = self.get_action(state)
+            next_state, reward, done, _, _ = env.step(action)
+
+            states.append(state)
+            actions.append(action)
+            rewards.append(reward)
+            log_probs.append(log_prob)
+            values.append(self.critic(np.expand_dims(state, 0)).numpy()[0, 0])
+
+            state = next_state
+            if done:
+                break
+
+        # 最后状态的 V(s_T) 作为 bootstrap
+        last_value = self.critic(np.expand_dims(state, 0)).numpy()[0, 0]
+        values.append(last_value)
+
+        return np.array(states, dtype=np.float32), \
+               np.array(actions, dtype=np.float32), \
+               np.array(rewards, dtype=np.float32), \
+               np.array(log_probs, dtype=np.float32), \
+               np.array(values, dtype=np.float32)
+
+    # ================= 批量收集多条 trajectory =================
+    def collect_trajectories(self, env, num_episodes=10, max_steps=200):
+        all_states, all_actions, all_rewards, all_log_probs, all_values = [], [], [], [], []
+
+        for _ in range(num_episodes):
+            states, actions, rewards, log_probs, values = self.collect_trajectory(env, max_steps)
+            all_states.append(states)
+            all_actions.append(actions)
+            all_rewards.append(rewards)
+            all_log_probs.append(log_probs)
+            all_values.append(values)
+
+        return all_states, all_actions, all_rewards, all_log_probs, all_values
+
+    # ================= GAE 优势函数计算 =================
+    def compute_gae(rewards, values, dones, gamma=0.99, lam=0.95):
+        adv = np.zeros_like(rewards, dtype=np.float32)
+        gae = 0
+        for t in reversed(range(len(rewards))):
+            delta = rewards[t] + gamma * (1 - dones[t]) * values[t+1] - values[t]
+            gae = delta + gamma * lam * (1 - dones[t]) * gae
+            adv[t] = gae
+        returns = adv + values[:-1]
+        return adv, returns
+
+    def reset_buffer(self):
+        """清空经验缓存"""
+        self.states = []
+        self.actions = []
+        self.rewards = []
+        self.action_probs = []
+        self.next_states = []
+        self.dones = []
+    
+    def store_transition(self, state, action, reward, action_prob, next_state=None, done=False):
+        """存一条经验"""
+        self.states.append(np.array(state, copy=False))
+        self.actions.append(np.array(action, copy=False))
+        self.rewards.append(reward)
+        self.action_probs.append(action_prob)
+        self.next_states.append(np.array(next_state if next_state is not None else state, copy=False))
+        self.dones.append(done)
+    
+    def get_buffer(self):
+        """返回 numpy 格式的 batch"""
+        return (
+            np.array(self.states, dtype=np.float32),
+            np.array(self.actions),
+            np.array(self.rewards, dtype=np.float32),
+            np.array(self.action_probs, dtype=np.float32),
+            np.array(self.next_states, dtype=np.float32),
+            np.array(self.dones, dtype=np.bool_)
+        )
+    
+    
+
+    
+    def get_action(self, state):
+        """根据策略网络选择动作"""
+        state = np.expand_dims(state, axis=0).astype(np.float32)
+
+        if self.is_discrete:
+            logits = self.policy(state)   # [batch, action_dim]
+            dist = tfp.distributions.Categorical(logits=logits)
+            action = dist.sample()[0].numpy()
+            action_prob = dist.prob(action).numpy()
+            return action, action_prob
+        else:
+            mean, log_std = self.policy(state)
+            dist = tfp.distributions.Normal(loc=mean, scale=tf.exp(log_std))
+            action = dist.sample()[0].numpy()
+            action_prob = dist.prob(action).numpy()
+            return action, action_prob
+    
+
+
+    # ========== train_step ==========
+    def train_buffer_step(self, use_ewc=True):
+        states, actions, rewards, old_probs, next_states, dones = self.get_buffer()
+        if len(states) == 0:
+            return 0.0
+
+        # === 计算 returns 和 advantages ===
+        values = self.critic(states).numpy().squeeze()
+        next_values = self.critic(next_states).numpy().squeeze()
+        deltas = rewards + self.gamma * next_values * (1 - dones) - values
+
+        advantages = []
+        adv = 0.0
+        for delta, done in zip(deltas[::-1], dones[::-1]):
+            adv = delta + self.gamma * self.lam * adv * (1 - done)
+            advantages.insert(0, adv)
+        advantages = np.array(advantages, dtype=np.float32)
+        returns = advantages + values
+
+        # === TensorFlow 训练 ===
+        with tf.GradientTape() as tape:
+            # 策略分布
+            logits = self.actor(states)
+
+            if self.is_discrete:
+                dist = tfp.distributions.Categorical(logits=logits)
+                log_probs = dist.log_prob(actions)
+                entropy = dist.entropy()
+            else:
+                mean = logits
+                log_std = tf.zeros_like(mean)  # 简化: 固定 std
+                dist = tfp.distributions.Normal(loc=mean, scale=tf.exp(log_std))
+                log_probs = tf.reduce_sum(dist.log_prob(actions), axis=1)
+                entropy = tf.reduce_sum(dist.entropy(), axis=1)
+
+            # old log probs
+            old_log_probs = np.log(old_probs + 1e-8)
+
+            # 比率
+            ratio = tf.exp(log_probs - old_log_probs)
+
+            # surrogate loss
+            surr1 = ratio * advantages
+            surr2 = tf.clip_by_value(ratio, 1 - self.clip_ratio, 1 + self.clip_ratio) * advantages
+            actor_loss = -tf.reduce_mean(tf.minimum(surr1, surr2))
+
+            # critic loss
+            values_pred = self.critic(states)
+            critic_loss = tf.reduce_mean(tf.square(returns - values_pred))
+
+            # 总 loss
+            loss = actor_loss + self.vf_coef * critic_loss - self.ent_coef * tf.reduce_mean(entropy)
+
+        # === 更新参数 ===
+        grads = tape.gradient(loss, self.actor.trainable_variables + self.critic.trainable_variables)
+        self.optimizer.apply_gradients(zip(grads, self.actor.trainable_variables + self.critic.trainable_variables))
+
+        print(f"[Train] Loss={loss.numpy():.4f}, Actor={actor_loss.numpy():.4f}, Critic={critic_loss.numpy():.4f}")
+
+        # 清空缓存
+        self.reset_buffer()
+        return loss.numpy()
+    
+    
+    
+    
     # ------------------ EWC online 更新 ------------------
     def update_online_fisher(self, obs: tf.Tensor, action: tf.Tensor):
         self.update_counter += 1
@@ -861,7 +1113,7 @@ class ESP32OnlinePPOFisherAgent(ESP32PPOAgent):
 
         # 更新 online Fisher
         for i in range(obs_batch.shape[0]):
-            self.update_online_fisher(obs_batch[i:i + 1], action_batch[i:i + 1])
+            self.update_online_fisher(obs_batch[i:i+1], action_batch[i:i+1])
 
         return {
             'total_loss': total_loss.numpy(),
@@ -871,50 +1123,7 @@ class ESP32OnlinePPOFisherAgent(ESP32PPOAgent):
             'ewc_loss': ewc_loss.numpy()
         }
 
-    '''
-    class LifelongPPOAgent(LifelongPPOBaseAgent):
-        def __init__(self, state_dim=5, action_dim=4):
-            super().__init__(state_dim=state_dim, action_dim=action_dim)
-            self.state_dim = state_dim
-            self.action_dim = action_dim
-            self.policy = self._build_policy_network()
-
-    '''
-
-    def train_step(self, states, actions, advantages, old_probs, returns, use_ewc=True):
-        """Training step using PPO"""
-        with tf.GradientTape() as tape:
-            # Get the new policy outputs
-            mean, log_std = self.policy(states)
-            std = tf.exp(log_std)
-            dist = tfp.distributions.Normal(mean, std)
-
-            # Calculate log probabilities of taken actions
-            new_probs = dist.log_prob(actions)
-            old_probs = tf.convert_to_tensor(old_probs, dtype=tf.float32)
-
-            # Calculate the ratio (for clipping)
-            ratio = tf.exp(new_probs - old_probs)
-
-            # PPO objective (with clipping)
-            clip_ratio = 0.2
-            clipped_ratio = tf.clip_by_value(ratio, 1 - clip_ratio, 1 + clip_ratio)
-            policy_loss = -tf.reduce_mean(tf.minimum(ratio * advantages, clipped_ratio * advantages))
-
-            # Value loss (if applicable, you can add a value network)
-            # value_loss = tf.reduce_mean((returns - value_preds)**2)
-
-            # Total loss (if you include value loss and entropy)
-            entropy_bonus = tf.reduce_mean(dist.entropy())
-            total_loss = policy_loss - 0.01 * entropy_bonus  # Regularization via entropy
-
-            # Apply gradients
-            gradients = tape.gradient(total_loss, self.policy.trainable_variables)
-            optimizer = tf.keras.optimizers.Adam(learning_rate=3e-4)
-            optimizer.apply_gradients(zip(gradients, self.policy.trainable_variables))
-
-        return total_loss
-
+ 
     def _build_policy_network(self):
         """Build the policy network"""
         inputs = tf.keras.layers.Input(shape=(self.state_dim,))
@@ -927,8 +1136,7 @@ class ESP32OnlinePPOFisherAgent(ESP32PPOAgent):
 
         return tf.keras.Model(inputs=inputs, outputs=[mean, log_std])
 
-
-
+    
     def learn(self, states, actions, advantages, old_probs, returns, use_ewc=True, total_timesteps=1000000):
         """Simulated training process"""
         print(f"Training for {total_timesteps} timesteps...")
@@ -939,17 +1147,18 @@ class ESP32OnlinePPOFisherAgent(ESP32PPOAgent):
                 print(f"Step {i * 1000}/{total_timesteps}")
 
 
-def process_experiences(agent, experiences, gamma=0.99, gae_lambda=0.95):
+
+def process_experiences(agent,experiences, gamma=0.99, gae_lambda=0.95):
     """
     处理经验并计算advantages和returns
     """
     # 提取数据
-    # states = [exp[0] for exp in experiences]
-    # actions = [exp[1] for exp in experiences]
-    # rewards = [exp[2] for exp in experiences]
-    # next_states = [exp[3] for exp in experiences]
-    # dones = [exp[4] for exp in experiences]
-    # old_probs = [exp[5] for exp in experiences]
+    #states = [exp[0] for exp in experiences]
+    #actions = [exp[1] for exp in experiences]
+    #rewards = [exp[2] for exp in experiences]
+    #next_states = [exp[3] for exp in experiences]
+    #dones = [exp[4] for exp in experiences]
+    #old_probs = [exp[5] for exp in experiences]
     states = [exp["state"] for exp in experiences]
     actions = [exp["action"] for exp in experiences]
     rewards = [exp["reward"] for exp in experiences]
@@ -976,7 +1185,6 @@ def process_experiences(agent, experiences, gamma=0.99, gae_lambda=0.95):
 
     return states, actions, advantages, old_probs, returns
 
-
 def compute_returns(rewards, dones, gamma=0.99):
     """计算折扣回报"""
     returns = []
@@ -988,7 +1196,6 @@ def compute_returns(rewards, dones, gamma=0.99):
             R = reward + gamma * R
         returns.insert(0, R)
     return tf.convert_to_tensor(returns, dtype=tf.float32)
-
 
 def compute_advantages(rewards, values, next_values, dones, gamma=0.99, gae_lambda=0.95):
     """
@@ -1021,7 +1228,6 @@ def compute_advantages(rewards, values, next_values, dones, gamma=0.99, gae_lamb
         advantages.insert(0, advantage)  # 插入到开头
 
     return tf.convert_to_tensor(advantages, dtype=tf.float32)
-
 
 def collect_experiences(agent, env, num_episodes=100, max_steps_per_episode=None):
     """
@@ -1059,7 +1265,7 @@ def collect_experiences(agent, env, num_episodes=100, max_steps_per_episode=None
 
         while not done and step < max_steps_per_episode:
             # 智能体选择动作
-            # action = agent.get_action(state)
+            #action = agent.get_action(state)
             action, old_prob = agent.get_action(state )
 
             # 在环境中执行动作
@@ -1217,94 +1423,3 @@ class PPOBuffer:
         self.ptr = 0
         self.num_samples = 0
 
-
-class TFLitePPOTrainer:
-    def __init__(self):
-        self.model = self._build_tflite_compatible_model()
-
-    def _build_tflite_compatible_model(self):
-        """构建兼容TFLite的简单模型"""
-        model = tf.keras.Sequential([
-            tf.keras.layers.Dense(8, activation='relu', input_shape=(3,)),
-            tf.keras.layers.Dense(4, activation='sigmoid', name='action_probs')
-        ])
-        return model
-
-    def train(self, experiences):
-        """训练模型"""
-        # 简化训练逻辑
-        states = np.array([exp['state'] for exp in experiences])
-        advantages = np.array([exp['advantage'] for exp in experiences])
-
-        # 这里使用简化训练，实际应该用PPO算法
-        self.model.fit(states, advantages, epochs=10, verbose=0)
-
-    def convert_to_tflite(self, output_path):
-        """转换为TFLite模型"""
-        # 转换模型
-        converter = tf.lite.TFLiteConverter.from_keras_model(self.model)
-        converter.optimizations = [tf.lite.Optimize.DEFAULT]  # 优化模型大小
-        converter.target_spec.supported_ops = [
-            tf.lite.OpsSet.TFLITE_BUILTINS,  # 启用TFLite内置操作
-            tf.lite.OpsSet.SELECT_TF_OPS  # 启用TensorFlow操作
-        ]
-
-        tflite_model = converter.convert()
-
-        # 保存模型
-        with open(output_path, 'wb') as f:
-            f.write(tflite_model)
-
-        print(f"Model converted to TFLite: {output_path}")
-        print(f"Model size: {len(tflite_model)} bytes")
-
-        return tflite_model
-
-    def generate_c_array(self, tflite_model, output_path):
-        """生成C数组格式的模型"""
-        with open(output_path, 'w') as f:
-            f.write('#ifndef MODEL_DATA_H\n')
-            f.write('#define MODEL_DATA_H\n\n')
-            f.write('#include <cstdint>\n\n')
-            f.write(f'const unsigned char g_model[] = {{\n')
-
-            # 每行16个字节
-            for i in range(0, len(tflite_model), 16):
-                line = ', '.join(f'0x{byte:02x}' for byte in tflite_model[i:i + 16])
-                f.write(f'  {line},\n')
-
-            f.write('};\n')
-            f.write(f'const unsigned int g_model_len = {len(tflite_model)};\n')
-            f.write('#endif\n')
-
-        print(f"C array header generated: {output_path}")
-
-    # 使用示例
-    # if __name__ == "__main__":
-    #    physical_devices = tf.config.list_physical_devices('GPU')
-    #    if physical_devices:
-    #        tf.config.experimental.set_memory_growth(physical_devices[0], True)
-    #    train_LifelongPPOBaseAgent()
-
-    # 使用最简单的版本避免tf.function问题
-    # train_ppo_simple()
-    # 配置GPU
-
-    # 使用简化版本的智能体
-    # train_ppo_with_lll()
-    #
-    #    model.save("demo_model.keras")
-
-    '''
-    trainer = TFLitePPOTrainer()
-
-    # 模拟训练数据
-    dummy_experiences = [
-        {'state': [0, 25.0, 0.5], 'advantage': [0.8, 0.2, 0.1, 0.9]},
-        {'state': [1, 30.0, 0.8], 'advantage': [0.1, 0.9, 0.2, 0.8]}
-    ]
-
-    trainer.train(dummy_experiences)
-    tflite_model = trainer.convert_to_tflite('ppo_model.tflite')
-    trainer.generate_c_array(tflite_model, 'model_data.h')
-    '''

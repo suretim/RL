@@ -54,7 +54,7 @@ class LifelongPPOAgent:
     def get_action(self, state):
         """Get action for environment interaction (same as select_action)"""
         action, probs = self.select_action(state)
-        return action
+        return action, probs
 
     def _compute_ewc_loss(self):
         """计算EWC（Elastic Weight Consolidation）正则化损失"""

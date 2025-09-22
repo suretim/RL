@@ -11,7 +11,7 @@ def create_representative_dataset_from_ESP32BaseExporter(policy, env, num_sample
     agent=ESP32OnlinePPOFisherAgent()
     exporter = TensorFlowESP32Exporter(policy)
 
-    return create_representative_dataset(env,agent.policy, num_samples)
+    return create_representative_dataset(env,agent, num_samples)
 
 def create_representative_dataset(self, env,  num_samples=1000, steps=10, policy_net=None):
     """创建代表性数据集，基于当前状态选择动作"""
