@@ -13,7 +13,7 @@ from typing import Dict, Any, Optional, Union
 
 # 你專案內的類（保持不動，假設存在）
 from util_exporter import TensorFlowESP32Exporter
-from util_hvac_agent import ESP32OnlinePPOFisherAgent,ESP32PPOFisherAgent
+from util_agent import ESP32OnlinePPOFisherAgent
 from util_env import PlantLLLHVACEnv
 
 MODEL_DIR = "./models"
@@ -378,7 +378,7 @@ if __name__ == "__main__":
     # 确保形状匹配（如果需要序列数据）
     if len(representative_data.shape) == 2:
         representative_data = representative_data.reshape(-1, 1, 5)
-    agent = ESP32PPOFisherAgent(state_dim=env.n_features, action_dim=action_dim, hidden_units=8)
+    agent = ESP32OnlinePPOFisherAgent(state_dim=env.n_features, action_dim=action_dim, hidden_units=8)
 
     agent.compute_fisher_matrix(representative_data)
     # 保存 Fisher & Optimal Params

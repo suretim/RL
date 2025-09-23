@@ -759,15 +759,15 @@ extern "C" void wifi_put_package(int type ) {
     return   ;
 }
 
- 
+extern float* load_float_bin(const char* path, size_t &length) ; 
 //load model.tflite  
 extern "C" void hvac_agent(void) {
      
     vTaskDelay(pdMS_TO_TICKS(5000)); // 等 WiFi 連線
 
-   
+    float *buf=load_float_bin("/spiffs1/ppo_model.bin");
     // ======= 從 SPIFFS 加載模型 =======
-    if (ewcppoModel.loadModelFromSPIFFS("/spiffs1/model.tflite")) {
+    if (buff!=nullptr) {
         ESP_LOGI(TAG, "Model loaded successfully");
     } else {
         ESP_LOGE(TAG, "Failed to load model");
@@ -842,7 +842,7 @@ extern "C" pid_run_output_st nn_ppo_infer(void) {
 
     // 初始化 PPO 推理网络
     NN  ppoNN(5, 32, 4);  // state_dim=5, hidden=32, action_dim=4
-    if (ppoNN.loadWeights("/spiffs1/model.bin")==false) {
+    if (ppoNN.loadWeights("/spiffs1/ppo_model.bin")==false) {
         ESP_LOGI(TAG, "Failed to load weights\n");
         output_speed.speed[0] =11;
         return output_speed;

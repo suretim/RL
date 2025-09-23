@@ -36,45 +36,7 @@ public:
         network.loadWeights(weights);  // NN 类需要有 loadWeights 方法
     } 
 
-    
-    bool downloadModel(const char* url, const char* save_path) {
-        esp_http_client_config_t config = {};
-        config.url = url;
-        config.method = HTTP_METHOD_GET;
-
-        esp_http_client_handle_t client = esp_http_client_init(&config);
-        if (esp_http_client_perform(client) != ESP_OK) {
-            ESP_LOGE("OTA", "HTTP request failed");
-            esp_http_client_cleanup(client);
-            return false;
-        }
-
-        int content_length = esp_http_client_fetch_headers(client);
-        if (content_length <= 0) {
-            ESP_LOGE("OTA", "Invalid content length");
-            esp_http_client_cleanup(client);
-            return false;
-        }
-
-        FILE* f = fopen(save_path, "wb");
-        if (!f) {
-            ESP_LOGE("OTA", "Failed to open file for writing");
-            esp_http_client_cleanup(client);
-            return false;
-        }
-
-        char buffer[1024];
-        int read_len = 0;
-        while ((read_len = esp_http_client_read(client, buffer, sizeof(buffer))) > 0) {
-            fwrite(buffer, 1, read_len, f);
-        }
-        fclose(f);
-        esp_http_client_cleanup(client);
-        ESP_LOGI("OTA", "Download finished: %s", save_path);
-        return true;
-    }
-
-        // ==================== 從 OTA 數據加載模型 ====================
+       // ==================== 從 OTA 數據加載模型 ====================
     bool loadModel(const uint8_t* otaData, size_t dataSize) {
         // TODO: 解析 OTA 包格式（可用 msgpack/自定義二進制）
         //loadWeightsToNetwork(actor_network, otaData);
@@ -88,24 +50,7 @@ public:
 
         return true;
     }
-
-    // ==================== 從 SPIFFS 加載模型 ====================
-    bool loadModelFromSPIFFS(const char* path) {
-        FILE* f = fopen(path, "rb");
-        if (!f) {
-            return false;
-        }
-
-        fseek(f, 0, SEEK_END);
-        size_t dataSize = ftell(f);
-        rewind(f);
-
-        std::vector<uint8_t> buffer(dataSize);
-        fread(buffer.data(), 1, dataSize, f);
-        fclose(f);
-
-        return loadModel(buffer.data(), dataSize);
-    }
+ 
 
     // ==================== 推理 ====================
     std::vector<float> predict(const std::vector<float>& observation) {

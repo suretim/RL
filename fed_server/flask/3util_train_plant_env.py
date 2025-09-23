@@ -9,7 +9,7 @@ import os
 from util_agent import PPOBuffer
 from util_env import PlantHVACEnv,PlantLLLHVACEnv
 from util_agent import  ESP32OnlinePPOFisherAgent
-from util_agent import process_experiences,compute_returns,compute_advantages,collect_experiences
+#from util_agent import process_experiences,compute_returns,compute_advantages,collect_experiences
 
 
 
@@ -306,16 +306,16 @@ def trainbytask_lifelong_ppo(agent):
     for task_id, env in enumerate(tasks):
         print(f"开始学习任务 {task_id}...")
         # 收集经验
-        experiences = collect_experiences(agent, env, num_episodes=10)
+        experiences = agent.collect_experiences(agent, env, num_episodes=10)
 
         # 分析收集到的经验
         print(f"总共收集了 {len(experiences)} 条经验")
-        states, actions, advantages, old_probs, returns = process_experiences(agent,experiences)
+        states, actions, advantages, old_probs, returns = agent.process_experiences(agent,experiences)
 
         # 训练多个epoch
         for epoch in range(100):
             loss = agent.train_ppo_step(states=states, actions=actions, advantages=advantages, old_probs=old_probs, returns=returns, use_ewc=True)
-
+            print(f" epoch {epoch} loss={loss.numpy():.4f}")
         # 保存当前任务知识
         agent.save_task_knowledge((states, actions, advantages, old_probs, returns))
 
@@ -368,8 +368,8 @@ def train_ppo_with_lll(state_dim=5, action_dim=4,):
             state = next_state
         # 每隔一段时间或积累足够经验后，进行批量训练
         if len(experiences) >= batch_size:
-            states, actions, advantages, old_probs, returns=process_experiences(agent, experiences, gamma=0.99, gae_lambda=0.95)
-            total_loss+=agent.train_step(states, actions, advantages, old_probs, returns)
+            states, actions, advantages, old_probs, returns=agent.process_experiences(agent, experiences, gamma=0.99, gae_lambda=0.95)
+            total_loss+=agent.train_ppo_step(states, actions, advantages, old_probs, returns)
             # 清空经验缓冲区
             experiences = []
 
@@ -544,19 +544,9 @@ if __name__ == "__main__":
     print(f"Critic: {agent._count_params(agent.critic)}")
 
     # 導出ESP32所需文件
-    #agent.export_for_esp32()
-    #agent.save_policy_model("ppo_policy", model_type="actor")
-    #agent.save_policy_model("ppo_policy", model_type="critic")
-    agent.save_policy_model_savedmodel(agent.actor, "ppo_policy", model_type="actor")
-    agent.save_policy_model_savedmodel(agent.critic, "ppo_policy", model_type="critic")
-    # 測試推理
-    test_state = np.array([0, 25.0, 0.5, 500.0, 600.0], dtype=np.float32)
-    action = agent.get_action(test_state)
-    value = agent.get_value (test_state)
+    agent.export_for_esp32()
 
-    print(f"測試狀態: {test_state}")
-    print(f"預測動作: {action}")
-    print(f"預測價值: {value}")
+
 
     # 使用最简单的版本避免tf.function问题
     #train_ppo_simple()

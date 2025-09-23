@@ -3,7 +3,7 @@
  
 set(TFLITE_META_SRCS "esp_32_tflite_ewc_hvac_agent.cc" "../../fed_server/models/meta_model.tflite")
 set(TFLITE_OPTI_SRCS "../../fed_server/models/esp32_optimized_model.tflite")
-set(TFLITE_STUDENT_SRCS "../../fed_server/models/student_model.tflite")
+set(TFLITE_STUDENT_SRCS "../../fed_server/saved_model/critic.tflite")
  
   
 
