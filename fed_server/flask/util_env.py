@@ -1,128 +1,8 @@
-
-import gym
-from gym import spaces
-
+ 
 import numpy as np
 import tensorflow as tf
 from collections import deque
-
-
-class PlantHVACEnv(gym.Env):
-    """
-    自定義 Plant HVAC 環境
-    狀態 (state_dim=5):
-        [溫度, 濕度, 光照, CO2濃度, 土壤濕度]
-    動作 (action_dim=4):
-        0 = 空調降溫
-        1 = 加濕器增濕
-        2 = 開燈補光
-        3 = 通風降CO2
-
-    獎勵:
-        根據與最佳生長區間的差距給分
-    """
-    def __init__(self):
-        super(PlantHVACEnv, self).__init__()
-
-        # 觀測空間: 連續狀態 (5維)
-        self.observation_space = spaces.Box(
-            low=np.array([0.0, 0.0, 0.0, 200.0, 0.0], dtype=np.float32),
-            high=np.array([50.0, 100.0, 2000.0, 2000.0, 100.0], dtype=np.float32),
-            dtype=np.float32
-        )
-
-        # 動作空間: 4個離散動作
-        self.action_space = spaces.Discrete(4)
-
-        # 初始狀態
-        self.state = None
-        self.reset()
-
-        # 最佳生長區間 (目標區域)
-        self.optimal_ranges = {
-            "temp": (22, 28),      # 溫度 (°C)
-            "humidity": (60, 75),  # 濕度 (%)
-            "light": (400, 800),   # 光照 (lux)
-            "co2": (350, 600),     # CO2 ppm
-            "soil": (40, 60),      # 土壤濕度 (%)
-        }
-
-    def reset(self):
-        """重置環境"""
-        self.state = self.observation_space.sample()
-        return self.state
-
-    def step(self, action):
-        """
-        根據 action 更新狀態
-        """
-        temp, humidity, light, co2, soil = self.state
-
-        # 簡單模擬 HVAC 控制
-        if action == 0:   # 降溫
-            temp -= 1.5
-        elif action == 1: # 加濕
-            humidity += 2.0
-        elif action == 2: # 補光
-            light += 50
-        elif action == 3: # 通風
-            co2 -= 30
-
-        # 加入隨機擾動 (模擬外部環境影響)
-        temp += np.random.uniform(-0.5, 0.5)
-        humidity += np.random.uniform(-1, 1)
-        light += np.random.uniform(-20, 20)
-        co2 += np.random.uniform(-10, 10)
-        soil += np.random.uniform(-1, 1)
-
-        # 更新狀態
-        self.state = np.array([temp, humidity, light, co2, soil], dtype=np.float32)
-
-        # 計算 reward
-        reward = self._calculate_reward()
-
-        # 終止條件：偏離太嚴重
-        done = self._is_done()
-
-        return self.state, reward, done, {}
-
-    def _calculate_reward(self):
-        """根據與最佳生長區間的差距計算 reward"""
-        temp, humidity, light, co2, soil = self.state
-        score = 0
-
-        def range_penalty(value, optimal_range):
-            low, high = optimal_range
-            if value < low:
-                return -(low - value)
-            elif value > high:
-                return -(value - high)
-            else:
-                return +1.0  # 在區間內加分
-
-        score += range_penalty(temp, self.optimal_ranges["temp"])
-        score += range_penalty(humidity, self.optimal_ranges["humidity"])
-        score += range_penalty(light, self.optimal_ranges["light"])
-        score += range_penalty(co2, self.optimal_ranges["co2"])
-        score += range_penalty(soil, self.optimal_ranges["soil"])
-
-        return score
-
-    def _is_done(self):
-        """當狀態超出極限值，結束 episode"""
-        temp, humidity, light, co2, soil = self.state
-        if temp < 0 or temp > 50:
-            return True
-        if humidity < 0 or humidity > 100:
-            return True
-        if light < 0 or light > 2000:
-            return True
-        if co2 < 100 or co2 > 3000:
-            return True
-        if soil < 0 or soil > 100:
-            return True
-        return False
-
+ 
 # 現在有5個特徵: health,temp, humid,light, co2
 # "growing", "flowering", "seeding"
 class PlantLLLHVACEnv:
@@ -130,15 +10,15 @@ class PlantLLLHVACEnv:
         self.seq_len = seq_len
         self.temp_init = temp_init
         self.humid_init = humid_init
-        self.n_features = 5  # 現在有5個特徵: health,temp, humid,light, co2
+        self.state_dim = 5  # 現在有5個特徵: health,temp, humid,light, co2
         self.mode = mode   # "growing", "flowering", "seeding"
-        self.n_classes = 3 # size of "growing", "flowering", "seeding"
+        self.action_dim = 4
         self.latent_dim = 64
         # 構建encoder
-        self.encoder = self._build_lstm_encoder(seq_len, self.n_features,self.latent_dim)
+        self.encoder = self._build_lstm_encoder(seq_len, self.state_dim,self.latent_dim)
 
         # LLL模型
-        self.lll_model = self._build_lll_model(self.latent_dim, hidden_dim=self.latent_dim, output_dim=self.n_classes)
+        self.lll_model = self._build_lll_model(self.latent_dim, hidden_dim=self.latent_dim, output_dim=self.action_dim)
         self.fisher_matrix = None
         self.prev_weights = None
         self.memory = deque(maxlen=1000)  # 簡單的記憶緩衝區
@@ -276,7 +156,7 @@ class PlantLLLHVACEnv:
         self.prev_action = np.zeros(4, dtype=int)
 
         # 初始化序列數據
-        self.current_sequence = np.zeros((1, self.seq_len, self.n_features))
+        self.current_sequence = np.zeros((1, self.seq_len, self.state_dim))
 
         # 填充初始序列
         for i in range(self.seq_len):
@@ -329,14 +209,37 @@ class PlantLLLHVACEnv:
         vpd = es - ea
         return max(vpd, 0.1)
 
+
+     
     def step(self, action, params=None, true_label=None):
         """
         執行動作並返回新的狀態、獎勵等信息
         """
         if params is None:
             params = {}
-
-        ac, humi, heat, dehumi = action
+        action_mapping = {
+            0: (0, 0, 0, 0),   # 全部关闭
+            1: (1, 0, 0, 0),   # 只开ac
+            2: (0, 1, 0, 0),   # 只开humi
+            3: (0, 0, 1, 0),   # 只开heat
+            4: (0, 0, 0, 1),   # 只开dehumi
+            5: (1, 1, 0, 0),   # ac + humi
+            6: (1, 0, 1, 0),   # ac + heat
+            # ... 添加更多动作组合
+        }
+        
+        # 确保动作在有效范围内
+        if action not in action_mapping:
+            action = 0  # 默认动作
+        
+        ac, humi, heat, dehumi = action_mapping[action]
+    
+        # 原有的环境逻辑...
+        self.ac = ac
+        self.humi = humi
+        self.heat = heat
+        self.dehumi = dehumi
+        #ac, humi, heat, dehumi = action
 
         # 環境動力學
         self.temp += (-0.5 if ac == 1 else 0.2) + (0.5 if heat == 1 else 0.0)

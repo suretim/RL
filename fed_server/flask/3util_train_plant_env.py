@@ -7,10 +7,8 @@ import random
 import os
 
 from util_agent import PPOBuffer
-from util_env import PlantHVACEnv,PlantLLLHVACEnv
-from util_agent import  ESP32OnlinePPOFisherAgent
-#from util_agent import process_experiences,compute_returns,compute_advantages,collect_experiences
-
+from util_env import PlantLLLHVACEnv
+from util_agent import  ESP32OnlinePPOFisherAgent ,PPOAgent
 
 
 class MemoryBuffer:
@@ -338,12 +336,12 @@ def trainbytask_lifelong_ppo(agent):
 
 
 # 修改训练循环使用SimplePPOAgent
-def train_ppo_with_lll(state_dim=5, action_dim=4,):
+def train_ppo_with_lll(env,agent,buffer,state_dim=5, action_dim=4,):
     # 初始化环境和智能体
-    env = PlantLLLHVACEnv()
+    #env = PlantLLLHVACEnv()
     #agent = SimplePPOAgent(state_dim=3, action_dim=4)  # 使用简化版本
-    agent=ESP32OnlinePPOFisherAgent( state_dim=state_dim, action_dim=action_dim)
-    buffer = PPOBuffer(state_dim=state_dim, action_dim=action_dim, buffer_size=2048)
+    #agent=ESP32OnlinePPOFisherAgent( state_dim=state_dim, action_dim=action_dim)
+    #buffer = PPOBuffer(state_dim=state_dim, action_dim=action_dim, buffer_size=2048)
     batch_size=30
     params = {
         "energy_penalty": 0.1,
@@ -351,120 +349,97 @@ def train_ppo_with_lll(state_dim=5, action_dim=4,):
         "vpd_target": 1.2,
         "vpd_penalty": 2.0
     }
-
-    # 在收集经验时，不要立即训练，而是先存储
-    experiences = []
-
-    for episode in range(100):
-        state = env.reset()
-        done = False
-        total_loss=0
-        while not done:
-            action, old_prob = agent.select_action(state)
-            #next_state, reward, done, _ = env.step(action)
-            next_state, reward, done, info = env.step(action, params)
-            # 存储经验
-            experiences.append((state, action, reward,  next_state,done,old_prob))
-            state = next_state
-        # 每隔一段时间或积累足够经验后，进行批量训练
-        if len(experiences) >= batch_size:
-            states, actions, advantages, old_probs, returns=agent.process_experiences(agent, experiences, gamma=0.99, gae_lambda=0.95)
-            total_loss+=agent.train_ppo_step(states, actions, advantages, old_probs, returns)
-            # 清空经验缓冲区
-            experiences = []
+    tasks = [
+        PlantLLLHVACEnv(mode="flowering"),
+        PlantLLLHVACEnv(mode="seeding"),
+        PlantLLLHVACEnv(mode="growing"),
+    ]
 
 
-def buffer_train_ppo_with_lll(env=None,agent=None,state_dim=5, action_dim=4):
-    # 初始化环境和智能体
-    if env is None:
-        env = PlantLLLHVACEnv()
-    # agent = SimplePPOAgent(state_dim=3, action_dim=4)  # 使用简化版本
-    if agent is None:
-        agent = ESP32OnlinePPOFisherAgent(state_dim=state_dim, action_dim=action_dim)
+    # 按顺序学习每个任务
+    for task_id, env in enumerate(tasks):
+        print(f"开始学习任务 {task_id}...")
+        # 在收集经验时，不要立即训练，而是先存储
+        experiences = []
 
+        for episode in range(100):
+            state = env.reset()
+            done = False
+            total_loss=0
+            while not done:
+                action, old_prob = agent.select_action(state)
+                #next_state, reward, done, _ = env.step(action)
+                next_state, reward, done, info = env.step(action, params)
+                # 存储经验
+                experiences.append((state, action, reward,  next_state,done,old_prob))
+                state = next_state
+            # 每隔一段时间或积累足够经验后，进行批量训练
+            if len(experiences) >= batch_size:
+                states, actions, advantages, old_probs, returns=agent.process_experiences(agent, experiences, gamma=0.99, gae_lambda=0.95)
+                total_loss+=agent.train_ppo_step(states, actions, advantages, old_probs, returns)
+                # 清空经验缓冲区
+                experiences = []
+
+
+def buffer_train_ppo_with_lll():
+    
     params = {
         "energy_penalty": 0.1,
         "switch_penalty_per_toggle": 0.2,
         "vpd_target": 1.2,
         "vpd_penalty": 2.0
     }
-
-    episode_reward = 0
-    # 在收集经验时，不要立即训练，而是先存储
-    experiences = []
-    buffer_size = 512
-    batch_size = 64
-    epochs = 10
-    state_dim = 5
-    action_dim = 4
-    buffer = PPOBuffer(state_dim=state_dim, action_dim=action_dim, buffer_size=buffer_size)
+    tasks = [
+        PlantLLLHVACEnv(mode="flowering"),
+        PlantLLLHVACEnv(mode="seeding"),
+        PlantLLLHVACEnv(mode="growing"),
+    ]
 
 
-    # 假设 buffer 已存满
-    for epoch in range(epochs):
-        for states_batch, actions_batch, old_probs_batch, returns_batch, values_batch in buffer.get_batch(batch_size):
-            states_batch = tf.convert_to_tensor(states_batch, dtype=tf.float32)
-            old_probs_batch = tf.convert_to_tensor(old_probs_batch, dtype=tf.float32)
+    # 按顺序学习每个任务
+    for task_id, env in enumerate(tasks):
+        print(f"开始学习任务 {task_id}...")
+        episode_reward = 0
+        # 在收集经验时，不要立即训练，而是先存储
+        experiences = []
+        buffer_size = 512
+        batch_size = 64
+        epochs = 100
+        state_dim = env.state_dim
+        action_dim = env.action_dim
+        
+        agent=PPOAgent(state_dim,action_dim)
+        agent.collect_and_train( env=env, num_episodes=epochs)
+        # 假设 buffer 已存满
+        '''
+        buffer = PPOBuffer(state_dim=state_dim, action_dim=action_dim, buffer_size=buffer_size)
+        for epoch in range(epochs):
+            print(f"task_id {task_id} Epoch {epoch + 1}/{epochs} ")
+            for states_batch, actions_batch, old_probs_batch, returns_batch, values_batch in buffer.get_batch(batch_size):
+                states_batch = tf.convert_to_tensor(states_batch, dtype=tf.float32)
+                old_probs_batch = tf.convert_to_tensor(old_probs_batch, dtype=tf.float32)
 
-            # actions 做 one-hot
-            actions_one_hot = tf.one_hot(actions_batch, depth=action_dim, dtype=tf.float32)
+                # actions 做 one-hot
+                actions_one_hot = tf.one_hot(actions_batch, depth=action_dim, dtype=tf.float32)
 
-            # Advantage = returns - critic_value
-            advantages = tf.convert_to_tensor(returns_batch, dtype=tf.float32) - tf.convert_to_tensor(values_batch,
-                                                                                                      dtype=tf.float32)
+                # Advantage = returns - critic_value
+                advantages = tf.convert_to_tensor(returns_batch, dtype=tf.float32) - tf.convert_to_tensor(values_batch,
+                                                                                                        dtype=tf.float32)
 
-            # Expand to (batch_size, action_dim)
-            advantages = tf.tile(tf.expand_dims(advantages, axis=-1), [1, action_dim])
-            returns_expanded = tf.tile(tf.expand_dims(tf.convert_to_tensor(returns_batch, dtype=tf.float32), axis=-1),
-                                       [1, action_dim])
+                # Expand to (batch_size, action_dim)
+                advantages = tf.tile(tf.expand_dims(advantages, axis=-1), [1, action_dim])
+                returns_expanded = tf.tile(tf.expand_dims(tf.convert_to_tensor(returns_batch, dtype=tf.float32), axis=-1),
+                                        [1, action_dim])
 
-            total_loss, policy_loss, value_loss, entropy, ewc_loss = agent.train_step(
-                states_batch, actions_one_hot, advantages, old_probs_batch, returns_expanded
-            )
-            print(f"Epoch {epoch + 1}/{epochs} done, total_loss={total_loss.numpy():.4f}")
+                total_loss, policy_loss, value_loss, entropy, ewc_loss = agent.train_step(
+                    states_batch, actions_one_hot, advantages, old_probs_batch, returns_expanded
+                )
+                print(f"Epoch {epoch + 1}/{epochs} done, total_loss={total_loss.numpy():.4f}")
 
-    # 清空 buffer
-    buffer.clear()
-
-
-# 或者使用Keras的train_on_batch方法
-class CompiledPPOAgent:
-    def __init__(self, state_dim, action_dim):
-        self.state_dim = state_dim
-        self.action_dim = action_dim
-        self.actor, self.critic = self._build_and_compile_networks()
-
-    def _build_and_compile_networks(self):
-        # Actor
-        actor = tf.keras.Sequential([
-            tf.keras.layers.Dense(64, activation='relu', input_shape=(self.state_dim,)),
-            tf.keras.layers.Dense(64, activation='relu'),
-            tf.keras.layers.Dense(self.action_dim, activation='sigmoid')
-        ])
-        actor.compile(optimizer='adam', loss='mse')
-
-        # Critic
-        critic = tf.keras.Sequential([
-            tf.keras.layers.Dense(64, activation='relu', input_shape=(self.state_dim,)),
-            tf.keras.layers.Dense(64, activation='relu'),
-            tf.keras.layers.Dense(1, activation='linear')
-        ])
-        critic.compile(optimizer='adam', loss='mse')
-
-        return actor, critic
-
-    def select_action(self, state):
-        state_tensor = tf.convert_to_tensor([state], dtype=tf.float32)
-        action_probs = self.actor.predict(state_tensor, verbose=0)[0]
-
-        actions = [1 if np.random.random() < prob else 0 for prob in action_probs]
-        return np.array(actions), action_probs
-
-    def get_value(self, state):
-        state_tensor = tf.convert_to_tensor([state], dtype=tf.float32)
-        return self.critic.predict(state_tensor, verbose=0)[0, 0]
-
-
+        # 清空 buffer
+        buffer.clear()
+        '''
+ 
 
 class TFLitePPOTrainer:
     def __init__(self):
@@ -535,9 +510,8 @@ if __name__ == "__main__":
         tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
     agent = ESP32OnlinePPOFisherAgent(state_dim=5, action_dim=4, hidden_units=8)
-    #agent = LifelongPPOAgent(state_dim=5, action_dim=4)
-    trainbytask_lifelong_ppo( agent=agent)
-    #buffer_train_ppo_with_lll(agent=agent)
+    #trainbytask_lifelong_ppo( agent=agent)
+    buffer_train_ppo_with_lll()
     # 顯示模型信息
     print("模型參數數量:")
     print(f"Actor: {agent._count_params(agent.actor)}")

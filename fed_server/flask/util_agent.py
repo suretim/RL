@@ -7,7 +7,7 @@ import datetime
 from collections import deque
 import os
 
-from util_env import PlantLLLHVACEnv,PlantHVACEnv
+from util_env import PlantLLLHVACEnv
 tfd = tfp.distributions
 
 # state_dim = 5  # 健康狀態、溫度、濕度、光照、CO2
@@ -22,7 +22,7 @@ class PPOBaseAgent:
         self.value_coef = value_coef
         self.entropy_coef = entropy_coef
         self.ewc_lambda = ewc_lambda  # EWC正则化强度
-        self.env=PlantHVACEnv()
+        self.env=PlantLLLHVACEnv()
         # 构建网络
         self.actor = self._build_actor()
         self.critic = self._build_critic()
@@ -433,6 +433,37 @@ class ESP32PPOAgent(PPOBaseAgent):
             tf.keras.layers.Dense(1, activation='linear',
                                   kernel_regularizer=tf.keras.regularizers.l2(0.001))
         ], name='esp32_critic')
+    
+    def _build_models(self):
+        """显式构建模型"""
+        # 创建虚拟输入来构建模型
+        dummy_input = tf.zeros((1, self.state_dim))
+        
+        # 前向传播一次以构建模型
+        _ = self.policy(dummy_input)
+        _ = self.critic(dummy_input)
+        
+        print("模型构建完成")
+    def count_agent_params(self):
+        """安全统计代理参数数量"""
+        try:
+            actor_params = self.policy.count_params()
+            critic_params = self.critic.count_params()
+            total_params = actor_params + critic_params
+            
+            print(f"Actor网络参数: {actor_params}")
+            print(f"Critic网络参数: {critic_params}")
+            print(f"总参数数量: {total_params}")
+            
+            return actor_params, critic_params, total_params
+            
+        except ValueError as e:
+            if "isn't built" in str(e):
+                print("模型未构建，正在构建...")
+                self._build_models()
+                return self.count_agent_params()
+            else:
+                raise e
 
     def save_tflite_model(self, filepath, model_type='actor'):
         """保存TFLite模型到文件"""
@@ -1044,7 +1075,7 @@ void loop() {
         return experiences
 
 class ESP32OnlinePPOFisherAgent(ESP32PPOAgent):
-    """專為ESP32設計的輕量級PPO代理，支持 online EWC 和 TFLite 導出"""
+    """專為ESP32設計的輕量級PPO代理 支持 online EWC 和 TFLite 導出"""
 
     def __init__(self, fisher_matrix=None, optimal_params=None, state_dim=5, action_dim=4,
                  clip_epsilon=0.2, value_coef=0.5, entropy_coef=0.01,
@@ -1079,7 +1110,7 @@ class ESP32OnlinePPOFisherAgent(ESP32PPOAgent):
         self.clip_ratio = clip_ratio
         self.gamma = gamma
         self.lam = lam
-
+        
         self.actor_opt = tf.keras.optimizers.Adam(actor_lr)
         self.critic_opt = tf.keras.optimizers.Adam(critic_lr)
         self.is_discrete = is_discrete
@@ -1172,15 +1203,16 @@ class ESP32OnlinePPOFisherAgent(ESP32PPOAgent):
         self.next_states.append(np.array(next_state if next_state is not None else state, copy=False))
         self.dones.append(done)
 
-    def get_buffer(self):
+    def get_buffer_items(self,ppo_buf):
         """返回 numpy 格式的 batch"""
+            
         return (
-            np.array(self.states, dtype=np.float32),
-            np.array(self.actions),
-            np.array(self.rewards, dtype=np.float32),
-            np.array(self.action_probs, dtype=np.float32),
-            np.array(self.next_states, dtype=np.float32),
-            np.array(self.dones, dtype=np.bool_)
+            np.array(ppo_buf.states, dtype=np.float32),
+            np.array(ppo_buf.actions),
+            np.array(ppo_buf.rewards, dtype=np.float32),
+            np.array(ppo_buf.probs, dtype=np.float32),
+            np.array(ppo_buf.next_states, dtype=np.float32),
+            np.array(ppo_buf.dones, dtype=np.bool_)
         )
 
     def get_action(self, state):
@@ -1201,8 +1233,8 @@ class ESP32OnlinePPOFisherAgent(ESP32PPOAgent):
             return action, action_prob
 
     # ========== train_step ==========
-    def train_buffer_step(self, use_ewc=True):
-        states, actions, rewards, old_probs, next_states, dones = self.get_buffer()
+    def train_buffer_step(self,buf=None, use_ewc=True):
+        states, actions, rewards, old_probs, next_states, dones = self.get_buffer_items(buf)
         if len(states) == 0:
             return 0.0
 
@@ -1347,12 +1379,13 @@ class ESP32OnlinePPOFisherAgent(ESP32PPOAgent):
 
         return tf.keras.Model(inputs=inputs, outputs=[mean, log_std])
 
-    def learn(self, states, actions, advantages, old_probs, returns, use_ewc=True, total_timesteps=1000000):
+    def learn(self, buf,use_ewc=True, total_timesteps=1000000):
         """Simulated training process"""
         print(f"Training for {total_timesteps} timesteps...")
 
         for i in range(total_timesteps // 1000):
-            self.train_ppo_step(states, actions, advantages, old_probs, returns, use_ewc=True)
+             
+            self.train_buffer_step(buf,use_ewc=True)
             if i % 100 == 0:
                 print(f"Step {i * 1000}/{total_timesteps}")
 
@@ -1475,24 +1508,21 @@ class PPOBuffer:
         self.actions = np.zeros(buffer_size, dtype=np.int32)  # 存整数动作
         self.rewards = np.zeros(buffer_size, dtype=np.float32)
         self.values = np.zeros((buffer_size, action_dim), dtype=np.float32)
+        self.next_states = np.zeros((buffer_size, state_dim), dtype=np.float32)
         self.probs = np.zeros((buffer_size, action_dim), dtype=np.float32)
         self.dones = np.zeros(buffer_size, dtype=np.float32)
 
         self.ptr = 0
         self.num_samples = 0
-
-    def store(self, state, action, prob, reward, done, value):
-        """存储经验"""
-        idx = self.ptr % self.buffer_size  # 循环覆盖
-        self.states[idx] = state
-        self.actions[idx] = action
-        self.probs[idx] = prob
-        self.rewards[idx] = reward
-        self.dones[idx] = done
-        self.values[idx] = value
-        self.ptr += 1
-        self.num_samples = min(self.num_samples + 1, self.buffer_size)
-
+        self.pointer = 0
+    def _init_buffer(self):
+        """Initialize replay buffer with correct dimensions"""
+        self.states = np.zeros((self.buffer_size, self.state_dim))
+        self.actions = np.zeros((self.buffer_size, self.action_dim))
+        self.probs = np.zeros((self.buffer_size, self.action_dim))  # ← Critical fix
+        self.rewards = np.zeros(self.buffer_size)
+        self.dones = np.zeros(self.buffer_size, dtype=bool)
+        self.pointer = 0
     def is_full(self):
         return self.num_samples == self.buffer_size
 
@@ -1503,9 +1533,44 @@ class PPOBuffer:
         for t in reversed(range(self.num_samples)):
             running_return = self.rewards[t] + self.gamma * running_return * (1 - self.dones[t])
             self.returns[t] = running_return
+ 
+    def clear(self):
+        self.ptr = 0
+        self.num_samples = 0
+ 
+    def store(self, state, action, prob, reward, next_state, done, value):
+        
+        if prob.shape != (self.action_dim,):
+            # Handle the mismatch - choose appropriate strategy
+            if len(prob) > self.action_dim:
+                prob = prob[:self.action_dim]  # Truncate
+            else:
+                prob = np.pad(prob, (0, self.action_dim - len(prob)))  # Pad
+        idx = self.ptr % self.buffer_size
+        self.states[idx] = state
+        self.actions[idx] = action
+        self.probs[idx] = prob
+        self.rewards[idx] = reward
+        self.next_states[idx] = next_state  # 存储next_state
+        self.dones[idx] = done
+        self.values[idx] = value
+        self.ptr += 1
+        self.num_samples = min(self.num_samples + 1, self.buffer_size)
+
+    
+    def get_buffer_items(self):
+        """返回 numpy 格式的完整batch"""
+        return (
+            np.array(self.states[:self.num_samples], dtype=np.float32),
+            np.array(self.actions[:self.num_samples]),
+            np.array(self.rewards[:self.num_samples], dtype=np.float32),
+            np.array(self.probs[:self.num_samples], dtype=np.float32),
+            np.array(self.next_states[:self.num_samples], dtype=np.float32),
+            np.array(self.dones[:self.num_samples], dtype=np.bool_)
+        )
 
     def get_batch(self, batch_size=64):
-        """返回 batch，actions 自动返回整数，训练时做 one-hot"""
+        """返回mini-batch生成器"""
         idxs = np.arange(self.num_samples)
         np.random.shuffle(idxs)
 
@@ -1518,10 +1583,256 @@ class PPOBuffer:
             old_probs_batch = self.probs[batch_idx]
             returns_batch = self.returns[batch_idx]
             values_batch = self.values[batch_idx]
+            next_states_batch = self.next_states[batch_idx]  # 新增
+            dones_batch = self.dones[batch_idx]
 
-            yield states_batch, actions_batch, old_probs_batch, returns_batch, values_batch
+            yield (states_batch, actions_batch, old_probs_batch, returns_batch, 
+                   values_batch, next_states_batch, dones_batch)
 
-    def clear(self):
-        self.ptr = 0
-        self.num_samples = 0
+class PPOAgent(ESP32OnlinePPOFisherAgent):
+    def __init__(self, state_dim, action_dim, hidden_units=64, 
+                 learning_rate=0.001, clip_ratio=0.2, gamma=0.99, lam=0.95):
+        self.state_dim = state_dim
+        self.action_dim = action_dim
+        self.hidden_units = hidden_units
+        self.clip_ratio = clip_ratio
+        self.gamma = gamma
+        self.lam = lam        
+        super().__init__(state_dim, action_dim)
+        self.buffer = PPOBuffer(state_dim, action_dim)
+        # 初始化优化器
+        self.actor_optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
+        self.critic_optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
+        
+        # 构建网络
+        self.actor = self._build_actor()
+        self.critic = self._build_critic()
+        
+        # 初始化经验缓冲区
+        self.buffer_size = 10000
+        self._init_buffer() 
+
+
+    def _init_buffer(self):
+        """初始化经验缓冲区"""
+        self.states = np.zeros((self.buffer_size, self.state_dim))
+        self.actions = np.zeros(self.buffer_size, dtype=np.int32)  # 动作应该是整数
+        self.probs = np.zeros((self.buffer_size, self.action_dim))
+        self.rewards = np.zeros(self.buffer_size)
+        self.dones = np.zeros(self.buffer_size, dtype=bool)
+        self.pointer = 0
+        self.buffer_full = False    
+
+        
+    def collect_and_train(self, env, num_episodes):
+        for episode in range(num_episodes):
+            state = env.reset()
+            episode_reward = 0
+            
+            for step in range(1000):  # 最大步数
+                # 1. 选择动作（增加数值稳定处理）
+                action_probs = self.actor.predict(state.reshape(1, -1), verbose=0)[0]
+                
+                # 数值稳定化处理
+                action_probs = np.clip(action_probs, 1e-8, 1.0)  # 防止过小或过大的值
+                action_probs = action_probs / np.sum(action_probs)  # 重新归一化
+                
+                # 检查概率和是否为1（允许小的误差）
+                prob_sum = np.sum(action_probs)
+                if abs(prob_sum - 1.0) > 1e-6:
+                    print(f"警告: 概率和不为1 ({prob_sum:.6f})，进行强制归一化")
+                    action_probs = action_probs / prob_sum
+                
+                # 安全地选择动作
+                try:
+                    action = np.random.choice(len(action_probs), p=action_probs)
+                except ValueError as e:
+                    print(f"动作选择错误: {e}")
+                    print(f"动作概率: {action_probs}")
+                    print(f"概率和: {np.sum(action_probs)}")
+                    # 使用均匀分布作为备选
+                    action_probs = np.ones(len(action_probs)) / len(action_probs)
+                    action = np.random.choice(len(action_probs), p=action_probs)
+                
+                # 2. 与环境交互
+                next_state, reward, done, _ = env.step(action)
+                
+                # 3. 存储经验
+                state_value = self.critic.predict(state.reshape(1, -1), verbose=0)[0]
+                self.buffer.store(state, action, action_probs, reward, next_state, done, state_value)
+                
+                state = next_state
+                episode_reward += reward
+                
+                if done or self.buffer.is_full():
+                    # 处理完整轨迹
+                    if done:
+                        last_value = 0
+                    else:
+                        last_value = self.critic.predict(state.reshape(1, -1), verbose=0)[0][0]
+                    
+                    self.buffer.finish_path(last_value)
+                    self.train_ppo()
+                    self.buffer.clear()
+                    
+                    if done:
+                        break
+            
+            if episode % 10 == 0:
+                print(f"Episode {episode}, Reward: {episode_reward}")
+
+
+    def train_ppo(self):
+        """使用包含next_states的数据进行PPO训练"""
+        # 获取完整数据用于分析或监控（可选）
+        states, actions, rewards, probs, next_states, dones = self.buffer.get_buffer_items()
+        print(f"训练数据形状: states{states.shape}, rewards{rewards.shape}")
+        
+        # Mini-batch训练
+        for batch_idx, batch in enumerate(self.buffer.get_batch(batch_size=64)):
+            states_b, actions_b, old_probs_b, returns_b, old_values_b, next_states_b, dones_b = batch
+            
+            # 修正：使用batch对应的rewards，而不是完整的rewards数组
+            # 从完整数据中提取对应batch的rewards
+            start_idx = batch_idx * 64
+            end_idx = min((batch_idx + 1) * 64, len(rewards))
+            rewards_b = rewards[start_idx:end_idx]
+            
+            # 确保维度匹配
+            if len(rewards_b) != len(states_b):
+                # 如果长度不匹配，使用buffer中的rewards（如果buffer存储了batch对应的rewards）
+                rewards_b = self.buffer.rewards[start_idx:end_idx]
+            
+            # 使用next_states计算TD目标
+            next_values = self.critic.predict(next_states_b)  # 注意：应该是self.critic而不是self.critic_network
+            next_values = next_values.flatten()  # 确保是一维数组
+            
+            # 计算TD目标（修正维度）
+            td_targets = rewards_b + self.buffer.gamma * next_values * (1 - dones_b.astype(np.float32))
+            
+            # PPO更新步骤
+            # 1. 计算优势函数（修正维度）
+            advantages = returns_b - old_values_b.mean(axis=1)
+            
+            # 2. 更新网络
+            actor_loss = self.update_actor(states_b, actions_b, old_probs_b, advantages)
+            critic_loss = self.update_critic(states_b, td_targets)
+            
+            if batch_idx % 10 == 0:
+                print(f"Batch {batch_idx}: Actor Loss: {actor_loss:.4f}, Critic Loss: {critic_loss:.4f}")
+
+    
+    def update_critic(self, states, td_targets):
+            """更新Critic网络"""
+            with tf.GradientTape() as tape:
+                # Critic预测的价值
+                values = self.critic(states)
+                values = tf.squeeze(values)  # 去除多余的维度
+                
+                # Critic损失（MSE）
+                critic_loss = tf.reduce_mean(tf.square(td_targets - values))
+            
+            # 计算并应用梯度
+            critic_gradients = tape.gradient(critic_loss, self.critic.trainable_variables)
+            self.optimizer.apply_gradients(zip(critic_gradients, self.critic.trainable_variables))
+            
+            return critic_loss.numpy()
+
+     
+    def collect_experience(self, env, num_episodes):
+        for episode in range(num_episodes):
+            state = env.reset()
+            done = False
+            
+            while not done:
+                # 获取动作概率
+                action_probs = self.actor.predict(state.reshape(1, -1), verbose=0)[0]
+                
+                # 选择动作（确保是标量）
+                action = np.random.choice(len(action_probs), p=action_probs)
+                
+                # 执行动作
+                next_state, reward, done, _ = env.step(action)
+                
+                # 存储经验（确保动作是标量）
+                self.store(state, action, action_probs, reward, done, self.pointer)
+                
+                state = next_state
+                self.pointer = (self.pointer + 1) % self.buffer_size
+
+    def compute_advantages(self, rewards, values, dones, next_value):
+        advantages = np.zeros_like(rewards)
+        last_advantage = 0
+        
+        # 逆向计算GAE
+        for t in reversed(range(len(rewards))):
+            if t == len(rewards) - 1:
+                next_values = next_value
+            else:
+                next_values = values[t + 1] * (1 - dones[t])
+            
+            delta = rewards[t] + self.gamma * next_values - values[t]
+            advantages[t] = delta + self.gamma * self.lam * (1 - dones[t]) * last_advantage
+            last_advantage = advantages[t]
+        
+        return advantages  # 形状应该是 [batch_size]
+        
+    def update_actor(self, states, actions, old_probs, advantages):
+        with tf.GradientTape() as tape:
+            # 获取新策略的概率分布 [batch_size, action_dim]
+            new_probs = self.actor(states)
+            print(f"Debug - new_probs shape: {new_probs.shape}")  # 应该是 [10,4]
+            print(f"Debug - old_probs shape: {old_probs.shape}")  # 应该是 [10,4]
+            print(f"Debug - actions shape: {actions.shape}")      # 应该是 [10]
+            print(f"Debug - advantages shape: {advantages.shape}") # 应该是 [10]
+            
+            # 确保动作是整数类型
+            actions = tf.cast(actions, tf.int32)
+            
+            # 方法1：使用 tf.gather 选择对应动作的概率
+            # 创建批次索引
+            batch_size = tf.shape(states)[0]
+            batch_indices = tf.range(batch_size)
+            
+            # 选择每个样本对应动作的概率
+            # new_probs[batch_indices, actions] 会选择每个样本对应动作的概率
+            new_probs_selected = tf.gather(new_probs, actions, batch_dims=1)
+            old_probs_selected = tf.gather(old_probs, actions, batch_dims=1)
+            
+            print(f"Debug - new_probs_selected shape: {new_probs_selected.shape}")  # 应该是 [10]
+            print(f"Debug - old_probs_selected shape: {old_probs_selected.shape}")  # 应该是 [10]
+            
+            # 计算概率比 [batch_size]
+            ratio = new_probs_selected / (old_probs_selected + 1e-8)
+            print(f"Debug - ratio shape: {ratio.shape}")  # 应该是 [10]
+            
+            # 确保advantages形状正确 [batch_size]
+            advantages = tf.reshape(advantages, [-1])
+            
+            # 现在可以相乘了，因为都是 [batch_size] 形状
+            surr1 = ratio * advantages
+            surr2 = tf.clip_by_value(ratio, 1 - self.clip_ratio, 1 + self.clip_ratio) * advantages
+            
+            # PPO损失函数
+            actor_loss = -tf.reduce_mean(tf.minimum(surr1, surr2))
+        
+        # 计算梯度并更新
+        actor_grads = tape.gradient(actor_loss, self.actor.trainable_variables)
+        self.actor_optimizer.apply_gradients(zip(actor_grads, self.actor.trainable_variables))
+        
+        return actor_loss
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
