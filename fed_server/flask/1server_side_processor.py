@@ -11,10 +11,13 @@ from datetime import datetime
 import tensorflow_model_optimization as tfmot
 from typing import Dict, Any, Optional, Union
 
-# 你專案內的類（保持不動，假設存在）
+import tensorflow_probability as tfp
+tfd = tfp.distributions
+
 from util_exporter import TensorFlowESP32Exporter
 from util_agent import ESP32OnlinePPOFisherAgent
 from util_env import PlantLLLHVACEnv
+from util_trainer import LLLTrainer
 
 MODEL_DIR = "./models"
 
@@ -39,44 +42,8 @@ def ewc_update(actor, fisher, optimal_params, current_params, learning_rate=1e-3
         if g is not None:
             var.assign_sub(learning_rate * g)
 
-import tensorflow_probability as tfp
-import os
-
-tfd = tfp.distributions
 
 
-class xESP32PPOAgent:
-    """專為ESP32設計的輕量級PPO代理"""
-
-    def __init__(self, state_dim=5, action_dim=4,
-                 clip_epsilon=0.2, value_coef=0.5, entropy_coef=0.01):
-        # 這裡簡單建一個 policy (MLP)
-        inputs = keras.Input(shape=(state_dim,))
-        x = keras.layers.Dense(32, activation="relu")(inputs)
-        outputs = keras.layers.Dense(action_dim, activation="softmax")(x)
-        self.policy = keras.Model(inputs, outputs)
-
-        # 其它 PPO 超參數
-        self.clip_epsilon = clip_epsilon
-        self.value_coef = value_coef
-        self.entropy_coef = entropy_coef
-
-    def act(self, state):
-        """輸入 state -> 輸出 action"""
-        state = tf.convert_to_tensor([state], dtype=tf.float32)
-        probs = self.policy(state)
-        action = tf.random.categorical(tf.math.log(probs), num_samples=1)
-        return int(action[0, 0])
-
-    def save_model(self, path="trained_policy_tf.keras"):
-        """保存 policy 模型"""
-        self.policy.save(path)
-        print(f" 模型已保存到 {path}")
-
-    def load_model(self, path="trained_policy_tf.keras"):
-        """載入 policy 模型"""
-        self.policy = keras.models.load_model(path)
-        print(f" 模型已從 {path} 載入")
 
 def generate_smart_representative_data(env, num_samples=1000, mode_weights=None, return_labels=False):
     """
@@ -139,7 +106,6 @@ def generate_smart_representative_data(env, num_samples=1000, mode_weights=None,
         return all_data[:num_samples], all_labels[:num_samples]
     else:
         return all_data[:num_samples]
-from util_trainer import LLLTrainer
 
 def env_pipe_trainer(lll_model=None,num_tasks=3,latent_dim=64,num_classes=3,num_epochs_per_task=3,batch_size=32, learning_rate=0.001, ewc_lambda=0.4):
     #env_lll_model, state_dim, action_dim, hidden_units,learning_rate=0.001, ewc_lambda=0.4
@@ -378,7 +344,7 @@ if __name__ == "__main__":
     # 确保形状匹配（如果需要序列数据）
     if len(representative_data.shape) == 2:
         representative_data = representative_data.reshape(-1, 1, 5)
-    agent = ESP32OnlinePPOFisherAgent(state_dim=env.n_features, action_dim=action_dim, hidden_units=8)
+    agent = ESP32OnlinePPOFisherAgent(state_dim=env.state_dim, action_dim=action_dim, hidden_units=8)
 
     agent.compute_fisher_matrix(representative_data)
     # 保存 Fisher & Optimal Params

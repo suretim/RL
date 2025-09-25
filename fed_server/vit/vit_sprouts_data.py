@@ -152,7 +152,7 @@ callbacks = [
 ]
 
 # 训练模型
-print("\n开始训练...")
+#print("\n开始训练...")
 history = model.fit(
     train_data,
     epochs=EPOCHS,

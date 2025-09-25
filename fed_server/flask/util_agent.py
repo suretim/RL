@@ -6,65 +6,169 @@ import tensorflow_probability as tfp
 import datetime
 from collections import deque
 import os
-
+import json
 from util_env import PlantLLLHVACEnv
 tfd = tfp.distributions
 
 # state_dim = 5  # 健康狀態、溫度、濕度、光照、CO2
 # action_dim = 4  # 4個控制動作
 class PPOBaseAgent:
-    def __init__(self, state_dim=5, action_dim=4,
+    def __init__(self, fisher_matrix=None, optimal_params=None, state_dim=5, action_dim=4,
                  clip_epsilon=0.2, value_coef=0.5, entropy_coef=0.01,
-                 ewc_lambda=500, memory_size=1000):
+                 ewc_lambda=500, memory_size=1000, hidden_units=32,
+                 clip_ratio=0.2, actor_lr=1e-4, critic_lr=1e-3, is_discrete=False,
+                 gamma=0.99, lam=0.95):
+
         self.state_dim = int(state_dim)
         self.action_dim = int(action_dim)
         self.clip_epsilon = clip_epsilon
         self.value_coef = value_coef
         self.entropy_coef = entropy_coef
+        self.is_discrete = is_discrete
+        self.hidden_units = hidden_units
         self.ewc_lambda = ewc_lambda  # EWC正则化强度
         self.env=PlantLLLHVACEnv()
         # 构建网络
-        self.actor = self._build_actor()
+        self.policy = ESP32PPOPolicy(state_dim, action_dim, hidden_units, is_discrete)
+
         self.critic = self._build_critic()
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate=3e-4)
 
+        self.value_net = self.critic
+        self.actor = self._build_actor()
+        self.policy_params = self.actor.trainable_variables
+        self.value_params  = self.critic.trainable_variables
         # 持续学习相关
-        self.task_memory = deque(maxlen=memory_size)  # 存储之前任务的经验
-        self.fisher_matrices = {}  # 存储每个任务的Fisher信息矩阵
-        self.optimal_params = {}  # 存储每个任务的最优参数
+        # 关键修复：强制初始化为字典
+        self._initialize_ewc_variables()
         self.current_task_id = 0
+        self.log_std = tf.Variable(initial_value=-0.5 * tf.ones(action_dim), trainable=True)
 
+        # 使用更小的學習率
+        self.optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
+        # 初始化经验缓冲区
+        self.buffer_size = 10000
+        self._init_buffer()
+        # EWC相关变量
+        self.ewc_task_count = 0
+        if fisher_matrix is not None:
+            self.fisher_matrix = fisher_matrix
+        else:
+            self.fisher_matrix = {}
+        if optimal_params is not None:
+            self.optimal_params = optimal_params
+        else:
+            self.optimal_params = {}
+
+
+        self.old_policy_params = None
+        self.ewc_lambda = ewc_lambda
+        self.hidden_units = hidden_units
+        # 关键修复：确保正确初始化持续学习相关变量
+        self.task_memory = deque(maxlen=memory_size)
+
+
+        self.ewc_means = {}  # 保存每个任务的参数均值
+        self.ewc_fisher = {}  # 保存每个任务的Fisher信息矩阵
+        self.ppo_buffer=PPOBuffer(self.state_dim,self.action_dim)
+        self.action_space = type('', (), {})()  # 生成一个假的对象
+        self.action_space.n = action_dim
+    def _initialize_ewc_variables(self):
+        """强制初始化EWC相关变量为正确的类型"""
+        # 删除可能存在的错误变量
+        for attr_name in ['optimal_params', 'fisher_matrices', 'ewc_means', 'ewc_fisher', 'task_memory']:
+            if hasattr(self, attr_name):
+                delattr(self, attr_name)
+
+        # 重新初始化为正确类型
+        self.optimal_params = {}
+        self.fisher_matrices = {}
+        self.ewc_means = {}
+        self.ewc_fisher = {}
+        self.task_memory = deque(maxlen=1000)  # 使用固定大小
+
+        print("EWC变量已重新初始化")
+    def _init_buffer(self):
+        """初始化经验缓冲区"""
+        self.states = np.zeros((self.buffer_size, self.state_dim))
+        self.actions = np.zeros(self.buffer_size, dtype=np.int32)
+        self.probs = np.zeros((self.buffer_size, self.action_dim))
+        self.rewards = np.zeros(self.buffer_size)
+        self.dones = np.zeros(self.buffer_size, dtype=bool)
+        self.pointer = 0
+        self.buffer_full = False
 
     def _build_actor(self):
         return tf.keras.Sequential([
-            tf.keras.layers.Dense(64, activation='relu', input_shape=(self.state_dim,)),
-            tf.keras.layers.Dense(64, activation='relu'),
-            tf.keras.layers.Dense(self.action_dim, activation='sigmoid')
-        ])
-
+            tf.keras.layers.Dense(self.hidden_units, activation='relu',
+                                  input_shape=(self.state_dim,)),
+            tf.keras.layers.Dense(self.hidden_units, activation='relu'),  # 增加一层
+            tf.keras.layers.Dense(self.action_dim, activation='tanh')  # 改为tanh，输出范围[-1,1]
+        ], name='esp32_actor')
 
     def _build_critic(self):
         return tf.keras.Sequential([
-            tf.keras.layers.Dense(64, activation='relu', input_shape=(self.state_dim,)),
-            tf.keras.layers.Dense(64, activation='relu'),
+            tf.keras.layers.Dense(self.hidden_units, activation='relu',
+                                  input_shape=(self.state_dim,)),
+            tf.keras.layers.Dense(self.hidden_units, activation='relu'),  # 增加一层
             tf.keras.layers.Dense(1, activation='linear')
-        ])
+        ], name='esp32_critic')
 
+    def get_action(self, state):
+        """根据策略网络选择动作 - 安全版本"""
+        try:
+            state = np.expand_dims(state, axis=0).astype(np.float32)
+
+            if self.is_discrete:
+                logits = self.policy(state)
+                dist = tfp.distributions.Categorical(logits=logits)
+                action = dist.sample()[0].numpy()
+                action_prob = dist.prob(action).numpy()
+                return int(action), float(action_prob)
+            else:
+                mean = self.policy(state)
+                log_std = tf.ones_like(mean) * self.log_std
+                dist = tfp.distributions.Normal(loc=mean, scale=tf.exp(log_std))
+                action = dist.sample()[0].numpy()
+                action_prob = dist.prob(action).numpy()
+                action_prob = np.prod(action_prob)
+                return action, float(action_prob)
+
+        except Exception as e:
+            print(f"获取动作时出错: {e}")
+            if self.is_discrete:
+                return 0, 0.25
+            else:
+                return np.zeros(self.action_dim), 0.5
     def select_action(self, state):
-        state = tf.expand_dims(tf.convert_to_tensor(state, dtype=tf.float32), 0)
-        probs = self.actor(state)
-        action = tf.cast(probs > 0.5, tf.float32)  # 二值化动作
-        return action.numpy()[0], probs.numpy()[0]
+        """选择动作 - 修复返回值问题"""
+        try:
+            state = tf.expand_dims(tf.convert_to_tensor(state, dtype=tf.float32), 0)
 
-    def get_action(self, state,return_probs=False):
-        """Get action for environment interaction (same as select_action)"""
+            if self.is_discrete:
+                # 离散动作空间
+                logits = self.actor(state)
+                dist = tfp.distributions.Categorical(logits=logits)
+                action = dist.sample()[0].numpy()
+                action_prob = dist.prob(action).numpy()
+                return int(action), float(action_prob)
+            else:
+                # 连续动作空间
+                mean = self.actor(state)
+                log_std = tf.ones_like(mean) * self.log_std
+                dist = tfp.distributions.Normal(loc=mean, scale=tf.exp(log_std))
+                action = dist.sample()[0].numpy()
+                action_prob = dist.prob(action).numpy()
+                # 对于连续动作，返回概率的乘积
+                action_prob = np.prod(action_prob)
+                return action, float(action_prob)
 
-        action, probs = self.select_action(state)
-        if return_probs:
-            return action,probs
-        else:
-            return action
-
+        except Exception as e:
+            print(f"选择动作时出错: {e}")
+            # 返回默认动作和概率
+            if self.is_discrete:
+                return 0, 0.25  # 对于4个动作的均匀概率
+            else:
+                return np.zeros(self.action_dim), 0.5
     def get_value(self, state):
         state_tensor = np.expand_dims(state, axis=0)  # (1, state_dim)
         value = self.critic(state_tensor).numpy()[0, 0]
@@ -75,233 +179,290 @@ class PPOBaseAgent:
         return sum([tf.keras.backend.count_params(w) for w in model.trainable_weights])
 
     def _compute_fisher_matrix(self, experiences):
-        
-        states, actions, _, old_probs, _ = experiences
-        # 确保 states/actions 是 tf.Tensor
-        states = tf.convert_to_tensor(states, dtype=tf.float32)
-        actions = tf.convert_to_tensor(actions, dtype=tf.float32)
+        """计算Fisher矩阵 - 彻底修复版本"""
+        try:
+            states, actions, _, old_probs, _ = experiences
 
-        trainable_vars = self.actor.trainable_variables + self.critic.trainable_variables
-        # 初始化 fisher 为与每个 var 同形的 0 张量
-        fisher_accum = [tf.zeros_like(var, dtype=tf.float32) for var in trainable_vars]
-        n = tf.cast(tf.shape(states)[0], tf.float32)
+            print(f"Fisher计算输入形状: states={states.shape}, actions={actions.shape}, old_probs={old_probs.shape}")
 
-        # 逐样本或小 batch 处理以节省内存（这里按整体计算）
-        with tf.GradientTape() as tape:
-            # 计算对数概率：对于独立的 Bernoulli 每维相乘 -> 对数相加
-            new_probs = self.actor(states, training=False)  # shape [B, action_dim]
-            actions_float = tf.cast(actions, tf.float32)
-            single_sample_probs = tf.reduce_sum(new_probs * actions_float + (1. - new_probs) * (1. - actions_float), axis=1)  # [B]
-            log_probs = tf.math.log(single_sample_probs + 1e-8)  # [B]
-            # 为得到标量，求均值
-            logp_mean = tf.reduce_mean(log_probs)
+            # 确保输入是张量，正确处理数据类型
+            states = tf.convert_to_tensor(states, dtype=tf.float32)
 
-        grads = tape.gradient(logp_mean, trainable_vars)  # grads 与 vars 对应
-        for i, g in enumerate(grads):
-            if g is None:
-                continue
-            # grads 是对均值求导，相当于对每个样本梯度平均，因此 Fisher ≈ E[grad^2]
-            fisher_accum[i] = tf.square(g)  # 与 var 同形
+            # 关键修复：动作应该是int32（离散动作索引），不是float32
+            if self.is_discrete:
+                actions = tf.convert_to_tensor(actions, dtype=tf.int32)
+            else:
+                actions = tf.convert_to_tensor(actions, dtype=tf.float32)
 
-        # 返回 list，元素与 trainable_vars 顺序一致
-        return fisher_accum
-    
-        
-    def save_task_knowledge(self, task_experiences):
+            old_probs = tf.convert_to_tensor(old_probs, dtype=tf.float32)
 
-        if not hasattr(self, 'optimal_params') or self.optimal_params is None:
-            self.optimal_params = {}
+            # 获取所有可训练变量
+            trainable_vars = self.actor.trainable_variables + self.critic.trainable_variables
+            fisher_accum = [tf.zeros_like(var, dtype=tf.float32) for var in trainable_vars]
 
-            # 确保 fisher_matrices 已初始化
-        if not hasattr(self, 'fisher_matrices') or self.fisher_matrices is None:
-            self.fisher_matrices = {}
+            batch_size = tf.shape(states)[0]
+            print(f"计算Fisher矩阵，批次大小: {batch_size}")
 
-            # 确保 task_memory 已初始化
-        if not hasattr(self, 'task_memory') or self.task_memory is None:
-            self.task_memory = []
+            # 使用整个批次计算（简化版本）
+            with tf.GradientTape() as tape:
+                if self.is_discrete:
+                    # 离散动作空间：使用分类分布
+                    logits = self.actor(states, training=False)
+                    dist = tfp.distributions.Categorical(logits=logits)
 
-        self.optimal_params[self.current_task_id] = [
-            tf.identity(var) for var in self.actor.trainable_variables + self.critic.trainable_variables
+                    # 计算所选动作的对数概率
+                    log_probs = dist.log_prob(actions)  # [batch_size]
+                else:
+                    # 连续动作空间：使用正态分布
+                    mean = self.actor(states, training=False)
+                    log_std = tf.ones_like(mean) * self.log_std
+                    dist = tfp.distributions.Normal(loc=mean, scale=tf.exp(log_std))
+                    log_probs = tf.reduce_sum(dist.log_prob(actions), axis=-1)  # [batch_size]
+
+                # 计算平均对数概率
+                logp_mean = tf.reduce_mean(log_probs)
+
+            # 计算梯度
+            grads = tape.gradient(logp_mean, trainable_vars)
+
+            # 计算Fisher信息（梯度的平方）
+            for j, grad in enumerate(grads):
+                if grad is not None:
+                    fisher_accum[j] = tf.square(grad)
+
+            print(f"Fisher矩阵计算完成，包含 {len(fisher_accum)} 个参数块")
+            return fisher_accum
+
+        except Exception as e:
+            print(f"计算Fisher矩阵时出错: {e}")
+            import traceback
+            traceback.print_exc()
+            # 返回空的Fisher矩阵
+            trainable_vars = self.actor.trainable_variables + self.critic.trainable_variables
+            return [tf.zeros_like(var, dtype=tf.float32) for var in trainable_vars]
+
+    def compute_fisher_matrix(self, dataset: np.ndarray):
+        """計算 Fisher 矩陣"""
+        fisher = {}
+        optimal_params = {}
+        for var in self.actor.trainable_variables:
+            fisher[var.name] = np.zeros_like(var.numpy())
+            optimal_params[var.name] = var.numpy().copy()
+
+        for x in dataset:
+            # 标准化输入形状
+            x = x.astype(np.float32)
+
+            # 确保输入形状为 (1, n_features)
+            if x.ndim == 1:
+                x = x.reshape(1, -1)
+            elif x.ndim == 3:
+                x = x.reshape(x.shape[0], x.shape[2])
+            elif x.ndim == 2 and x.shape[0] != 1:
+                x = x.reshape(1, -1)
+
+            with tf.GradientTape() as tape:
+                probs = self.actor(x)
+                log_prob = tf.math.log(probs + 1e-8)
+            grads = tape.gradient(log_prob, self.actor.trainable_variables)
+            for g, var in zip(grads, self.actor.trainable_variables):
+                if g is not None:
+                    fisher[var.name] += (g.numpy() ** 2) / len(dataset)
+
+        self.fisher_matrix = fisher
+        self.optimal_params = optimal_params
+
+    def check_variables_initialization(self):
+        """检查变量初始化状态"""
+        print("=== 变量初始化状态检查 ===")
+
+        variables_to_check = [
+            ('optimal_params', self.optimal_params),
+            ('fisher_matrices', self.fisher_matrices),
+            ('task_memory', self.task_memory),
+            ('ewc_means', self.ewc_means),
+            ('ewc_fisher', self.ewc_fisher)
         ]
 
-        # 计算并保存Fisher信息矩阵
-        self.fisher_matrices[self.current_task_id] = self._compute_fisher_matrix(task_experiences)
+        for var_name, var_value in variables_to_check:
+            if hasattr(self, var_name):
+                if isinstance(var_value, dict):
+                    print(f"✓ {var_name}: 字典类型, 包含 {len(var_value)} 个键")
+                elif isinstance(var_value, deque):
+                    print(f"✓ {var_name}: 队列类型, 包含 {len(var_value)} 个元素")
+                elif var_value is None:
+                    print(f"✗ {var_name}: None")
+                else:
+                    print(f"✗ {var_name}: 意外类型 {type(var_value)}")
+            else:
+                print(f"✗ {var_name}: 未定义")
 
-        # 保存任务经验到记忆库
-        self.task_memory.extend(self._process_experiences_for_memory(task_experiences))
+        print("=== 检查完成 ===\n")
 
-        print(f"任务 {self.current_task_id} 知识已保存")
-        self.current_task_id += 1
+    def save_task_knowledge(self, task_experiences):
+        """保存任务知识 - 安全版本"""
+        try:
+            # 强制检查并重新初始化变量
+            self._safety_check_variables()
+
+            print(f"开始保存任务 {self.current_task_id} 的知识...")
+
+            # 保存最优参数
+            optimal_params = []
+            for var in self.actor.trainable_variables:
+                optimal_params.append(tf.identity(var))
+            for var in self.critic.trainable_variables:
+                optimal_params.append(tf.identity(var))
+
+            self.optimal_params[self.current_task_id] = optimal_params
+
+            # 计算并保存Fisher信息矩阵
+            print("计算Fisher信息矩阵...")
+            fisher_matrix = self._compute_fisher_matrix_safe(task_experiences)
+            self.fisher_matrices[self.current_task_id] = fisher_matrix
+
+            # 保存任务经验
+            print("处理经验数据...")
+            if hasattr(self, '_process_experiences_for_memory'):
+                processed_experiences = self._process_experiences_for_memory(task_experiences)
+                self.task_memory.extend(processed_experiences)
+
+            print(f"任务 {self.current_task_id} 知识已保存")
+            print(f"当前保存的任务数量: {len(self.optimal_params)}")
+
+            # 移动到下一个任务
+            self.current_task_id += 1
+
+        except Exception as e:
+            print(f"保存任务知识时出错: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _safety_check_variables(self):
+        """安全检查变量"""
+        if not hasattr(self, 'optimal_params') or not isinstance(self.optimal_params, dict):
+            print("警告: optimal_params 异常，重新初始化")
+            self.optimal_params = {}
+
+        if not hasattr(self, 'fisher_matrices') or not isinstance(self.fisher_matrices, dict):
+            print("警告: fisher_matrices 异常，重新初始化")
+            self.fisher_matrices = {}
+
+        if not hasattr(self, 'task_memory') or self.task_memory is None:
+            print("警告: task_memory 异常，重新初始化")
+            self.task_memory = deque(maxlen=1000)
+
+    def _compute_fisher_matrix_safe(self, experiences):
+        """安全的Fisher矩阵计算"""
+        try:
+            return self._compute_fisher_matrix(experiences)
+        except Exception as e:
+            print(f"Fisher矩阵计算失败，使用空矩阵: {e}")
+            trainable_vars = self.actor.trainable_variables + self.critic.trainable_variables
+            return [tf.zeros_like(var) for var in trainable_vars]
 
     def _process_experiences_for_memory(self, experiences):
-        """处理经验以便存储到长期记忆"""
-        states, actions, advantages, old_probs, returns = experiences
-        processed_experiences = []
+        """处理经验以便存储到长期记忆 - 修复版本"""
+        try:
+            states, actions, advantages, old_probs, returns = experiences
+            processed_experiences = []
 
-        for i in range(states.shape[0]):
-            processed_experiences.append((
-                states[i].numpy(),
-                actions[i].numpy(),
-                advantages[i].numpy(),
-                old_probs[i].numpy(),
-                returns[i].numpy(),
-                self.current_task_id  # 标记来自哪个任务
-            ))
+            # 确保是numpy数组以便处理
+            if hasattr(states, 'numpy'):
+                states = states.numpy()
+            if hasattr(actions, 'numpy'):
+                actions = actions.numpy()
+            if hasattr(advantages, 'numpy'):
+                advantages = advantages.numpy()
+            if hasattr(old_probs, 'numpy'):
+                old_probs = old_probs.numpy()
+            if hasattr(returns, 'numpy'):
+                returns = returns.numpy()
 
-        return processed_experiences
+            batch_size = len(states) if hasattr(states, '__len__') else 1
 
+            for i in range(batch_size):
+                try:
+                    state = states[i] if batch_size > 1 else states
+                    action = actions[i] if batch_size > 1 else actions
+                    advantage = advantages[i] if batch_size > 1 else advantages
+                    old_prob = old_probs[i] if batch_size > 1 else old_probs
+                    return_ = returns[i] if batch_size > 1 else returns
+
+                    # 确保数据格式正确
+                    state = np.array(state, dtype=np.float32).flatten()
+                    action = int(action) if self.is_discrete else float(action)
+                    advantage = float(advantage)
+                    old_prob = np.array(old_prob, dtype=np.float32).flatten()
+                    return_ = float(return_)
+
+                    processed_experiences.append((state, action, advantage, old_prob, return_, self.current_task_id))
+
+                except Exception as e:
+                    print(f"处理经验 {i} 时出错: {e}")
+                    continue
+
+            print(f"成功处理 {len(processed_experiences)} 条经验")
+            return processed_experiences
+
+        except Exception as e:
+            print(f"处理经验数据时出错: {e}")
+            return []
     def replay_previous_tasks(self, batch_size=32):
-        """回放先前任務的記憶"""
+        """回放先前任务的记忆 - 修复版本"""
         if len(self.task_memory) == 0:
             return
 
         try:
-            # 隨機採樣一批記憶
+            # 随机采样一批记忆
             indices = np.random.choice(len(self.task_memory),
                                        size=min(batch_size, len(self.task_memory)),
                                        replace=False)
             batch = [self.task_memory[i] for i in indices]
 
-            print(f"回放批次大小: {len(batch)}")
-
-            # 安全地解包數據
+            # 安全地解包数据
             states_list, actions_list, advantages_list, old_probs_list, returns_list = [], [], [], [], []
 
-            for i, exp in enumerate(batch):
-                try:
-                    if len(exp) >= 5:
-                        # 狀態數據處理
-                        state = exp[0]
-                        if isinstance(state, (list, np.ndarray)):
-                            states_list.append(np.array(state, dtype=np.float32).flatten())
-                        else:
-                            states_list.append(np.array([state], dtype=np.float32))
+            for exp in batch:
+                if len(exp) >= 5:
+                    # 状态数据
+                    state = np.array(exp[0], dtype=np.float32).flatten()
+                    states_list.append(state)
 
-                        # 動作數據處理
-                        action = exp[1]
-                        if isinstance(action, (list, np.ndarray)):
-                            action_array = np.array(action, dtype=np.float32)
-                            actions_list.append(action_array)
-                        else:
-                            actions_list.append(np.float32(action))
+                    # 动作数据
+                    action = exp[1]
+                    actions_list.append(action)
 
-                        # 其他數據處理
-                        advantages_list.append(np.float32(exp[2]))
-                        old_probs_list.append(np.float32(exp[3]))
-                        returns_list.append(np.float32(exp[4]))
+                    # 优势值
+                    advantages_list.append(float(exp[2]))
 
-                except Exception as e:
-                    print(f"處理經驗數據 {i} 時出錯: {e}")
-                    continue
+                    # 旧概率 - 确保是概率分布
+                    old_prob = np.array(exp[3], dtype=np.float32).flatten()
+                    if len(old_prob) != self.action_dim:
+                        # 如果形状不对，调整为均匀分布
+                        old_prob = np.ones(self.action_dim, dtype=np.float32) / self.action_dim
+                    old_probs_list.append(old_prob)
+
+                    # 回报值
+                    returns_list.append(float(exp[4]))
 
             if len(states_list) == 0:
-                print("警告：沒有有效的經驗數據")
                 return
 
-            # 轉換為張量
+            # 转换为张量
             states = tf.convert_to_tensor(states_list, dtype=tf.float32)
-            actions = tf.convert_to_tensor(actions_list, dtype=tf.float32)
+            actions = tf.convert_to_tensor(actions_list, dtype=tf.int32 if self.is_discrete else tf.float32)
             advantages = tf.convert_to_tensor(advantages_list, dtype=tf.float32)
             old_probs = tf.convert_to_tensor(old_probs_list, dtype=tf.float32)
             returns = tf.convert_to_tensor(returns_list, dtype=tf.float32)
 
-            print(f"張量形狀 - states: {states.shape}, actions: {actions.shape}")
-            print(f"動作數據類型: {actions.dtype}")
-
-            # 訓練步驟
-            with tf.GradientTape() as tape:
-                # 獲取新策略的輸出
-                policy_output = self.policy(states)
-
-                if self.is_discrete:
-                    # 離散動作空間處理
-                    new_probs = policy_output
-
-                    # 確保動作是整型（用於one-hot編碼）
-                    if actions.dtype != tf.int32:
-                        actions_int = tf.cast(actions, tf.int32)
-                    else:
-                        actions_int = actions
-
-                    # 處理動作形狀
-                    if len(actions_int.shape) == 1:
-                        actions_int = tf.reshape(actions_int, [-1, 1])
-
-                    actions_one_hot = tf.one_hot(tf.squeeze(actions_int), depth=self.action_dim)
-
-                    # 確保old_probs形狀正確
-                    if len(old_probs.shape) == 1:
-                        old_probs_reshaped = tf.reshape(old_probs, [-1, self.action_dim])
-                    else:
-                        old_probs_reshaped = old_probs
-
-                    # 計算概率
-                    old_action_probs = tf.reduce_sum(old_probs_reshaped * actions_one_hot, axis=1, keepdims=True)
-                    new_action_probs = tf.reduce_sum(new_probs * actions_one_hot, axis=1, keepdims=True)
-
-                else:
-                    # 連續動作空間處理
-                    new_mean = policy_output  # 假設policy直接輸出均值
-
-                    # 對於連續動作，old_probs應該包含舊的均值和標準差
-                    # 這裡需要根據您的實際數據格式進行調整
-                    if len(old_probs.shape) == 1:
-                        # 如果old_probs是標量，假設是舊的概率值
-                        old_action_probs = tf.reshape(old_probs, [-1, 1])
-                    else:
-                        # 如果old_probs已經是概率值
-                        old_action_probs = old_probs
-
-                    # 簡單的連續動作概率計算（簡化版本）
-                    # 注意：這需要根據您的實際需求調整
-                    new_action_probs = tf.reduce_sum(new_mean * actions, axis=1, keepdims=True)
-
-                    # 如果old_probs形狀不匹配，使用簡單的默認值
-                    if old_action_probs.shape != new_action_probs.shape:
-                        old_action_probs = tf.ones_like(new_action_probs) * 0.5  # 默認概率
-
-                # 計算比率
-                ratio = new_action_probs / (old_action_probs + 1e-8)
-                print(f"比率形狀: {ratio.shape}, 數值範圍: [{tf.reduce_min(ratio):.3f}, {tf.reduce_max(ratio):.3f}]")
-
-                # 調整advantages形狀
-                advantages_reshaped = tf.reshape(advantages, ratio.shape)
-
-                # PPO裁剪損失
-                surr1 = ratio * advantages_reshaped
-                surr2 = tf.clip_by_value(ratio, 1 - self.clip_epsilon, 1 + self.clip_epsilon) * advantages_reshaped
-                actor_loss = -tf.reduce_mean(tf.minimum(surr1, surr2))
-
-                # Critic損失
-                values = self.critic(states)
-                critic_loss = tf.reduce_mean(tf.square(returns - tf.reshape(values, [-1])))
-
-                total_loss = actor_loss + 0.5 * critic_loss
-
-            # 應用梯度
-            gradients = tape.gradient(total_loss, self.policy.trainable_variables + self.critic.trainable_variables)
-
-            if gradients is not None:
-                actor_grads = gradients[:len(self.policy.trainable_variables)]
-                critic_grads = gradients[len(self.policy.trainable_variables):]
-
-                if any(g is not None for g in actor_grads):
-                    self.actor_optimizer.apply_gradients(
-                        zip(actor_grads, self.policy.trainable_variables)
-                    )
-
-                if any(g is not None for g in critic_grads):
-                    self.critic_optimizer.apply_gradients(
-                        zip(critic_grads, self.critic.trainable_variables)
-                    )
-
-            print(f"回放完成 - Actor損失: {actor_loss:.4f}, Critic損失: {critic_loss:.4f}")
+            # 使用修复后的train_step进行训练
+            self.train_step(states, actions, advantages, old_probs, returns)
 
         except Exception as e:
-            print(f"回放過程中出現錯誤: {e}")
+            print(f"回放过程中出现错误: {e}")
             import traceback
             traceback.print_exc()
-
     def _gaussian_prob(self, mean, std, actions):
         """計算高斯分佈的概率密度（連續動作空間）"""
         # 確保形狀正確
@@ -320,59 +481,55 @@ class PPOBaseAgent:
 
         return tf.reduce_prod(prob, axis=1, keepdims=True)
 
+    def reset_ewc_variables(self):
+        """重置EWC变量（在开始新训练前调用）"""
+        self._initialize_ewc_variables()
+        self.current_task_id = 0
+        print("EWC变量已重置")
 
-    def train_step_onehot(self, states, actions, advantages, old_probs, returns, use_ewc=True):
-        """
-        states: (batch_size, state_dim)
-        actions: (batch_size, action_dim) one-hot
-        advantages: (batch_size, action_dim)
-        old_probs: (batch_size, action_dim)
-        returns: (batch_size, action_dim)
-        """
-        with tf.GradientTape() as tape:
-            new_probs = self.actor(states, training=True)        # (batch_size, action_dim)
-            new_values = self.critic(states, training=True)      # (batch_size, action_dim)
-
-            # 选择动作对应概率
-            new_action_probs = tf.reduce_sum(new_probs * actions, axis=1)
-            old_action_probs = tf.reduce_sum(old_probs * actions, axis=1)
-            ratio = new_action_probs / (old_action_probs + 1e-8)
-            clipped_ratio = tf.clip_by_value(ratio, 1 - self.clip_epsilon, 1 + self.clip_epsilon)
-
-            # Advantage 只选择对应动作
-            selected_advantages = tf.reduce_sum(advantages * actions, axis=1)
-            policy_loss = -tf.reduce_mean(tf.minimum(ratio * selected_advantages,
-                                                    clipped_ratio * selected_advantages))
-
-            # Value loss 只选择动作对应列
-            selected_values = tf.reduce_sum(new_values * actions, axis=1)
-            selected_returns = tf.reduce_sum(returns * actions, axis=1)
-            value_loss = tf.reduce_mean(tf.square(selected_returns - selected_values))
-
-            entropy = -tf.reduce_mean(tf.reduce_sum(new_probs * tf.math.log(new_probs + 1e-8), axis=1))
-
-            base_loss = policy_loss + self.value_coef * value_loss - self.entropy_coef * entropy
-            ewc_loss = self._compute_ewc_loss() if use_ewc and self.fisher_matrices else 0
-            total_loss = base_loss + ewc_loss
-
-        grads = tape.gradient(total_loss, self.actor.trainable_variables + self.critic.trainable_variables)
-        self.optimizer.apply_gradients(zip(grads, self.actor.trainable_variables + self.critic.trainable_variables))
-        return total_loss, policy_loss, value_loss, entropy, ewc_loss
 
     def test_task_performance(self, env, task_id=None):
-            """测试在特定任务上的性能"""
+        """测试在特定任务上的性能 - 修复版本"""
+        try:
             state = env.reset()
             total_reward = 0
             done = False
+            steps = 0
+            max_steps = 1000  # 防止无限循环
 
-            while not done:
-                action, _ = self.select_action(state)
-                next_state, reward, done, _ = env.step(action)
-                total_reward += reward
-                state = next_state
+            while not done and steps < max_steps:
+                try:
+                    # 安全地解包返回值
+                    action_result = self.select_action(state)
 
+                    # 检查返回值数量
+                    if isinstance(action_result, tuple) and len(action_result) >= 2:
+                        action, action_prob = action_result[0], action_result[1]
+                    else:
+                        # 如果返回值不符合预期，使用默认值
+                        print(f"警告: select_action 返回了意外格式: {action_result}")
+                        if self.is_discrete:
+                            action = 0
+                            action_prob = 0.25
+                        else:
+                            action = np.zeros(self.action_dim)
+                            action_prob = 0.5
+
+                    next_state, reward, done, info = env.step(action)
+                    total_reward += reward
+                    state = next_state
+                    steps += 1
+
+                except Exception as e:
+                    print(f"测试过程中出错: {e}")
+                    break
+
+            print(f"任务测试完成: 总奖励 = {total_reward}, 步数 = {steps}")
             return total_reward
 
+        except Exception as e:
+            print(f"测试任务性能时出错: {e}")
+            return 0.0
     def _compute_ewc_loss(self):
         ewc_loss = 0.0
         if not self.fisher_matrices:
@@ -391,49 +548,380 @@ class PPOBaseAgent:
                 ewc_loss += 0.5 * self.ewc_lambda * tf.reduce_sum(fisher_t * tf.square(var - opt_t))
 
         return ewc_loss
+    def ewc_loss(self):
+        # 保存策略网络的参数
+        # 初始化 optimal_params，确保它是 tf.Tensor 类型
+        if self.optimal_params is None:
+            self.optimal_params = [tf.Variable(param) for param in self.policy_params]
+
+        # 将 optimal_params 转换为 tf.Variable 类型
+        self.old_policy_params = [tf.Variable(param) for param in self.optimal_params]
+        ewc_loss = 0
+        for param, old_param, fisher_matrix in zip(self.optimal_params, self.old_policy_params, self.fisher_matrices):
+            ewc_loss += tf.reduce_sum(fisher_matrix * (param - old_param) ** 2)
+        return self.ewc_lambda * ewc_loss
+
+    def get_policy(self, states):
+        """获取策略输出，确保形状正确"""
+        policy_output = self.policy(states)
+
+        # 如果是离散动作空间，确保返回 [batch_size, action_dim]
+        if self.is_discrete:
+            if isinstance(policy_output, (list, tuple)):
+                # 如果返回多个值，取第一个作为logits
+                logits = policy_output[0]
+            else:
+                logits = policy_output
+
+            # 确保是二维的
+            if len(logits.shape) == 1:
+                logits = tf.expand_dims(logits, 0)
+
+            return logits
+        else:
+            # 连续动作空间处理
+            return policy_output
+
+    def train_step_onehot(
+            self, states, actions, advantages, old_probs, returns,
+            clip_ratio=0.1, use_ewc=False
+    ):
+        """执行一次 PPO 更新 (自动处理 old_probs shape)"""
+
+        # === 转换为 Tensor ===
+        states = tf.convert_to_tensor(states, dtype=tf.float32)  # (N, state_dim)
+        actions = tf.convert_to_tensor(actions, dtype=tf.int32)  # (N,)
+        advantages = tf.convert_to_tensor(advantages, dtype=tf.float32)  # (N,)
+        returns = tf.convert_to_tensor(returns, dtype=tf.float32)  # (N,)
+
+        old_probs = tf.convert_to_tensor(old_probs, dtype=tf.float32)
+
+        # === one-hot 动作 ===
+        action_onehot = tf.one_hot(actions, depth=self.action_dim, dtype=tf.float32)  # (N, action_dim)
+
+        # === 修复 old_probs ===
+        if len(old_probs.shape) == 1:
+            # (N,) -> 说明存的是已选动作的概率
+            old_probs_selected = old_probs
+        elif len(old_probs.shape) == 2 and old_probs.shape[1] == self.action_dim:
+            # (N, action_dim) -> 存的是完整分布
+            old_probs_selected = tf.reduce_sum(old_probs * action_onehot, axis=1)
+        else:
+            raise ValueError(f"old_probs shape 不合法: {old_probs.shape}")
+
+        with tf.GradientTape(persistent=True) as tape:
+            # 策略网络前向
+            logits = self.actor(states, training=True)  # (N, action_dim)
+            probs = tf.nn.softmax(logits)  # (N, action_dim)
+
+            # 新策略下的已选动作概率
+            new_probs = tf.reduce_sum(probs * action_onehot, axis=1)  # (N,)
+
+            # 比例 r_t
+            ratio = new_probs / (old_probs_selected + 1e-8)
+
+            # PPO clip surrogate
+            surrogate1 = ratio * advantages
+            surrogate2 = tf.clip_by_value(ratio, 1 - clip_ratio, 1 + clip_ratio) * advantages
+            actor_loss = -tf.reduce_mean(tf.minimum(surrogate1, surrogate2))
+
+            # 值函数损失
+            values = self.critic(states, training=True)  # (N,1)
+            value_loss = tf.reduce_mean((returns - tf.squeeze(values)) ** 2)
+
+            # 熵正则
+            entropy = -tf.reduce_mean(tf.reduce_sum(probs * tf.math.log(probs + 1e-8), axis=1))
+
+            # EWC 正则化
+            ewc_loss = self._compute_ewc_loss() if use_ewc and self.fisher_matrices else 0.0
+
+            total_loss = actor_loss + 0.5 * value_loss - 0.01 * entropy + ewc_loss
+
+        # === 更新梯度 ===
+        actor_grads = tape.gradient(total_loss, self.actor.trainable_variables)
+        critic_grads = tape.gradient(total_loss, self.critic.trainable_variables)
+        self.actor_optimizer.apply_gradients(zip(actor_grads, self.actor.trainable_variables))
+        self.critic_optimizer.apply_gradients(zip(critic_grads, self.critic.trainable_variables))
+        del tape
+
+        return total_loss, actor_loss, value_loss, entropy,ewc_loss
+
+    def train_step(self, states, actions, advantages, old_probs, returns, clip_ratio=0.1, use_ewc=False):
+        """执行一次 PPO 更新（底层函数）"""
+        states = tf.convert_to_tensor(states, dtype=tf.float32)
+
+        if self.is_discrete:
+            actions = tf.convert_to_tensor(actions, dtype=tf.int32)
+            if len(actions.shape) > 1:
+                actions = tf.squeeze(actions, axis=-1)
+        else:
+            actions = tf.convert_to_tensor(actions, dtype=tf.float32)
+
+        advantages = tf.convert_to_tensor(advantages, dtype=tf.float32)
+        old_probs = tf.convert_to_tensor(old_probs, dtype=tf.float32)
+        returns = tf.convert_to_tensor(returns, dtype=tf.float32)
+
+        with tf.GradientTape() as tape:
+            if self.is_discrete:
+                logits = self.get_policy(states)
+                dist = tfp.distributions.Categorical(logits=logits)
+                new_log_probs = dist.log_prob(actions)
+
+                actions_one_hot = tf.one_hot(actions, depth=self.action_dim)
+                old_action_probs = tf.reduce_sum(old_probs * actions_one_hot, axis=1)
+                old_log_probs = tf.math.log(old_action_probs + 1e-8)
+
+                new_log_probs = tf.reshape(new_log_probs, [-1, 1])
+                old_log_probs = tf.reshape(old_log_probs, [-1, 1])
+            else:
+                policy_output = self.get_policy(states)
+                if isinstance(policy_output, (list, tuple)) and len(policy_output) == 2:
+                    mean, log_std = policy_output
+                else:
+                    mean, log_std = policy_output, self.log_std
+                std = tf.exp(log_std)
+                dist = tfp.distributions.Normal(mean, std)
+                new_log_probs = tf.reduce_sum(dist.log_prob(actions), axis=-1, keepdims=True)
+                old_log_probs = tf.reshape(old_probs, [-1, 1])
+
+            ratio = tf.exp(new_log_probs - old_log_probs)
+            advantages = tf.reshape(advantages, [-1, 1])
+
+            surrogate1 = ratio * advantages
+            surrogate2 = tf.clip_by_value(ratio, 1.0 - clip_ratio, 1.0 + clip_ratio) * advantages
+            policy_loss = -tf.reduce_mean(tf.minimum(surrogate1, surrogate2))
+
+            values = self.value_net(states)
+            returns = tf.reshape(returns, [-1, 1])
+            value_loss = tf.reduce_mean(tf.square(returns - values))
+
+            entropy = tf.reduce_mean(dist.entropy())
+            loss = policy_loss + self.value_coef * value_loss - self.entropy_coef * entropy
+
+            if use_ewc:
+                ewc_loss_val = self._compute_ewc_loss()
+                loss += ewc_loss_val
+            else:
+                ewc_loss_val = tf.constant(0.0)
+
+        trainable_vars = self.policy_params + self.value_params
+        grads = tape.gradient(loss, trainable_vars)
+        grads_and_vars = [(g, v) for g, v in zip(grads, trainable_vars) if g is not None]
+
+        if grads_and_vars:
+            self.optimizer.apply_gradients(grads_and_vars)
+
+        return (loss.numpy(), policy_loss.numpy(), value_loss.numpy(),
+                entropy.numpy(), ewc_loss_val.numpy())
+
+    def train_on_batch(self, states, actions, old_probs, returns, values, next_states, dones,
+                       clip_ratio=0.1, use_ewc=False, normalize_adv=True):
+        """高层接口：接收 rollout 数据并调用 train_step"""
+        try:
+            # 保证输入维度正确
+            states = self._ensure_2d(states, self.state_dim)
+            next_states = self._ensure_2d(next_states, self.state_dim)
+
+            # 计算优势函数
+            advantages = self._compute_advantages(returns, values)
+
+            # 归一化优势（推荐）
+            if normalize_adv:
+                advantages = (advantages - np.mean(advantages)) / (np.std(advantages) + 1e-8)
+
+            # 调用底层 train_step
+            loss, policy_loss, value_loss, entropy, ewc_loss = self.train_step(
+                states, actions, advantages, old_probs, returns,
+                clip_ratio=clip_ratio, use_ewc=use_ewc
+            )
+
+            return loss, policy_loss, value_loss, entropy, ewc_loss
+
+        except Exception as e:
+            print(f"train_on_batch 出错: {e}")
+            import traceback
+            traceback.print_exc()
+            return None, None, None, None, None
+
+    def _ensure_2d(self, data, expected_dim):
+        """确保数据是2D形状 (batch_size, feature_dim)"""
+        if not isinstance(data, np.ndarray):
+            data = np.array(data)
+
+        if len(data.shape) == 1:
+            if len(data) == expected_dim:
+                # 单个样本
+                return data.reshape(1, -1)
+            else:
+                # 批量样本但只有一维
+                return data.reshape(-1, expected_dim)
+        return data
+
+    def _compute_advantages(self, returns, values):
+        """计算优势函数"""
+        advantages = returns - values
+        return advantages
+    def collect_experience(self, env, num_episodes):
+        for episode in range(num_episodes):
+            state = env.reset()
+            done = False
+
+            while not done:
+                # 获取动作概率
+                action_probs = self.actor.predict(state.reshape(1, -1), verbose=0)[0]
+
+                # 选择动作（确保是标量）
+                action = np.random.choice(len(action_probs), p=action_probs)
+
+                # 执行动作
+                next_state, reward, done, _ = env.step(action)
+
+                # 存储经验（确保动作是标量）
+                self.store_experience(state, action, action_probs, reward, done, self.pointer)
+
+                state = next_state
+                self.pointer = (self.pointer + 1) % self.buffer_size
+
+    def store_experience(self, state, action, advantage, old_prob, return_, next_state=None):
+        """存储经验数据 - 确保概率格式正确"""
+        try:
+            # 标准化状态形状
+            state = np.array(state, dtype=np.float32).flatten()
+            if len(state) != self.state_dim:
+                state = state[:self.state_dim] if len(state) > self.state_dim else np.pad(state, (0,
+                                                                                                  self.state_dim - len(
+                                                                                                      state)))
+
+            # 处理动作
+            if self.is_discrete:
+                action = int(action)
+            else:
+                action = np.array(action, dtype=np.float32).flatten()
+                if len(action) != self.action_dim:
+                    action = action[:self.action_dim] if len(action) > self.action_dim else np.pad(action, (0,
+                                                                                                            self.action_dim - len(
+                                                                                                                action)))
+
+            # 关键修复：确保 old_prob 是概率分布格式
+            old_prob = np.array(old_prob, dtype=np.float32)
+
+            if self.is_discrete:
+                # 对于离散动作，old_prob 应该是所有动作的概率分布 [action_dim]
+                if old_prob.ndim == 0:
+                    # 如果是标量，转换为均匀分布
+                    old_prob = np.ones(self.action_dim) / self.action_dim
+                elif old_prob.ndim == 1 and len(old_prob) == 1:
+                    # 如果是一维但只有一个元素，也转换为均匀分布
+                    old_prob = np.ones(self.action_dim) / self.action_dim
+                elif old_prob.ndim == 1 and len(old_prob) != self.action_dim:
+                    # 如果长度不匹配，调整大小
+                    if len(old_prob) > self.action_dim:
+                        old_prob = old_prob[:self.action_dim]
+                    else:
+                        old_prob = np.pad(old_prob, (0, self.action_dim - len(old_prob)))
+                        # 归一化
+                        old_prob = old_prob / np.sum(old_prob) if np.sum(old_prob) > 0 else np.ones(
+                            self.action_dim) / self.action_dim
+            else:
+                # 连续动作空间，保持原样
+                pass
+
+            # 存储经验
+            experience = (state, action, float(advantage), old_prob, float(return_))
+            self.task_memory.append(experience)
+
+            print(f"存储经验: 动作{action}, old_prob形状{old_prob.shape}, 和{np.sum(old_prob):.3f}")
+
+        except Exception as e:
+            print(f"存储经验时出错: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def debug_select_action(self, state):
+        """调试版本的select_action，显示详细信息"""
+        print(f"=== select_action 调试 ===")
+        print(f"输入状态形状: {np.array(state).shape}")
+        print(f"是否离散动作: {self.is_discrete}")
+
+        state_tensor = tf.expand_dims(tf.convert_to_tensor(state, dtype=tf.float32), 0)
+        print(f"状态张量形状: {state_tensor.shape}")
+
+        if self.is_discrete:
+            logits = self.actor(state_tensor)
+            print(f"Logits形状: {logits.shape}")
+
+            dist = tfp.distributions.Categorical(logits=logits)
+            action = dist.sample()[0].numpy()
+            action_prob = dist.prob(action).numpy()
+
+            print(f"动作: {action}, 概率: {action_prob}")
+            print(f"动作类型: {type(action)}, 概率类型: {type(action_prob)}")
+
+            result = (int(action), float(action_prob))
+        else:
+            mean = self.actor(state_tensor)
+            print(f"均值形状: {mean.shape}")
+
+            log_std = tf.ones_like(mean) * self.log_std
+            dist = tfp.distributions.Normal(loc=mean, scale=tf.exp(log_std))
+            action = dist.sample()[0].numpy()
+            action_prob = dist.prob(action).numpy()
+            action_prob = np.prod(action_prob)
+
+            print(f"动作: {action}, 概率: {action_prob}")
+            result = (action, float(action_prob))
+
+        print(f"返回值: {result}")
+        print(f"返回值长度: {len(result)}")
+        print("=== 调试结束 ===\n")
+
+        return result
+
+    # 临时替换select_action进行调试
+    def test_task_performance_debug(self, env, task_id=None):
+        """调试版本的任务性能测试"""
+        state = env.reset()
+        total_reward = 0
+        done = False
+
+        print("开始调试任务性能测试...")
+
+        while not done:
+            # 使用调试版本
+            action, prob = self.debug_select_action(state)
+            print(f"选择的动作: {action}, 概率: {prob}")
+
+            next_state, reward, done, _ = env.step(action)
+            total_reward += reward
+            state = next_state
+
+        return total_reward
+
+
 
 class ESP32PPOAgent(PPOBaseAgent):
     """專為ESP32設計的輕量級PPO代理,繼承自LifelongPPOAgent"""
 
-    def __init__(self, state_dim=5, action_dim=4,
+    def __init__(self, fisher_matrix=None, optimal_params=None, state_dim=5, action_dim=4,
                  clip_epsilon=0.2, value_coef=0.5, entropy_coef=0.01,
-                 ewc_lambda=0.4, memory_size=1000, hidden_units=8,is_discrete=False):
-        """
-        初始化ESP32專用代理
+                 ewc_lambda=500, memory_size=1000, hidden_units=32,
+                 clip_ratio=0.2, actor_lr=1e-4, critic_lr=1e-3, is_discrete=False,
+                 gamma=0.99, lam=0.95):
+        super().__init__( fisher_matrix , optimal_params , state_dim , action_dim ,
+                 clip_epsilon , value_coef , entropy_coef ,
+                 ewc_lambda , memory_size , hidden_units ,
+                 clip_ratio , actor_lr, critic_lr , is_discrete ,
+                 gamma , lam   )
 
-        Args:
-            hidden_units: 隱藏層神經元數量,根據ESP32內存調整
-        """
-        super().__init__(state_dim, action_dim, clip_epsilon, value_coef,
-                         entropy_coef, ewc_lambda, memory_size)
-        self.fisher_matrix = None
-        self.optimal_params = None
-        self.old_policy_params=None
-        self.ewc_lambda = ewc_lambda
-        self.hidden_units = hidden_units
+
         self._tflite_models = {}
-
         # 重新構建更小的網絡
 
-        self.policy=ESP32PPOPolicy(state_dim, action_dim, hidden_units, is_discrete)
-        self.critic = self._build_esp32_critic()
-        self.actor = self.policy
-        # 使用更小的學習率
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
+
         self.is_discrete=is_discrete
         print(f"ESP32代理初始化完成: {hidden_units}隱藏單元")
 
 
-    def _build_esp32_critic(self):
-        """構建適合ESP32的輕量級Critic網絡"""
-        return tf.keras.Sequential([
-            tf.keras.layers.Dense(self.hidden_units, activation='relu',
-                                  input_shape=(self.state_dim,),
-                                  kernel_regularizer=tf.keras.regularizers.l2(0.001)),
-            tf.keras.layers.Dense(1, activation='linear',
-                                  kernel_regularizer=tf.keras.regularizers.l2(0.001))
-        ], name='esp32_critic')
-    
     def _build_models(self):
         """显式构建模型"""
         # 创建虚拟输入来构建模型
@@ -572,16 +1060,16 @@ class ESP32PPOAgent(PPOBaseAgent):
             else:
                 return self.critic.predict(np.array([state]))[0]
 
-    def get_action_esp32(self, state):
+    def get_esp32_action(self, state,return_probs=False):
         """專為ESP32設計的動作獲取方法"""
         try:
             probs = self.predict_with_tflite(state, 'actor')
             action = (probs > 0.5).astype(np.float32)
             return action
         except:
-            return self.get_action(state)
+            return super().get_action(state,return_probs)
 
-    def get_value_esp32(self, state):
+    def get_esp32_value(self, state):
         """專為ESP32設計的值預測方法"""
         try:
             return self.predict_with_tflite(state, 'critic')[0]
@@ -781,36 +1269,6 @@ void loop() {
         print("無法壓縮到目標大小")
         return False
  
-    def compute_fisher_matrix(self, dataset: np.ndarray):
-        """計算 Fisher 矩陣"""
-        fisher = {}
-        optimal_params = {}
-        for var in self.actor.trainable_variables:
-            fisher[var.name] = np.zeros_like(var.numpy())
-            optimal_params[var.name] = var.numpy().copy()
-
-        for x in dataset:
-            # 标准化输入形状
-            x = x.astype(np.float32)
-
-            # 确保输入形状为 (1, n_features)
-            if x.ndim == 1:
-                x = x.reshape(1, -1)
-            elif x.ndim == 3:
-                x = x.reshape(x.shape[0], x.shape[2])
-            elif x.ndim == 2 and x.shape[0] != 1:
-                x = x.reshape(1, -1)
-
-            with tf.GradientTape() as tape:
-                probs = self.actor(x)
-                log_prob = tf.math.log(probs + 1e-8)
-            grads = tape.gradient(log_prob, self.actor.trainable_variables)
-            for g, var in zip(grads, self.actor.trainable_variables):
-                if g is not None:
-                    fisher[var.name] += (g.numpy() ** 2) / len(dataset)
-
-        self.fisher_matrix = fisher
-        self.optimal_params = optimal_params
 
     def save_fisher_and_params(self, path: str):
         np.savez_compressed(
@@ -820,115 +1278,41 @@ void loop() {
         )
         print(f"  Fisher matrix & optimal params saved to {path}")
 
-    def get_policy(self, states):
-        return self.policy(states)
-
-    def  get_policy0(self, states):
-        hidden = self.actor(states)
-
-        if self.is_discrete:
-            return self.logits_layer(hidden)
-        else:
-            mean = self.actor(states)   # 直接取输出
-            log_std = self.log_std          # 可训练参数
-            std = tf.exp(log_std)
-            return mean, std
-
-    def ewc_loss(self):
-        # 保存策略网络的参数
-        # 初始化 optimal_params，确保它是 tf.Tensor 类型
-        if self.optimal_params is None:
-            self.optimal_params = [tf.Variable(param) for param in self.policy_params]
-
-        # 将 optimal_params 转换为 tf.Variable 类型
-        self.old_policy_params = [tf.Variable(param) for param in self.optimal_params]
-        ewc_loss = 0
-        for param, old_param, fisher_matrix in zip(self.optimal_params, self.old_policy_params, self.fisher_matrices):
-            ewc_loss += tf.reduce_sum(fisher_matrix * (param - old_param) ** 2)
-        return self.ewc_lambda * ewc_loss
-
-
-
-    def train_ppo_step(self, states, actions, advantages, old_probs, returns,clip_ratio=0.1, use_ewc=False):
-        """执行一次 PPO 更新"""
-        states = tf.convert_to_tensor(states, dtype=tf.float32)
-        actions = tf.convert_to_tensor(actions, dtype=tf.float32 if not self.is_discrete else tf.int32)
-        advantages = tf.convert_to_tensor(advantages, dtype=tf.float32)
-        old_probs = tf.convert_to_tensor(old_probs, dtype=tf.float32)
-        returns = tf.convert_to_tensor(returns, dtype=tf.float32)
-
-        with tf.GradientTape() as tape:
-            if self.is_discrete:
-                logits = self.get_policy(states)
-
-                if self.action_dim == 1:
-                    dist = tfp.distributions.Bernoulli(logits=logits)
-                else:
-                    dist = tfp.distributions.Categorical(logits=logits)
-                log_probs = dist.log_prob(actions)
-            else:
-                mean, log_std = self.get_policy(states)
-                std = tf.exp(log_std)
-                dist = tfp.distributions.Normal(mean, std)
-                log_probs = tf.reduce_sum(dist.log_prob(actions), axis=-1)
-            log_probs = tf.expand_dims(log_probs, axis=-1)
-            log_probs = tf.tile(log_probs, [1, 4])
-            old_probs = tf.squeeze(old_probs, axis=1)
-            ratio = tf.exp(log_probs - old_probs+ 1e-8)
-            surrogate1 = ratio * advantages
-            surrogate2 = tf.clip_by_value(ratio, 1.0 -  clip_ratio, 1.0 + clip_ratio) * advantages
-            policy_loss = -tf.reduce_mean(tf.minimum(surrogate1, surrogate2))
-
-            # Value loss
-            values = self.value_net(states)
-            value_loss = tf.reduce_mean((returns - tf.squeeze(values))**2)
-
-            # 总损失
-            loss = policy_loss + self.value_coef * value_loss - self.entropy_coef * tf.reduce_mean(dist.entropy())
-
-            if use_ewc:
-                loss += self._compute_ewc_loss()
-
-        grads = tape.gradient(loss, self.policy_params + self.value_params)
-        self.optimizer.apply_gradients(zip(grads, self.policy_params + self.value_params))
-
-        return loss
-
 
     @staticmethod
-    def process_experiences(agent,experiences, gamma=0.99, gae_lambda=0.95):
+    def process_experiences(agent, experiences, gamma=0.99, gae_lambda=0.95):
         """
-        处理经验并计算advantages和returns
+        处理经验并计算 advantages 和 returns
         """
         # 提取数据
-        #states = [exp[0] for exp in experiences]
-        #actions = [exp[1] for exp in experiences]
-        #rewards = [exp[2] for exp in experiences]
-        #next_states = [exp[3] for exp in experiences]
-        #dones = [exp[4] for exp in experiences]
-        #old_probs = [exp[5] for exp in experiences]
         states = [exp["state"] for exp in experiences]
         actions = [exp["action"] for exp in experiences]
         rewards = [exp["reward"] for exp in experiences]
         next_states = [exp["next_state"] for exp in experiences]
         dones = [exp["done"] for exp in experiences]
         old_probs = [exp["old_prob"] for exp in experiences]
-        # 转换为Tensor
+
+        # 转换为 Tensor
         states = tf.stack(states)
-        actions = tf.stack(actions)
         rewards = tf.convert_to_tensor(rewards, dtype=tf.float32)
         dones = tf.convert_to_tensor(dones, dtype=tf.float32)
         old_probs = tf.stack(old_probs)
 
-        # 使用critic网络计算状态价值
-        with tf.GradientTape() as tape:
-            values = agent.critic(states, training=True)
-            next_values = agent.critic(tf.stack(next_states), training=True)
+        # === 关键修正: 确保 actions 是索引 (batch,) ===
+        actions = tf.stack(actions)
+        if len(actions.shape) == 2:  # (batch, action_dim) -> one-hot
+            actions = tf.argmax(actions, axis=1, output_type=tf.int32)
+        else:  # (batch,) -> 已经是索引
+            actions = tf.cast(actions, tf.int32)
 
-        # 计算advantages
+        # 使用 critic 网络计算状态价值
+        values = tf.squeeze(agent.critic(states, training=False), axis=1)  # (batch,)
+        next_values = tf.squeeze(agent.critic(tf.stack(next_states), training=False), axis=1)  # (batch,)
+
+        # 计算 advantages
         advantages = agent.compute_advantages(rewards, values, next_values, dones, gamma, gae_lambda)
 
-        # 计算returns（也可以直接用：returns = advantages + values）
+        # 计算 returns
         returns = agent.compute_returns(rewards, dones, gamma)
 
         return states, actions, advantages, old_probs, returns
@@ -1061,6 +1445,7 @@ void loop() {
 
             # 将本回合的经验添加到总经验中
             experiences.extend(episode_experiences)
+            # 存储经验（确保动作是标量）
 
             # 打印回合总结
             total_reward = sum(exp['reward'] for exp in episode_experiences)
@@ -1074,26 +1459,31 @@ void loop() {
 
         return experiences
 
+
+
 class ESP32OnlinePPOFisherAgent(ESP32PPOAgent):
     """專為ESP32設計的輕量級PPO代理 支持 online EWC 和 TFLite 導出"""
 
     def __init__(self, fisher_matrix=None, optimal_params=None, state_dim=5, action_dim=4,
                  clip_epsilon=0.2, value_coef=0.5, entropy_coef=0.01,
-                 ewc_lambda=500, memory_size=1000, hidden_units=8,
-                 clip_ratio=0.2, actor_lr=1e-3, critic_lr=1e-3, is_discrete=False,
+                 ewc_lambda=500, memory_size=1000, hidden_units=32,  # 增加到 32
+                 clip_ratio=0.2, actor_lr=1e-4, critic_lr=1e-3, is_discrete=False,  # 降低actor学习率
                  gamma=0.99, lam=0.95):
-        super().__init__(state_dim, action_dim, clip_epsilon, value_coef,
-                         entropy_coef, ewc_lambda, memory_size, is_discrete)
+        super().__init__(fisher_matrix , optimal_params , state_dim , action_dim ,
+                 clip_epsilon , value_coef , entropy_coef ,
+                 ewc_lambda , memory_size , hidden_units ,
+                 clip_ratio , actor_lr, critic_lr , is_discrete ,
+                 gamma , lam )
 
         self.hidden_units = hidden_units
         self._tflite_models = {}
-        self.actor = self._build_esp32_actor()
-        self.critic = self._build_esp32_critic()
+        self.actor = self._build_actor()
+        self.critic = self._build_critic()
         self.optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
         self.value_net = self.critic
 
         self.logits_layer = self.actor.layers[-1]
-        self.log_std = tf.Variable(initial_value=-0.5, trainable=True, dtype=tf.float32)
+
         self.policy_params = self.actor.trainable_variables
         self.value_params = self.critic.trainable_variables
         # EWC online
@@ -1105,7 +1495,6 @@ class ESP32OnlinePPOFisherAgent(ESP32PPOAgent):
         self.state_dim = state_dim
         self.action_dim = action_dim
 
-        self.log_std = tf.Variable(initial_value=-0.5 * tf.ones(action_dim), trainable=True)
 
         self.clip_ratio = clip_ratio
         self.gamma = gamma
@@ -1119,17 +1508,7 @@ class ESP32OnlinePPOFisherAgent(ESP32PPOAgent):
     def sigmoid(self, x):
         return 1.0 / (1.0 + tf.exp(-x))
 
-    def _build_esp32_actor(self):
-        return tf.keras.Sequential([
-            tf.keras.layers.Dense(self.hidden_units, activation='relu', input_shape=(self.state_dim,)),
-            tf.keras.layers.Dense(self.action_dim, activation='sigmoid')
-        ], name='esp32_actor')
 
-    def _build_esp32_critic(self):
-        return tf.keras.Sequential([
-            tf.keras.layers.Dense(self.hidden_units, activation='relu', input_shape=(self.state_dim,)),
-            tf.keras.layers.Dense(1, activation='linear')
-        ], name='esp32_critic')
 
     # ================= 收集一条 trajectory =================
     def collect_trajectory(self, env, max_steps=200):
@@ -1232,69 +1611,105 @@ class ESP32OnlinePPOFisherAgent(ESP32PPOAgent):
             action_prob = dist.prob(action).numpy()
             return action, action_prob
 
-    # ========== train_step ==========
-    def train_buffer_step(self,buf=None, use_ewc=True):
-        states, actions, rewards, old_probs, next_states, dones = self.get_buffer_items(buf)
-        if len(states) == 0:
+
+    def train_buffer_step(self, buf=None, use_ewc=True):
+        if buf is None or len(buf.states) == 0:
             return 0.0
 
-        # === 计算 returns 和 advantages ===
-        values = self.critic(states).numpy().squeeze()
-        next_values = self.critic(next_states).numpy().squeeze()
-        deltas = rewards + self.gamma * next_values * (1 - dones) - values
+        states, actions, rewards, old_probs, next_states, dones = self.get_buffer_items(buf)
 
-        advantages = []
-        adv = 0.0
-        for delta, done in zip(deltas[::-1], dones[::-1]):
-            adv = delta + self.gamma * self.lam * adv * (1 - done)
-            advantages.insert(0, adv)
-        advantages = np.array(advantages, dtype=np.float32)
-        returns = advantages + values
+        # 奖励标准化
+        rewards = self._normalize_rewards(rewards)
 
-        # === TensorFlow 训练 ===
-        with tf.GradientTape() as tape:
-            # 策略分布
-            logits = self.actor(states)
+        # 确保数据格式正确
+        states = tf.cast(states, tf.float32)
+        actions = tf.cast(actions, tf.float32)
+        rewards = tf.cast(rewards, tf.float32)
 
+        with tf.GradientTape(persistent=True) as tape:
+            # Actor 损失
             if self.is_discrete:
+                logits = self.actor(states)
                 dist = tfp.distributions.Categorical(logits=logits)
-                log_probs = dist.log_prob(actions)
-                entropy = dist.entropy()
+                new_log_probs = dist.log_prob(tf.squeeze(actions))
             else:
-                mean = logits
-                log_std = tf.zeros_like(mean)  # 简化: 固定 std
-                dist = tfp.distributions.Normal(loc=mean, scale=tf.exp(log_std))
-                log_probs = tf.reduce_sum(dist.log_prob(actions), axis=1)
-                entropy = tf.reduce_sum(dist.entropy(), axis=1)
+                means = self.actor(states)
+                log_stds = tf.ones_like(means) * self.log_std  # 使用可训练的log_std
+                dist = tfp.distributions.Normal(loc=means, scale=tf.exp(log_stds))
+                new_log_probs = tf.reduce_sum(dist.log_prob(actions), axis=-1)
 
-            # old log probs
-            old_log_probs = np.log(old_probs + 1e-8)
+            # 计算优势函数
+            values = tf.squeeze(self.critic(states))
+            next_values = tf.squeeze(self.critic(next_states))
+            advantages = self._compute_advantages(rewards, values, next_values, dones)
 
-            # 比率
-            ratio = tf.exp(log_probs - old_log_probs)
+            # 比率和裁剪
+            ratio = tf.exp(new_log_probs - tf.cast(old_probs, tf.float32))
+            clipped_ratio = tf.clip_by_value(ratio, 1 - self.clip_ratio, 1 + self.clip_ratio)
 
-            # surrogate loss
-            surr1 = ratio * advantages
-            surr2 = tf.clip_by_value(ratio, 1 - self.clip_ratio, 1 + self.clip_ratio) * advantages
-            actor_loss = -tf.reduce_mean(tf.minimum(surr1, surr2))
+            # Actor 损失
+            actor_loss = -tf.reduce_mean(tf.minimum(
+                ratio * advantages,
+                clipped_ratio * advantages
+            ))
 
-            # critic loss
-            values_pred = self.critic(states)
-            critic_loss = tf.reduce_mean(tf.square(returns - values_pred))
+            # Critic 损失
+            returns = advantages + values
+            value_pred = tf.squeeze(self.critic(states))
+            critic_loss = tf.reduce_mean(tf.square(returns - value_pred))
 
-            # 总 loss
-            loss = actor_loss + self.vf_coef * critic_loss - self.ent_coef * tf.reduce_mean(entropy)
+            # 熵奖励
+            entropy = tf.reduce_mean(dist.entropy())
 
-        # === 更新参数 ===
-        grads = tape.gradient(loss, self.actor.trainable_variables + self.critic.trainable_variables)
-        self.optimizer.apply_gradients(zip(grads, self.actor.trainable_variables + self.critic.trainable_variables))
+            # 总损失
+            total_loss = actor_loss + self.vf_coef * critic_loss - self.ent_coef * entropy
 
-        print(f"[Train] Loss={loss.numpy():.4f}, Actor={actor_loss.numpy():.4f}, Critic={critic_loss.numpy():.4f}")
+            # EWC 正则化
+            if use_ewc and self.online_fisher is not None:
+                ewc_loss = self.ewc_regularization()
+                total_loss += ewc_loss
 
-        # 清空缓存
-        self.reset_buffer()
-        return loss.numpy()
+        # 分别优化actor和critic
+        actor_grads = tape.gradient(total_loss, self.actor.trainable_variables)
+        critic_grads = tape.gradient(critic_loss, self.critic.trainable_variables)
 
+        # 梯度裁剪
+        actor_grads, _ = tf.clip_by_global_norm(actor_grads, 0.5)
+        critic_grads, _ = tf.clip_by_global_norm(critic_grads, 0.5)
+
+        self.actor_opt.apply_gradients(zip(actor_grads, self.actor.trainable_variables))
+        self.critic_opt.apply_gradients(zip(critic_grads, self.critic.trainable_variables))
+
+        del tape  # 释放持久tape
+
+        print(f"Loss: {total_loss.numpy():.3f}, Actor: {actor_loss.numpy():.3f}, "
+              f"Critic: {critic_loss.numpy():.3f}, Entropy: {entropy.numpy():.3f}")
+
+        return total_loss.numpy()
+
+    def _normalize_rewards(self, rewards):
+        """奖励标准化"""
+        rewards = np.array(rewards)
+        if len(rewards) > 1:
+            rewards = (rewards - np.mean(rewards)) / (np.std(rewards) + 1e-8)
+        return np.clip(rewards, -10, 10)  # 限制奖励范围
+
+    def _compute_advantages(self, rewards, values, next_values, dones):
+        """计算GAE优势函数"""
+        advantages = []
+        advantage = 0.0
+
+        for t in reversed(range(len(rewards))):
+            delta = rewards[t] + self.gamma * next_values[t] * (1 - dones[t]) - values[t]
+            advantage = delta + self.gamma * self.lam * advantage * (1 - dones[t])
+            advantages.insert(0, advantage)
+
+        advantages = np.array(advantages)
+        # 标准化优势函数
+        if len(advantages) > 1:
+            advantages = (advantages - np.mean(advantages)) / (np.std(advantages) + 1e-8)
+
+        return tf.convert_to_tensor(advantages, dtype=tf.float32)
     # ------------------ EWC online 更新 ------------------
     def update_online_fisher(self, obs: tf.Tensor, action: tf.Tensor):
         self.update_counter += 1
@@ -1459,42 +1874,6 @@ class ESP32PPOPolicy(tf.keras.Model):
             log_prob -= 0.5 * tf.math.log(2.0 * np.pi) * tf.cast(self.action_dim, tf.float32)
             log_prob -= tf.reduce_sum(tf.math.log(std))
             return log_prob
-# 或者使用Keras的train_on_batch方法
-class CompiledPPOAgent:
-    def __init__(self, state_dim, action_dim):
-        self.state_dim = state_dim
-        self.action_dim = action_dim
-        self.actor, self.critic = self._build_and_compile_networks()
-
-    def _build_and_compile_networks(self):
-        # Actor
-        actor = tf.keras.Sequential([
-            tf.keras.layers.Dense(64, activation='relu', input_shape=(self.state_dim,)),
-            tf.keras.layers.Dense(64, activation='relu'),
-            tf.keras.layers.Dense(self.action_dim, activation='sigmoid')
-        ])
-        actor.compile(optimizer='adam', loss='mse')
-
-        # Critic
-        critic = tf.keras.Sequential([
-            tf.keras.layers.Dense(64, activation='relu', input_shape=(self.state_dim,)),
-            tf.keras.layers.Dense(64, activation='relu'),
-            tf.keras.layers.Dense(1, activation='linear')
-        ])
-        critic.compile(optimizer='adam', loss='mse')
-
-        return actor, critic
-
-    def select_action(self, state):
-        state_tensor = tf.convert_to_tensor([state], dtype=tf.float32)
-        action_probs = self.actor.predict(state_tensor, verbose=0)[0]
-
-        actions = [1 if np.random.random() < prob else 0 for prob in action_probs]
-        return np.array(actions), action_probs
-
-    def get_value(self, state):
-        state_tensor = tf.convert_to_tensor([state], dtype=tf.float32)
-        return self.critic.predict(state_tensor, verbose=0)[0, 0]
 
 
 class PPOBuffer:
@@ -1504,60 +1883,163 @@ class PPOBuffer:
         self.buffer_size = buffer_size
         self.gamma = gamma
 
+        # 初始化缓冲区数组
         self.states = np.zeros((buffer_size, state_dim), dtype=np.float32)
         self.actions = np.zeros(buffer_size, dtype=np.int32)  # 存整数动作
         self.rewards = np.zeros(buffer_size, dtype=np.float32)
-        self.values = np.zeros((buffer_size, action_dim), dtype=np.float32)
+        self.values = np.zeros(buffer_size, dtype=np.float32)  # 修正：应该是1D，不是2D
         self.next_states = np.zeros((buffer_size, state_dim), dtype=np.float32)
         self.probs = np.zeros((buffer_size, action_dim), dtype=np.float32)
-        self.dones = np.zeros(buffer_size, dtype=np.float32)
+        self.dones = np.zeros(buffer_size, dtype=bool)  # 修正：使用bool类型
+
+        # 用于计算returns
+        self.returns = np.zeros(buffer_size, dtype=np.float32)
 
         self.ptr = 0
         self.num_samples = 0
-        self.pointer = 0
-    def _init_buffer(self):
-        """Initialize replay buffer with correct dimensions"""
-        self.states = np.zeros((self.buffer_size, self.state_dim))
-        self.actions = np.zeros((self.buffer_size, self.action_dim))
-        self.probs = np.zeros((self.buffer_size, self.action_dim))  # ← Critical fix
-        self.rewards = np.zeros(self.buffer_size)
-        self.dones = np.zeros(self.buffer_size, dtype=bool)
-        self.pointer = 0
+
     def is_full(self):
         return self.num_samples == self.buffer_size
 
     def finish_path(self, last_value=0):
         """计算 GAE 或 Returns，这里简单使用 returns = rewards + last_value"""
-        self.returns = np.zeros_like(self.rewards)
+        # 确保有数据
+        if self.num_samples == 0:
+            return
+
+        self.returns = np.zeros(self.num_samples, dtype=np.float32)
         running_return = last_value
+
+        # 反向计算returns
         for t in reversed(range(self.num_samples)):
-            running_return = self.rewards[t] + self.gamma * running_return * (1 - self.dones[t])
+            if self.dones[t]:
+                running_return = 0
+            running_return = self.rewards[t] + self.gamma * running_return
             self.returns[t] = running_return
- 
+
     def clear(self):
+        """清空缓冲区"""
         self.ptr = 0
         self.num_samples = 0
- 
-    def store(self, state, action, prob, reward, next_state, done, value):
-        
-        if prob.shape != (self.action_dim,):
-            # Handle the mismatch - choose appropriate strategy
-            if len(prob) > self.action_dim:
-                prob = prob[:self.action_dim]  # Truncate
-            else:
-                prob = np.pad(prob, (0, self.action_dim - len(prob)))  # Pad
-        idx = self.ptr % self.buffer_size
-        self.states[idx] = state
-        self.actions[idx] = action
-        self.probs[idx] = prob
-        self.rewards[idx] = reward
-        self.next_states[idx] = next_state  # 存储next_state
-        self.dones[idx] = done
-        self.values[idx] = value
-        self.ptr += 1
-        self.num_samples = min(self.num_samples + 1, self.buffer_size)
+        # 可选：重置数组为零
+        self.states.fill(0)
+        self.actions.fill(0)
+        self.rewards.fill(0)
+        self.values.fill(0)
+        self.next_states.fill(0)
+        self.probs.fill(0)
+        self.dones.fill(False)
 
-    
+    def store(self, state, action, prob, reward, next_state, done, value):
+        """修复版的存储方法"""
+        try:
+            # 安全的形状处理
+            state = self._safe_ensure_state_shape(state)
+            next_state = self._safe_ensure_state_shape(next_state)
+            prob = self._safe_ensure_prob_shape(prob)
+            value = self._safe_ensure_scalar(value)
+
+            idx = self.ptr % self.buffer_size
+            self.states[idx] = state
+            self.actions[idx] = action
+            self.probs[idx] = prob
+            self.rewards[idx] = float(reward)
+            self.next_states[idx] = next_state
+            self.dones[idx] = bool(done)
+            self.values[idx] = value
+
+            self.ptr += 1
+            self.num_samples = min(self.num_samples + 1, self.buffer_size)
+
+        except Exception as e:
+            print(f"存储经验数据出错: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _safe_ensure_state_shape(self, state):
+        """安全的状态形状处理"""
+        if isinstance(state, (int, float, np.number)):
+            # 单个数值，转换为1D数组
+            return np.array([state], dtype=np.float32)
+        elif hasattr(state, '__len__'):
+            # 有长度的对象（数组、列表等）
+            try:
+                state_array = np.array(state, dtype=np.float32).flatten()
+                return state_array
+            except:
+                return np.array([state], dtype=np.float32)
+        else:
+            # 其他情况，尝试转换
+            return np.array([state], dtype=np.float32)
+
+    def _safe_ensure_prob_shape(self, prob):
+        """安全的概率形状处理"""
+        # 检查是否是标量
+        if isinstance(prob, (int, float, np.number)):
+            # 单个概率值，转换为均匀分布
+            prob_value = float(prob)
+            if prob_value <= 0 or prob_value > 1:
+                # 无效概率，使用均匀分布
+                return np.full(self.action_dim, 1.0 / self.action_dim)
+            else:
+                # 创建基于该概率的分布（第一个动作概率高，其他均匀）
+                probs = np.full(self.action_dim, (1.0 - prob_value) / (self.action_dim - 1))
+                probs[0] = prob_value
+                return probs
+        else:
+            # 尝试处理为数组
+            try:
+                prob_array = np.array(prob, dtype=np.float32).flatten()
+                if len(prob_array) == self.action_dim:
+                    return prob_array
+                else:
+                    # 维度不匹配，使用均匀分布
+                    return np.full(self.action_dim, 1.0 / self.action_dim)
+            except:
+                # 转换失败，使用均匀分布
+                return np.full(self.action_dim, 1.0 / self.action_dim)
+
+    def _safe_ensure_scalar(self, value):
+        """确保值是标量"""
+        if isinstance(value, (int, float, np.number)):
+            return float(value)
+        elif hasattr(value, '__len__'):
+            try:
+                if len(value) > 0:
+                    return float(value[0])
+                else:
+                    return 0.0
+            except:
+                return 0.0
+        else:
+            try:
+                return float(value)
+            except:
+                return 0.0
+
+
+    def _create_valid_probability(self, original_prob):
+        """创建有效的概率分布"""
+        original_prob = np.array(original_prob, dtype=np.float32).flatten()
+
+        if len(original_prob) == 0:
+            # 如果没有概率信息，返回均匀分布
+            return np.full(self.action_dim, 1.0 / self.action_dim)
+
+        # 取前action_dim个元素，不足则填充
+        if len(original_prob) >= self.action_dim:
+            prob = original_prob[:self.action_dim]
+        else:
+            # 填充剩余部分为0
+            prob = np.pad(original_prob, (0, self.action_dim - len(original_prob)))
+
+        # 归一化
+        prob_sum = np.sum(prob)
+        if prob_sum <= 0:
+            return np.full(self.action_dim, 1.0 / self.action_dim)
+
+        return prob / prob_sum
+
     def get_buffer_items(self):
         """返回 numpy 格式的完整batch"""
         return (
@@ -1566,130 +2048,112 @@ class PPOBuffer:
             np.array(self.rewards[:self.num_samples], dtype=np.float32),
             np.array(self.probs[:self.num_samples], dtype=np.float32),
             np.array(self.next_states[:self.num_samples], dtype=np.float32),
-            np.array(self.dones[:self.num_samples], dtype=np.bool_)
+            np.array(self.dones[:self.num_samples], dtype=bool)
         )
 
-    def get_batch(self, batch_size=64):
+    def get_ppo_batch(self, batch_size=64):
         """返回mini-batch生成器"""
+        if self.num_samples == 0:
+            return
+
         idxs = np.arange(self.num_samples)
         np.random.shuffle(idxs)
 
         for start in range(0, self.num_samples, batch_size):
-            end = start + batch_size
+            end = min(start + batch_size, self.num_samples)
             batch_idx = idxs[start:end]
 
             states_batch = self.states[batch_idx]
             actions_batch = self.actions[batch_idx]
             old_probs_batch = self.probs[batch_idx]
-            returns_batch = self.returns[batch_idx]
+            returns_batch = self.returns[batch_idx]  # 使用计算好的returns
             values_batch = self.values[batch_idx]
-            next_states_batch = self.next_states[batch_idx]  # 新增
+            next_states_batch = self.next_states[batch_idx]
             dones_batch = self.dones[batch_idx]
 
-            yield (states_batch, actions_batch, old_probs_batch, returns_batch, 
+            yield (states_batch, actions_batch, old_probs_batch, returns_batch,
                    values_batch, next_states_batch, dones_batch)
 
-class PPOAgent(ESP32OnlinePPOFisherAgent):
-    def __init__(self, state_dim, action_dim, hidden_units=64, 
-                 learning_rate=0.001, clip_ratio=0.2, gamma=0.99, lam=0.95):
+    def is_ready(self, batch_size):
+        """检查是否有足够的数据进行训练"""
+        return self.num_samples >= batch_size
+
+    # 添加finish_trajectory方法作为finish_path的别名（为了兼容性）
+    def finish_trajectory(self, last_value=0):
+        """finish_path的别名方法"""
+        self.finish_path(last_value)
+
+
+class PPOAgent(ESP32PPOAgent):
+    def __init__(self, fisher_matrix=None, optimal_params=None, state_dim=5, action_dim=4,
+                 clip_epsilon=0.2, value_coef=0.5, entropy_coef=0.01,
+                 ewc_lambda=500, memory_size=1000, hidden_units=32,  # 增加到 32
+                 clip_ratio=0.2, actor_lr=1e-4, critic_lr=1e-3, is_discrete=False,  # 降低actor学习率
+                 gamma=0.99, lam=0.95):
+        super().__init__( fisher_matrix , optimal_params , state_dim , action_dim,
+                 clip_epsilon, value_coef, entropy_coef,
+                 ewc_lambda, memory_size, hidden_units,
+                 clip_ratio, actor_lr, critic_lr,is_discrete,
+                 gamma, lam)
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.hidden_units = hidden_units
         self.clip_ratio = clip_ratio
         self.gamma = gamma
         self.lam = lam        
-        super().__init__(state_dim, action_dim)
-        self.buffer = PPOBuffer(state_dim, action_dim)
+
         # 初始化优化器
-        self.actor_optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
-        self.critic_optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
+        self.actor_optimizer = tf.keras.optimizers.Adam(learning_rate=actor_lr)
+        self.critic_optimizer = tf.keras.optimizers.Adam(learning_rate=critic_lr)
         
         # 构建网络
         self.actor = self._build_actor()
         self.critic = self._build_critic()
-        
-        # 初始化经验缓冲区
-        self.buffer_size = 10000
-        self._init_buffer() 
 
+    def act_debug(self, state):
+        """带调试信息的act方法"""
+        print(f"=== act方法调试 ===")
+        print(f"输入状态类型: {type(state)}")
+        print(f"输入状态值: {state}")
 
-    def _init_buffer(self):
-        """初始化经验缓冲区"""
-        self.states = np.zeros((self.buffer_size, self.state_dim))
-        self.actions = np.zeros(self.buffer_size, dtype=np.int32)  # 动作应该是整数
-        self.probs = np.zeros((self.buffer_size, self.action_dim))
-        self.rewards = np.zeros(self.buffer_size)
-        self.dones = np.zeros(self.buffer_size, dtype=bool)
-        self.pointer = 0
-        self.buffer_full = False    
+        # 状态预处理
+        if not isinstance(state, np.ndarray):
+            state = np.array(state, dtype=np.float32)
+            print(f"转换后状态: {state}")
 
-        
-    def collect_and_train(self, env, num_episodes):
-        for episode in range(num_episodes):
-            state = env.reset()
-            episode_reward = 0
-            
-            for step in range(1000):  # 最大步数
-                # 1. 选择动作（增加数值稳定处理）
-                action_probs = self.actor.predict(state.reshape(1, -1), verbose=0)[0]
-                
-                # 数值稳定化处理
-                action_probs = np.clip(action_probs, 1e-8, 1.0)  # 防止过小或过大的值
-                action_probs = action_probs / np.sum(action_probs)  # 重新归一化
-                
-                # 检查概率和是否为1（允许小的误差）
-                prob_sum = np.sum(action_probs)
-                if abs(prob_sum - 1.0) > 1e-6:
-                    print(f"警告: 概率和不为1 ({prob_sum:.6f})，进行强制归一化")
-                    action_probs = action_probs / prob_sum
-                
-                # 安全地选择动作
-                try:
-                    action = np.random.choice(len(action_probs), p=action_probs)
-                except ValueError as e:
-                    print(f"动作选择错误: {e}")
-                    print(f"动作概率: {action_probs}")
-                    print(f"概率和: {np.sum(action_probs)}")
-                    # 使用均匀分布作为备选
-                    action_probs = np.ones(len(action_probs)) / len(action_probs)
-                    action = np.random.choice(len(action_probs), p=action_probs)
-                
-                # 2. 与环境交互
-                next_state, reward, done, _ = env.step(action)
-                
-                # 3. 存储经验
-                state_value = self.critic.predict(state.reshape(1, -1), verbose=0)[0]
-                self.buffer.store(state, action, action_probs, reward, next_state, done, state_value)
-                
-                state = next_state
-                episode_reward += reward
-                
-                if done or self.buffer.is_full():
-                    # 处理完整轨迹
-                    if done:
-                        last_value = 0
-                    else:
-                        last_value = self.critic.predict(state.reshape(1, -1), verbose=0)[0][0]
-                    
-                    self.buffer.finish_path(last_value)
-                    self.train_ppo()
-                    self.buffer.clear()
-                    
-                    if done:
-                        break
-            
-            if episode % 10 == 0:
-                print(f"Episode {episode}, Reward: {episode_reward}")
+        if len(state.shape) == 1:
+            state = state.reshape(1, -1)
+            print(f"重塑后形状: {state.shape}")
+
+        print(f"最终输入形状: {state.shape}")
+
+        # 调用actor预测
+        try:
+            if self.is_discrete:
+                prob = self.actor.predict(state, verbose=0)[0]
+                print(f"动作概率: {prob}")
+                action = np.random.choice(self.action_dim, p=prob)
+                print(f"选择动作: {action}")
+            else:
+                # 连续动作处理
+                pass
+
+            return action
+
+        except Exception as e:
+            print(f"actor预测出错: {e}")
+            return 0  # 返回默认动作
+
 
 
     def train_ppo(self):
         """使用包含next_states的数据进行PPO训练"""
         # 获取完整数据用于分析或监控（可选）
-        states, actions, rewards, probs, next_states, dones = self.buffer.get_buffer_items()
+        states, actions, rewards, probs, next_states, dones = self.ppo_buffer.get_buffer_items()
         print(f"训练数据形状: states{states.shape}, rewards{rewards.shape}")
         
         # Mini-batch训练
-        for batch_idx, batch in enumerate(self.buffer.get_batch(batch_size=64)):
+        for batch_idx, batch in enumerate(self.ppo_buffer.get_batch(batch_size=64)):
             states_b, actions_b, old_probs_b, returns_b, old_values_b, next_states_b, dones_b = batch
             
             # 修正：使用batch对应的rewards，而不是完整的rewards数组
@@ -1701,14 +2165,14 @@ class PPOAgent(ESP32OnlinePPOFisherAgent):
             # 确保维度匹配
             if len(rewards_b) != len(states_b):
                 # 如果长度不匹配，使用buffer中的rewards（如果buffer存储了batch对应的rewards）
-                rewards_b = self.buffer.rewards[start_idx:end_idx]
+                rewards_b = self.ppo_buffer.rewards[start_idx:end_idx]
             
             # 使用next_states计算TD目标
             next_values = self.critic.predict(next_states_b)  # 注意：应该是self.critic而不是self.critic_network
             next_values = next_values.flatten()  # 确保是一维数组
             
             # 计算TD目标（修正维度）
-            td_targets = rewards_b + self.buffer.gamma * next_values * (1 - dones_b.astype(np.float32))
+            td_targets = rewards_b + self.ppo_buffer.gamma * next_values * (1 - dones_b.astype(np.float32))
             
             # PPO更新步骤
             # 1. 计算优势函数（修正维度）
@@ -1738,45 +2202,7 @@ class PPOAgent(ESP32OnlinePPOFisherAgent):
             
             return critic_loss.numpy()
 
-     
-    def collect_experience(self, env, num_episodes):
-        for episode in range(num_episodes):
-            state = env.reset()
-            done = False
-            
-            while not done:
-                # 获取动作概率
-                action_probs = self.actor.predict(state.reshape(1, -1), verbose=0)[0]
-                
-                # 选择动作（确保是标量）
-                action = np.random.choice(len(action_probs), p=action_probs)
-                
-                # 执行动作
-                next_state, reward, done, _ = env.step(action)
-                
-                # 存储经验（确保动作是标量）
-                self.store(state, action, action_probs, reward, done, self.pointer)
-                
-                state = next_state
-                self.pointer = (self.pointer + 1) % self.buffer_size
 
-    def compute_advantages(self, rewards, values, dones, next_value):
-        advantages = np.zeros_like(rewards)
-        last_advantage = 0
-        
-        # 逆向计算GAE
-        for t in reversed(range(len(rewards))):
-            if t == len(rewards) - 1:
-                next_values = next_value
-            else:
-                next_values = values[t + 1] * (1 - dones[t])
-            
-            delta = rewards[t] + self.gamma * next_values - values[t]
-            advantages[t] = delta + self.gamma * self.lam * (1 - dones[t]) * last_advantage
-            last_advantage = advantages[t]
-        
-        return advantages  # 形状应该是 [batch_size]
-        
     def update_actor(self, states, actions, old_probs, advantages):
         with tf.GradientTape() as tape:
             # 获取新策略的概率分布 [batch_size, action_dim]
@@ -1822,16 +2248,378 @@ class PPOAgent(ESP32OnlinePPOFisherAgent):
         
         return actor_loss
 
+    def save_task_parameters(self, task_id):
+        """
+        保存当前任务的参数用于EWC持续学习
+        """
+        print(f"保存任务 {task_id} 的参数用于EWC...")
+
+        # 保存当前参数值（均值）
+        self.ewc_means[task_id] = {}
+        for var in self.actor.trainable_variables + self.critic.trainable_variables:
+            self.ewc_means[task_id][var.name] = var.numpy().copy()
+
+        # 计算Fisher信息矩阵（参数重要性）
+        self.ewc_fisher[task_id] = self.compute_fisher_matrix()
+
+        self.ewc_task_count += 1
+
+        # 保存到文件
+        self._save_ewc_to_file(task_id)
+
+    def compute_fisher_matrix(self, num_samples=100):
+        """
+        计算Fisher信息矩阵，估计参数的重要性
+        """
+        fisher = {}
+
+        # 初始化Fisher矩阵
+        for var in self.actor.trainable_variables + self.critic.trainable_variables:
+            fisher[var.name] = np.zeros_like(var.numpy())
+
+        # 通过采样计算梯度平方的期望
+        # 这里简化实现，实际应用中需要根据具体任务调整
+        for _ in range(num_samples):
+            # 生成随机输入
+            random_state = tf.random.normal((1, self.state_dim))
+
+            with tf.GradientTape() as tape:
+                # 计算actor输出
+                action_probs = self.actor(random_state)
+                # 计算对数概率
+                log_probs = tf.math.log(action_probs + 1e-8)
+                # 计算损失（这里使用负熵作为示例）
+                loss = -tf.reduce_sum(action_probs * log_probs)
+
+            # 计算梯度
+            gradients = tape.gradient(loss, self.actor.trainable_variables + self.critic.trainable_variables)
+
+            # 累加梯度平方
+            for var, grad in zip(self.actor.trainable_variables + self.critic.trainable_variables, gradients):
+                if grad is not None:
+                    fisher[var.name] += (grad.numpy() ** 2) / num_samples
+
+        return fisher
 
 
 
+    def _save_ewc_to_file(self, task_id):
+        """保存EWC参数到文件 - 使用NumPy格式"""
+        # 确保目录存在
+        os.makedirs('ewc_params', exist_ok=True)
+
+        # 保存means
+        means_dir = f'ewc_params/task_{task_id}_means'
+        os.makedirs(means_dir, exist_ok=True)
+
+        for var_name, mean_value in self.ewc_means[task_id].items():
+            # 清理变量名，使其适合作为文件名
+            safe_name = var_name.replace('/', '_').replace(':', '_')
+            np.save(f'{means_dir}/{safe_name}.npy', mean_value)
+
+        # 保存fisher信息
+        fisher_dir = f'ewc_params/task_{task_id}_fisher'
+        os.makedirs(fisher_dir, exist_ok=True)
+
+        for var_name, fisher_value in self.ewc_fisher[task_id].items():
+            safe_name = var_name.replace('/', '_').replace(':', '_')
+            np.save(f'{fisher_dir}/{safe_name}.npy', fisher_value)
+
+        # 保存元数据
+        metadata = {
+            'task_id': task_id,
+            'saved_variables': list(self.ewc_means[task_id].keys()),
+            'timestamp': np.datetime64('now').astype(str)
+        }
+
+        with open(f'ewc_params/task_{task_id}_metadata.json', 'w') as f:
+            json.dump(metadata, f, indent=2)
+
+        print(f"任务 {task_id} 的EWC参数已保存")
+
+    def load_ewc_parameters(self, task_id):
+        """从文件加载EWC参数"""
+        try:
+            # 加载元数据
+            with open(f'ewc_params/task_{task_id}_metadata.json', 'r') as f:
+                metadata = json.load(f)
+
+            # 初始化存储
+            self.ewc_means[task_id] = {}
+            self.ewc_fisher[task_id] = {}
+
+            # 加载means
+            means_dir = f'ewc_params/task_{task_id}_means'
+            for var_name in metadata['saved_variables']:
+                safe_name = var_name.replace('/', '_').replace(':', '_')
+                mean_value = np.load(f'{means_dir}/{safe_name}.npy')
+                self.ewc_means[task_id][var_name] = mean_value
+
+            # 加载fisher
+            fisher_dir = f'ewc_params/task_{task_id}_fisher'
+            for var_name in metadata['saved_variables']:
+                safe_name = var_name.replace('/', '_').replace(':', '_')
+                fisher_value = np.load(f'{fisher_dir}/{safe_name}.npy')
+                self.ewc_fisher[task_id][var_name] = fisher_value
+
+            print(f"任务 {task_id} 的EWC参数已加载")
+            return True
+
+        except FileNotFoundError as e:
+            print(f"加载任务 {task_id} 的EWC参数失败: {e}")
+            return False
+
+    def ewc_regularization_loss(self):
+        """
+        计算EWC正则化损失，防止灾难性遗忘
+        """
+        if self.ewc_task_count == 0:
+            return 0.0
+
+        ewc_loss = 0.0
+
+        for task_id in range(self.ewc_task_count):
+            for var in self.actor.trainable_variables + self.critic.trainable_variables:
+                if var.name in self.ewc_means[task_id] and var.name in self.ewc_fisher[task_id]:
+                    # EWC损失：Fisher * (当前参数 - 旧参数)^2
+                    mean = self.ewc_means[task_id][var.name]
+                    fisher = self.ewc_fisher[task_id][var.name]
+                    ewc_loss += tf.reduce_sum(fisher * (var - mean) ** 2)
+
+        return self.ewc_lambda * ewc_loss
+
+    def collect_and_train(self, env, num_episodes=100):
+        """简化的收集和训练方法"""
+        for episode in range(num_episodes):
+            state = env.reset()
+            done = False
+            episode_reward = 0
+
+            while not done:
+                action, action_prob, value = self.select_action(state)
+                next_state, reward, done, _ = env.step(action)
+
+                # 这里应该将经验存入buffer，然后采样训练
+                # 简化实现：直接进行在线学习
+
+                state = next_state
+                episode_reward += reward
+
+            if episode % 10 == 0:
+                print(f"回合 {episode}, 奖励: {episode_reward}")
+
+    def select_action(self, state):
+        """选择动作"""
+        state_tensor = tf.convert_to_tensor([state], dtype=tf.float32)
+        action_probs = self.actor(state_tensor)
+        action = tf.random.categorical(tf.math.log(action_probs), 1)[0, 0]
+        value = self.critic(state_tensor)
+        return action.numpy(), action_probs[0].numpy(), value[0, 0].numpy()
+
+    def _continuous_action_training_with_next_state(self, states, actions, advantages, old_probs, returns, next_states):
+        """處理連續動作空間的訓練（包含next_state）"""
+        with tf.GradientTape(persistent=True) as tape:
+            # 獲取策略輸出 (均值)
+            means = self.policy(states)  # shape: [batch_size, action_dim]
+
+            # 使用可訓練的log_std
+            log_stds = tf.ones_like(means) * self.log_std
+
+            # 創建正態分布
+            dist = tfp.distributions.Normal(loc=means, scale=tf.exp(log_stds))
+
+            # 計算新動作的概率 (對數概率)
+            new_log_probs = dist.log_prob(actions)  # shape: [batch_size, action_dim]
+            new_log_probs = tf.reduce_sum(new_log_probs, axis=1, keepdims=True)  # shape: [batch_size, 1]
+
+            # 處理舊概率
+            if len(old_probs.shape) == 1:
+                old_log_probs = tf.reshape(old_probs, [-1, 1])  # shape: [batch_size, 1]
+            else:
+                old_log_probs = old_probs
+
+            # 確保形狀匹配
+            if old_log_probs.shape != new_log_probs.shape:
+                print(f"形狀不匹配: old_log_probs {old_log_probs.shape}, new_log_probs {new_log_probs.shape}")
+                # 使用默認值
+                old_log_probs = tf.ones_like(new_log_probs) * -1.0  # 默認對數概率
+
+            # 計算比率 (使用對數概率)
+            ratio = tf.exp(new_log_probs - old_log_probs)
+            print(f"比率形狀: {ratio.shape}, 範圍: [{tf.reduce_min(ratio):.3f}, {tf.reduce_max(ratio):.3f}]")
+
+            # 調整advantages形狀
+            advantages_reshaped = tf.reshape(advantages, [-1, 1])
+
+            # PPO裁剪損失
+            surr1 = ratio * advantages_reshaped
+            surr2 = tf.clip_by_value(ratio, 1 - self.clip_epsilon, 1 + self.clip_epsilon) * advantages_reshaped
+            actor_loss = -tf.reduce_mean(tf.minimum(surr1, surr2))
+
+            # 熵正則化
+            entropy = tf.reduce_mean(dist.entropy())
+
+            # Critic損失 - 使用next_states計算更好的價值估計
+            current_values = self.critic(states)  # shape: [batch_size, 1]
+            next_values = self.critic(next_states)  # shape: [batch_size, 1]
+
+            # 使用TD誤差計算更好的目標值
+            targets = returns  # 或者使用: advantages + tf.squeeze(current_values)
+            critic_loss = tf.reduce_mean(tf.square(targets - tf.squeeze(current_values)))
+
+            # 總損失
+            total_loss = actor_loss + 0.5 * critic_loss - 0.01 * entropy
+
+        # 分別計算梯度
+        actor_variables = self.policy.trainable_variables + [self.log_std]
+        critic_variables = self.critic.trainable_variables
+
+        actor_grads = tape.gradient(total_loss, actor_variables)
+        critic_grads = tape.gradient(critic_loss, critic_variables)
+
+        # 梯度裁剪
+        if actor_grads is not None:
+            actor_grads, _ = tf.clip_by_global_norm(actor_grads, 0.5)
+            self.actor_optimizer.apply_gradients(zip(actor_grads, actor_variables))
+
+        if critic_grads is not None:
+            critic_grads, _ = tf.clip_by_global_norm(critic_grads, 0.5)
+            self.critic_optimizer.apply_gradients(zip(critic_grads, critic_variables))
+
+        del tape  # 釋放持久tape
+
+        print(f"回放完成 - Actor損失: {actor_loss:.4f}, Critic損失: {critic_loss:.4f}, 熵: {entropy:.4f}")
 
 
+    def _discrete_action_training(self, states, actions, advantages, old_probs, returns, next_states):
+        """處理離散動作空間的訓練"""
+        with tf.GradientTape(persistent=True) as tape:
+            # 獲取策略輸出 (logits)
+            logits = self.policy(states)  # shape: [batch_size, action_dim]
 
+            # 創建分類分布
+            dist = tfp.distributions.Categorical(logits=logits)
 
+            # 計算新動作的概率
+            new_log_probs = dist.log_prob(actions)  # shape: [batch_size]
+            new_log_probs = tf.reshape(new_log_probs, [-1, 1])  # shape: [batch_size, 1]
 
+            # 處理舊概率
+            if len(old_probs.shape) == 1:
+                old_log_probs = tf.reshape(old_probs, [-1, 1])
+            else:
+                old_log_probs = old_probs
 
+            # 確保形狀匹配
+            if old_log_probs.shape != new_log_probs.shape:
+                print(f"形狀不匹配: old_log_probs {old_log_probs.shape}, new_log_probs {new_log_probs.shape}")
+                old_log_probs = tf.ones_like(new_log_probs) * -1.0
 
+            # 計算比率
+            ratio = tf.exp(new_log_probs - old_log_probs)
+            print(f"離散動作 - 比率形狀: {ratio.shape}, 範圍: [{tf.reduce_min(ratio):.3f}, {tf.reduce_max(ratio):.3f}]")
+
+            # 調整advantages形狀
+            advantages_reshaped = tf.reshape(advantages, [-1, 1])
+
+            # PPO裁剪損失
+            surr1 = ratio * advantages_reshaped
+            surr2 = tf.clip_by_value(ratio, 1 - self.clip_epsilon, 1 + self.clip_epsilon) * advantages_reshaped
+            actor_loss = -tf.reduce_mean(tf.minimum(surr1, surr2))
+
+            # 熵正則化
+            entropy = tf.reduce_mean(dist.entropy())
+
+            # Critic損失
+            current_values = self.critic(states)
+            next_values = self.critic(next_states)
+            targets = returns
+            critic_loss = tf.reduce_mean(tf.square(targets - tf.squeeze(current_values)))
+
+            # 總損失
+            total_loss = actor_loss + 0.5 * critic_loss - 0.01 * entropy
+
+        # 分別計算梯度
+        actor_variables = self.policy.trainable_variables
+        critic_variables = self.critic.trainable_variables
+
+        actor_grads = tape.gradient(total_loss, actor_variables)
+        critic_grads = tape.gradient(critic_loss, critic_variables)
+
+        # 梯度裁剪
+        if actor_grads is not None:
+            actor_grads, _ = tf.clip_by_global_norm(actor_grads, 0.5)
+            self.actor_optimizer.apply_gradients(zip(actor_grads, actor_variables))
+
+        if critic_grads is not None:
+            critic_grads, _ = tf.clip_by_global_norm(critic_grads, 0.5)
+            self.critic_optimizer.apply_gradients(zip(critic_grads, critic_variables))
+
+        del tape
+
+        print(f"離散動作訓練 - Actor損失: {actor_loss:.4f}, Critic損失: {critic_loss:.4f}, 熵: {entropy:.4f}")
+
+    def _continuous_action_training(self, states, actions, advantages, old_probs, returns, next_states):
+        """處理連續動作空間的訓練"""
+        with tf.GradientTape(persistent=True) as tape:
+            # 獲取策略輸出 (均值)
+            means = self.policy(states)
+            log_stds = tf.ones_like(means) * self.log_std
+            dist = tfp.distributions.Normal(loc=means, scale=tf.exp(log_stds))
+
+            # 計算新動作的概率
+            new_log_probs = dist.log_prob(actions)
+            new_log_probs = tf.reduce_sum(new_log_probs, axis=1, keepdims=True)
+
+            # 處理舊概率
+            if len(old_probs.shape) == 1:
+                old_log_probs = tf.reshape(old_probs, [-1, 1])
+            else:
+                old_log_probs = old_probs
+
+            if old_log_probs.shape != new_log_probs.shape:
+                print(f"形狀不匹配: old_log_probs {old_log_probs.shape}, new_log_probs {new_log_probs.shape}")
+                old_log_probs = tf.ones_like(new_log_probs) * -1.0
+
+            # 計算比率
+            ratio = tf.exp(new_log_probs - old_log_probs)
+            print(f"連續動作 - 比率形狀: {ratio.shape}, 範圍: [{tf.reduce_min(ratio):.3f}, {tf.reduce_max(ratio):.3f}]")
+
+            advantages_reshaped = tf.reshape(advantages, [-1, 1])
+
+            # PPO裁剪損失
+            surr1 = ratio * advantages_reshaped
+            surr2 = tf.clip_by_value(ratio, 1 - self.clip_epsilon, 1 + self.clip_epsilon) * advantages_reshaped
+            actor_loss = -tf.reduce_mean(tf.minimum(surr1, surr2))
+
+            # 熵正則化
+            entropy = tf.reduce_mean(dist.entropy())
+
+            # Critic損失
+            current_values = self.critic(states)
+            targets = returns
+            critic_loss = tf.reduce_mean(tf.square(targets - tf.squeeze(current_values)))
+
+            total_loss = actor_loss + 0.5 * critic_loss - 0.01 * entropy
+
+        # 分別計算梯度
+        actor_variables = self.policy.trainable_variables + [self.log_std]
+        critic_variables = self.critic.trainable_variables
+
+        actor_grads = tape.gradient(total_loss, actor_variables)
+        critic_grads = tape.gradient(critic_loss, critic_variables)
+
+        if actor_grads is not None:
+            actor_grads, _ = tf.clip_by_global_norm(actor_grads, 0.5)
+            self.actor_optimizer.apply_gradients(zip(actor_grads, actor_variables))
+
+        if critic_grads is not None:
+            critic_grads, _ = tf.clip_by_global_norm(critic_grads, 0.5)
+            self.critic_optimizer.apply_gradients(zip(critic_grads, critic_variables))
+
+        del tape
+
+        print(f"連續動作訓練 - Actor損失: {actor_loss:.4f}, Critic損失: {critic_loss:.4f}, 熵: {entropy:.4f}")
 
 
 

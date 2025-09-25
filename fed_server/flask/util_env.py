@@ -10,6 +10,7 @@ class PlantLLLHVACEnv:
         self.seq_len = seq_len
         self.temp_init = temp_init
         self.humid_init = humid_init
+        self.prev_action = 0
         self.state_dim = 5  # 現在有5個特徵: health,temp, humid,light, co2
         self.mode = mode   # "growing", "flowering", "seeding"
         self.action_dim = 4
@@ -209,53 +210,75 @@ class PlantLLLHVACEnv:
         vpd = es - ea
         return max(vpd, 0.1)
 
-
-     
     def step(self, action, params=None, true_label=None):
-        """
-        執行動作並返回新的狀態、獎勵等信息
-        """
+        # Ensure params is not None
         if params is None:
-            params = {}
-        action_mapping = {
-            0: (0, 0, 0, 0),   # 全部关闭
-            1: (1, 0, 0, 0),   # 只开ac
-            2: (0, 1, 0, 0),   # 只开humi
-            3: (0, 0, 1, 0),   # 只开heat
-            4: (0, 0, 0, 1),   # 只开dehumi
-            5: (1, 1, 0, 0),   # ac + humi
-            6: (1, 0, 1, 0),   # ac + heat
-            # ... 添加更多动作组合
-        }
-        
-        # 确保动作在有效范围内
-        if action not in action_mapping:
-            action = 0  # 默认动作
-        
-        ac, humi, heat, dehumi = action_mapping[action]
-    
-        # 原有的环境逻辑...
-        self.ac = ac
-        self.humi = humi
-        self.heat = heat
-        self.dehumi = dehumi
-        #ac, humi, heat, dehumi = action
+            params = {
+                "energy_penalty": 0.1,
+                "switch_penalty_per_toggle": 0.2,
+                "vpd_penalty": 2.0,
+                "light_penalty": 0.5,
+                "co2_penalty": 0.3,
+                "flower_bonus": 0.5,
+                "seed_bonus": 0.5,
+                "grow_bonus": 0.5
+            }
 
-        # 環境動力學
+        # If action is a numpy array, extract the integer value
+        if isinstance(action, np.ndarray):
+            if action.size == 1:
+                action = int(action.item())
+            else:
+                action = int(np.argmax(action))
+
+        action_mapping = {
+            0: (0, 0, 0, 0),  # 全部关闭
+            1: (1, 0, 0, 0),  # 只开ac
+            2: (0, 1, 0, 0),  # 只开humi
+            3: (0, 0, 1, 0),  # 只开heat
+            4: (0, 0, 0, 1),  # 只开dehumi
+            5: (1, 1, 0, 0),  # ac + humi
+            6: (1, 0, 1, 0),  # ac + heat
+        }
+
+        # Ensure action is within valid range
+        if action not in action_mapping:
+            action = 0  # Default action
+
+        ac, humi, heat, dehumi = action_mapping[action]
+        current_action_tuple = (ac, humi, heat, dehumi)
+
+        # Fix: Ensure prev_action is always an integer
+        if hasattr(self, 'prev_action'):
+            # If prev_action is a numpy array, convert it to integer
+            if isinstance(self.prev_action, np.ndarray):
+                if self.prev_action.size == 1:
+                    self.prev_action = int(self.prev_action.item())
+                else:
+                    self.prev_action = int(np.argmax(self.prev_action))
+
+            # Get previous action tuple safely
+            prev_action_tuple = action_mapping.get(self.prev_action, (0, 0, 0, 0))
+        else:
+            # Initialize prev_action if it doesn't exist
+            self.prev_action = 0
+            prev_action_tuple = (0, 0, 0, 0)
+
+        # Environment dynamics
         self.temp += (-0.5 if ac == 1 else 0.2) + (0.5 if heat == 1 else 0.0)
         self.humid += (0.05 if humi == 1 else -0.02) + (-0.03 if heat == 1 else 0.0) + (-0.05 if dehumi == 1 else 0.0)
 
-        # 光照和CO2的自然變化
+        # Light and CO2 natural changes
         self.light += np.random.normal(0, 20)
         self.co2 += np.random.normal(0, 10)
 
-        # 邊界限制
+        # Boundary constraints
         self.temp = np.clip(self.temp, 15, 35)
         self.humid = np.clip(self.humid, 0, 1)
         self.light = np.clip(self.light, 100, 1000)
         self.co2 = np.clip(self.co2, 300, 1200)
 
-        # 根據當前模式獲取理想環境參數
+        # Get ideal environment parameters based on current mode
         mode_param = self.mode_params[self.mode]
         temp_min, temp_max = mode_param["temp_range"]
         humid_min, humid_max = mode_param["humid_range"]
@@ -263,31 +286,31 @@ class PlantLLLHVACEnv:
         light_min, light_max = mode_param["light_range"]
         co2_min, co2_max = mode_param["co2_range"]
 
-        # 計算增強的VPD
+        # Calculate enhanced VPD
         vpd_current = self._calculate_enhanced_vpd(self.temp, self.humid, self.light, self.co2)
 
-        # 健康判定
+        # Health assessment
         temp_ok = temp_min <= self.temp <= temp_max
         humid_ok = humid_min <= self.humid <= humid_max
         vpd_ok = vpd_min <= vpd_current <= vpd_max
         light_ok = light_min <= self.light <= light_max
         co2_ok = co2_min <= self.co2 <= co2_max
 
-        # 綜合健康判定
+        # Comprehensive health assessment
         optimal_conditions = sum([temp_ok, humid_ok, vpd_ok, light_ok, co2_ok])
 
         if optimal_conditions >= 4:
-            self.health = 0  # 健康
+            self.health = 0  # Healthy
         elif optimal_conditions >= 2:
-            self.health = 1  # 亞健康
+            self.health = 1  # Subhealthy
         else:
-            self.health = 2  # 不健康
+            self.health = 2  # Unhealthy
 
-        # 更新序列數據
-        new_data_point = np.array([self.health,self.temp, self.humid,  self.light, self.co2])
+        # Update sequence data
+        new_data_point = np.array([self.health, self.temp, self.humid, self.light, self.co2])
         self.update_sequence(new_data_point)
 
-        # LLL模型預測
+        # LLL model prediction
         seq_input_tf = tf.convert_to_tensor(self.current_sequence, dtype=tf.float32)
 
         if true_label is not None and not isinstance(true_label, tf.Tensor):
@@ -295,16 +318,20 @@ class PlantLLLHVACEnv:
         else:
             true_label_tf = true_label
 
-        # 使用update_lll_model方法獲取軟標籤
+        # Use update_lll_model method to get soft labels
         soft_label = self.update_lll_model(seq_input_tf, true_label_tf)
         flower_prob = soft_label[2]
 
-        # 計算獎勵
+        # Calculate reward
         health_reward = {0: 2.0, 1: 0.5, 2: -1.0}[self.health]
-        energy_cost = params.get("energy_penalty", 0.1) * np.sum(action)
-        switch_penalty = params.get("switch_penalty_per_toggle", 0.2) * np.sum(np.abs(action - self.prev_action))
+        energy_cost = params.get("energy_penalty", 0.1) * np.sum(current_action_tuple)
 
-        # 環境因子獎勵
+        # Fixed switch penalty calculation
+        switch_penalty = params.get("switch_penalty_per_toggle", 0.2) * np.sum(
+            np.abs(np.array(current_action_tuple) - np.array(prev_action_tuple))
+        )
+
+        # Environmental factor rewards
         vpd_ideal = (vpd_min + vpd_max) / 2
         vpd_reward = -abs(vpd_current - vpd_ideal) * params.get("vpd_penalty", 2.0)
 
@@ -320,7 +347,7 @@ class PlantLLLHVACEnv:
             true_class = true_label if isinstance(true_label, (int, np.integer)) else true_label.numpy()
             learning_reward = 0.5 if pred_class == true_class else -0.3
 
-        # 軟標籤獎勵
+        # Soft label reward
         soft_label_bonus = 0
         if self.mode == "flowering":
             soft_label_bonus = flower_prob * params.get("flower_bonus", 0.5)
@@ -333,6 +360,7 @@ class PlantLLLHVACEnv:
                   vpd_reward + light_reward + co2_reward +
                   learning_reward + soft_label_bonus)
 
+        # Store the action as integer
         self.prev_action = action
         self.t += 1
         done = self.t >= self.seq_len
@@ -353,4 +381,3 @@ class PlantLLLHVACEnv:
         }
 
         return self._get_state(), reward, done, info
-
