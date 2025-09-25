@@ -81,63 +81,6 @@ class lifelonglearningModel(Model):
 
 
 
-# 使用示例
-def trainbytask_lifelong_ppo(env,agent):
-
-
-    print(f"开始学习任务 {task_id}...")
-    agent.reset_ewc_variables()
-    # 收集经验
-    experiences = agent.collect_experiences(agent, env, num_episodes=10)
-
-    # 分析收集到的经验
-    print(f"总共收集了 {len(experiences)} 条经验")
-    states_batch, actions_batch, advantages_batch, old_probs_batch, returns_batch = agent.process_experiences(agent,experiences)
-
-    # 训练多个epoch
-    for epoch in range(100):
-        # 训练步骤
-        # 修正：确保动作张量保持为int32
-        states_tensor = tf.convert_to_tensor(states_batch, dtype=tf.float32)
-        actions_tensor = tf.convert_to_tensor(actions_batch, dtype=tf.int32)  # 保持int32
-        old_probs_tensor = tf.convert_to_tensor(old_probs_batch, dtype=tf.float32)
-        returns_tensor = tf.convert_to_tensor(returns_batch, dtype=tf.float32)
-        advantages_tensor = tf.convert_to_tensor(returns_batch, dtype=tf.float32)
-        try:
-            total_loss, policy_loss, value_loss, entropy, ewc_loss = agent.train_step_onehot(
-                states=states_tensor,
-                actions=actions_tensor,
-                advantages=advantages_tensor,
-                old_probs=old_probs_tensor,
-                returns=returns_tensor,
-                use_ewc=(task_id > 0)
-            )
-        except Exception as e:
-            print(f"训练错误: {e}")
-            print(f"actions_tensor dtype: {actions_tensor.dtype}")
-            print(f"actions_tensor shape: {actions_tensor.shape}")
-            raise
-        print(f" epoch {epoch} loss={total_loss:.4f}")
-    # 保存当前任务知识
-    agent.save_task_knowledge((states_batch, actions_batch, advantages_batch, old_probs_batch, returns_batch))
-
-    # 测试所有已学任务的性能（检查是否遗忘）
-    for test_id in range(task_id + 1):
-        performance = agent.test_task_performance(tasks[test_id])
-        print(f"任务 {test_id} 测试性能: {performance}")
-
-    # 回放之前任务的经验
-    for _ in range(5):
-        agent.replay_previous_tasks(batch_size=32)
-    # 计算统计信息
-    rewards = [exp['reward'] for exp in experiences]
-    health_statuses = [exp['info']['health_status'] for exp in experiences]
-
-    print(f"平均奖励: {np.mean(rewards):.3f}")
-    print(f"健康比例: {np.mean([1 if s == 0 else 0 for s in health_statuses]) * 100:.1f}%")
-    print(f"不健康比例: {np.mean([1 if s == 1 else 0 for s in health_statuses]) * 100:.1f}%")
- 
-
 
 def buffer_train_ppo_with_lll():
     params = {
@@ -580,8 +523,8 @@ if __name__ == "__main__":
             #test_state = env.reset()
             #print("测试act方法...")
             #action = agent.act_debug(test_state)
-            #buffer_train_ppo_with_lll_alternative(env=env,agent=agent,task_id=task_id)
-            trainbytask_lifelong_ppo(env=env,agent=agent)
+            buffer_train_ppo_with_lll_alternative(env=env,agent=agent,task_id=task_id)
+            #trainbytask_lifelong_ppo(env=env,agent=agent)
             if task_id < len(tasks) - 1:
                 agent.save_task_parameters(task_id)
 

@@ -312,6 +312,64 @@ def analyze_model_details(model_bytes):
 
 
 
+# 使用示例
+def trainbytask_lifelong_ppo(env,agent,tasks):
+
+
+   
+    agent.reset_ewc_variables()
+    # 收集经验
+    experiences = agent.collect_experiences(agent, env, num_episodes=10)
+
+    # 分析收集到的经验
+    print(f"总共收集了 {len(experiences)} 条经验")
+    states_batch, actions_batch, advantages_batch, old_probs_batch, returns_batch = agent.process_experiences(agent,experiences)
+
+    # 训练多个epoch
+    for epoch in range(100):
+        # 训练步骤
+        # 修正：确保动作张量保持为int32
+        states_tensor = tf.convert_to_tensor(states_batch, dtype=tf.float32)
+        actions_tensor = tf.convert_to_tensor(actions_batch, dtype=tf.int32)  # 保持int32
+        old_probs_tensor = tf.convert_to_tensor(old_probs_batch, dtype=tf.float32)
+        returns_tensor = tf.convert_to_tensor(returns_batch, dtype=tf.float32)
+        advantages_tensor = tf.convert_to_tensor(returns_batch, dtype=tf.float32)
+        try:
+            
+            total_loss, policy_loss, value_loss, entropy, ewc_loss = agent.train_step_onehot(
+                states=states_tensor,
+                actions=actions_tensor,
+                advantages=advantages_tensor,
+                old_probs=old_probs_tensor,
+                returns=returns_tensor,
+                use_ewc=ewc_loss
+            )
+        except Exception as e:
+            print(f"训练错误: {e}")
+            print(f"actions_tensor dtype: {actions_tensor.dtype}")
+            print(f"actions_tensor shape: {actions_tensor.shape}")
+            raise
+        print(f" epoch {epoch} loss={total_loss:.4f}")
+    # 保存当前任务知识
+    agent.save_task_knowledge((states_batch, actions_batch, advantages_batch, old_probs_batch, returns_batch))
+
+    # 测试所有已学任务的性能（检查是否遗忘）
+    #for test_id in range(task_id + 1):
+    performance = agent.test_task_performance(tasks)
+    print(f"测试性能: {performance}")
+
+    # 回放之前任务的经验
+    for _ in range(5):
+        agent.replay_previous_tasks(batch_size=32)
+    # 计算统计信息
+    rewards = [exp['reward'] for exp in experiences]
+    health_statuses = [exp['info']['health_status'] for exp in experiences]
+
+    print(f"平均奖励: {np.mean(rewards):.3f}")
+    print(f"健康比例: {np.mean([1 if s == 0 else 0 for s in health_statuses]) * 100:.1f}%")
+    print(f"不健康比例: {np.mean([1 if s == 1 else 0 for s in health_statuses]) * 100:.1f}%")
+ 
+
 # -----------------------------
 # 使用範例（修正成可 load 的完整模型檔）
 # -----------------------------
@@ -320,44 +378,57 @@ if __name__ == "__main__":
     # 创建环境
     if not os.path.exists(MODEL_DIR):
         os.makedirs(MODEL_DIR)
+    tasks = [
+        PlantLLLHVACEnv(mode="flowering"),
+        PlantLLLHVACEnv(mode="seeding"),
+        PlantLLLHVACEnv(mode="growing"),
+    ]
     latent_dim = 64
-    action_dim=4
-    num_classes = 3
+    #action_dim=4
+    #num_classes = 3
     batch_size = 32
     num_epochs_per_task = 3
-    num_tasks = 3
-    env = PlantLLLHVACEnv(seq_len=10,   mode="growing")
+    num_tasks = 3 #"flowing, seedding, growing"
+    plant_mode=0
+    env = PlantLLLHVACEnv(seq_len=10,   mode="flowering")
     env_pipe_trainer(
         lll_model=env.lll_model ,
         num_tasks=num_tasks,
         latent_dim=latent_dim,
-        num_classes=num_classes,
+        num_classes=env.action_dim,
         num_epochs_per_task= num_epochs_per_task,
         batch_size=batch_size,
         learning_rate=0.001,
         ewc_lambda=0.4)
 
     # 生成代表性数据
-    #representative_data = generate_smart_representative_data(env, num_samples=1000)
+    
     representative_data, y_train    = generate_smart_representative_data(env, 100, return_labels=True)
 
     # 确保形状匹配（如果需要序列数据）
     if len(representative_data.shape) == 2:
         representative_data = representative_data.reshape(-1, 1, 5)
-    agent = ESP32OnlinePPOFisherAgent(state_dim=env.state_dim, action_dim=action_dim, hidden_units=8)
+    agent = ESP32OnlinePPOFisherAgent(state_dim=env.state_dim, action_dim=env.action_dim, hidden_units=8)
 
-    agent.compute_fisher_matrix(representative_data)
+    agent.compute_env_fisher_matrix(representative_data)
     # 保存 Fisher & Optimal Params
-    path_npz=os.path.join(MODEL_DIR, "esp32_fisher.npz")
+    path_npz=os.path.join(MODEL_DIR, "env_fisher.npz")
     agent.save_fisher_and_params(path_npz)
     # 保存 TFLite
-    #agent.save_tflite_model("esp32_actor.tflite" )
-    path_h5 = os.path.join(MODEL_DIR, "esp32ppo_actor.h5")
-    agent.actor.save(path_h5)
+    agent.save_tflite_model(filepath="esp32_actor.tflite" ,model_type='actor')
+    agent.save_tflite_model(filepath="esp32_critic.tflite" ,model_type='critic')
+    path_actor_h5 = os.path.join(MODEL_DIR, "esp32ppo_actor.h5")
+    path_critic_h5 = os.path.join(MODEL_DIR, "esp32ppo_critic.h5")
+    agent.actor.save (path_actor_h5)
+    agent.critic.save(path_critic_h5)
 
 
 
     policy_agent=ESP32OnlinePPOFisherAgent(fisher_matrix=agent.fisher_matrix,optimal_params=agent.optimal_params)
+    #trainbytask_lifelong_ppo(env,policy_agent,tasks=tasks[plant_mode])
+    #policy_agent.learn(total_timesteps=1000000)
+    #policy_agent.train_buffer_step(use_ewc=True)
+    policy_agent.rollout_and_train(env=env,  max_episodes=500, rollout_len=200, train_interval=200)
     path_policy_h5 = os.path.join(MODEL_DIR, "esp32_OnlinePPOFisher.h5")
     policy_agent.actor.save(path_policy_h5)
     policy_agent.actor.summary()
