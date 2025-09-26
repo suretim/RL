@@ -480,7 +480,7 @@ void main_task(void *pvParameters)
 		    if (  flag_100ms>=100 && flask_state_get_flag[SPIFFS_DOWN_LOAD_MODEL]==SPIFFS_MODEL_SAVED )
 			{
 				flag_100ms = 1;	
-				if(	lll_tensor_run()==ESP_FAIL){
+				if(	lll_tensor_run(SPIFFS_DOWN_LOAD_MODEL)==ESP_FAIL){
 					 
 					break;
 

@@ -79,13 +79,15 @@ extern const unsigned char esp32_optimized_model_tflite[];
 extern const unsigned char meta_model_tflite[];
 //extern const size_t   meta_model_tflite_len;
 
-extern const unsigned char student_model_tflite[];
+extern const unsigned char actor_task0_tflite[];
 //extern const size_t    student_model_tflite_len;
+extern const unsigned char critic_task0_tflite[];
 
-const unsigned char* bin_model_tflite[3] = {
+const unsigned char* bin_model_tflite[SPIFFS1_MODEL_COUNT] = {
     esp32_optimized_model_tflite, 
     meta_model_tflite, 
-    student_model_tflite
+    actor_task0_tflite,
+    critic_task0_tflite
 };
 // const unsigned int bin_model_tflite_len[3] = {
 //     esp32_optimized_model_tflite_len, 
@@ -98,15 +100,20 @@ const unsigned char* bin_model_tflite[3] = {
 //extern const unsigned int meta_model_tflite_len;
 const char optimized_model_path[] = "/spiffs1/esp32_optimized_model.tflite" ;
 const char meta_model_path[] = "/spiffs1/meta_model.tflite" ;
-const char student_model_path[] = "/spiffs1/student_model.tflite";
-const char spiffs_ppo_model_bin_path[]=  "/spiffs1/ppo_model.bin" ;
-const char ppo_policy_actor[]="spiffs1/ppo_policy_actor.tflite";
-const char* spiffs1_model_path[FLASK_GET_COUNT] = {
+const char actor_model_path[] = "/spiffs1/actor_task0.tflite";
+const char critic_model_path[] = "/spiffs1/critic_task0.tflite";
+const char spiffs_ppo_model_bin_path[]=  "/spiffs2/ppo_model.bin" ;
+const char ppo_policy[]="spiffs2/policy.tflite";
+ 
+const char* spiffs1_model_path[SPIFFS1_MODEL_COUNT] = {
     optimized_model_path,
     meta_model_path,
-    student_model_path,
+    actor_model_path,
+    critic_model_path 
+};
+const char* spiffs2_model_path[SPIFFS2_MODEL_COUNT] = { 
     spiffs_ppo_model_bin_path,
-    ppo_policy_actor
+    ppo_policy
 };
 extern float *fisher_matrix;
 extern float *theta ; 
@@ -696,7 +703,7 @@ int load_up_input_seq(int type,int seq_len)
 
  
 // The name of this function is important for Arduino compatibility.
-TfLiteStatus infer_loop() {
+TfLiteStatus infer_loop(int type) {
   
     // 推理範例
     //float* input = interpreter.input(0)->data.f;
@@ -754,29 +761,35 @@ TfLiteStatus infer_loop() {
         return kTfLiteError;
     }
     float* output = output_tensor->data.f;
-  
-#if INFER_CASE == PPO_CASE
-    for(int i=0; i<NUM_CLASSES; ++i){
-         printf("%d ", (uint8_t)output[i]);
-        ml_pid_out_speed.speed[i+1] = (uint8_t)output[i];
+    if( type == CRITIC_MODEL ){
+         
+            printf("%d ", (uint8_t)output[0]);
+            ml_pid_out_speed.speed[0] = (uint8_t)output[0];
+         
     }
-#elif INFER_CASE == SARSA_CASE
-    // 計算 EWC loss
-    float ewc_loss = compute_ewc_loss( trainable_layers, fisher_layers);
-    printf("EWC loss: %.6f\n", ewc_loss);
-    // int flowering = is_flowering_seq(x_input, 550.0f);
-    // int toggle_flag;
-    // float toggle_rate = hvac_toggle_score(x_input, 0.15f, &toggle_flag);
+    if(type == OPTIMIZED_MODEL ||type == ACTOR_MODEL){
+        for(int i=0; i<NUM_CLASSES; ++i){
+            printf("%d ", (uint8_t)output[i]);
+            ml_pid_out_speed.speed[i+1] = (uint8_t)output[i];
+        }
+    }
+    if(type == META_MODEL){
+        // 計算 EWC loss
+        float ewc_loss = compute_ewc_loss( trainable_layers, fisher_layers);
+        printf("EWC loss: %.6f\n", ewc_loss);
+        // int flowering = is_flowering_seq(x_input, 550.0f);
+        // int toggle_flag;
+        // float toggle_rate = hvac_toggle_score(x_input, 0.15f, &toggle_flag);
 
-    // printf("Flowering: %d, Toggle Rate: %.4f, Toggle Flag: %d\n", flowering, toggle_rate, toggle_flag);
-    // printf("Predicted probabilities: ");
-    // for (int i=0; i<NUM_CLASSES; i++) printf("%.4f ", out_prob[i]);
-    // printf("\n");
-    
-    get_mqtt_feature(output_tensor->data.f); 
-    int predicted = classifier_predict(output_tensor->data.f);
-    printf("Predicted class: %d\n", predicted); 
- #endif     
+        // printf("Flowering: %d, Toggle Rate: %.4f, Toggle Flag: %d\n", flowering, toggle_rate, toggle_flag);
+        // printf("Predicted probabilities: ");
+        // for (int i=0; i<NUM_CLASSES; i++) printf("%.4f ", out_prob[i]);
+        // printf("\n");
+        
+        get_mqtt_feature(output_tensor->data.f); 
+        int predicted = classifier_predict(output_tensor->data.f);
+        printf("Predicted class: %d\n", predicted); 
+    }    
    vTaskDelay(1); // to avoid watchdog trigger
   return kTfLiteOk;
 } 
@@ -844,6 +857,36 @@ void parse_ewc_assets() {
     ewc_ready = false;
 }
  
+
+bool actor_critic_infer(int type )
+{
+     
+
+    if(model==nullptr){
+        micro_op_resolver.AddFullyConnected();
+        micro_op_resolver.AddSoftmax();
+        micro_op_resolver.AddReshape();
+        micro_op_resolver.AddRelu();
+        micro_op_resolver.AddQuantize();
+        micro_op_resolver.AddDequantize();
+        if(    init_model(type)==false){
+            ESP_LOGE(TAG,"Init actor_critic_inference Model Failed");
+            return false;
+        }   
+        ESP_LOGI("INFERENCE", "Input dimensions: %dD", input_tensor->dims->size);
+        for (int i = 0; i < input_tensor->dims->size; i++) {
+            ESP_LOGI("INFERENCE", "  dim[%d]: %d", i, input_tensor->dims->data[i]);
+        }
+        for (int i = 0; i < output_tensor->dims->size; i++) {
+            ESP_LOGI("INFERENCE", "  dim[%d]: %d", i, output_tensor->dims->data[i]);
+        }
+    
+    }
+    infer_loop(type);
+    return true;
+}
+
+
 bool ppo_inference(float *input_data) {
  
      ESP_LOGI(TAG, "ppo_inference Invoke ");
@@ -900,7 +943,7 @@ bool ppo_inference(float *input_data) {
     }
     
     
-    infer_loop();
+    infer_loop(OPTIMIZED_MODEL);
 #if 0
     TfLiteStatus invoke_status = interpreter->Invoke();
     if (invoke_status != kTfLiteOk) {
@@ -1101,7 +1144,7 @@ void catch_tensor_dim(enum CaseType type) {
 }
 extern std::array<int,PORT_CNT> plant_action;
 //u_int8_t get_tensor_state(void);
-esp_err_t  lll_tensor_run(void) 
+esp_err_t  lll_tensor_run(int type) 
 {
     // int16_t sensor_val_list[ENV_CNT];
 	// uint8_t cur_load_type[PORT_CNT];
@@ -1114,7 +1157,7 @@ esp_err_t  lll_tensor_run(void)
 
     // extern void pid_param_get(ai_setting_t *ai_setting, uint8_t* load_type_list, uint8_t* dev_origin_list, int16_t* env_value_list, pid_run_input_st* param);
      
-    catch_tensor_dim(PPO_CASE); 
+    catch_tensor_dim(type); 
     read_all_sensor_trigger();
     // pid_param_get(&g_ai_setting, NULL, NULL, NULL, &pid_run_input );
      

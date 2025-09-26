@@ -12,6 +12,8 @@ import tensorflow_model_optimization as tfmot
 from typing import Dict, Any, Optional, Union
 
 import tensorflow_probability as tfp
+from tensorflow.python.ops.metrics_impl import false_negatives
+
 tfd = tfp.distributions
 
 from util_exporter import TensorFlowESP32Exporter
@@ -342,7 +344,7 @@ def trainbytask_lifelong_ppo(env,agent,tasks):
                 advantages=advantages_tensor,
                 old_probs=old_probs_tensor,
                 returns=returns_tensor,
-                use_ewc=ewc_loss
+                use_ewc=False
             )
         except Exception as e:
             print(f"训练错误: {e}")
@@ -379,18 +381,18 @@ if __name__ == "__main__":
     if not os.path.exists(MODEL_DIR):
         os.makedirs(MODEL_DIR)
     tasks = [
-        PlantLLLHVACEnv(mode="flowering"),
-        PlantLLLHVACEnv(mode="seeding"),
-        PlantLLLHVACEnv(mode="growing"),
+        PlantLLLHVACEnv(seq_len=10,mode="flowering"),
+        PlantLLLHVACEnv(seq_len=10,mode="seeding"),
+        PlantLLLHVACEnv(seq_len=10,mode="growing"),
     ]
     latent_dim = 64
     #action_dim=4
     #num_classes = 3
     batch_size = 32
-    num_epochs_per_task = 3
-    num_tasks = 3 #"flowing, seedding, growing"
+    num_epochs_per_task = 20
+    num_tasks = len(tasks) #"flowing, seedding, growing"
     plant_mode=0
-    env = PlantLLLHVACEnv(seq_len=10,   mode="flowering")
+    env = tasks[plant_mode]
     env_pipe_trainer(
         lll_model=env.lll_model ,
         num_tasks=num_tasks,
@@ -428,7 +430,7 @@ if __name__ == "__main__":
     #trainbytask_lifelong_ppo(env,policy_agent,tasks=tasks[plant_mode])
     #policy_agent.learn(total_timesteps=1000000)
     #policy_agent.train_buffer_step(use_ewc=True)
-    policy_agent.rollout_and_train(env=env,  max_episodes=500, rollout_len=200, train_interval=200)
+    policy_agent.rollout_and_train(env=env )
     path_policy_h5 = os.path.join(MODEL_DIR, "esp32_OnlinePPOFisher.h5")
     policy_agent.actor.save(path_policy_h5)
     policy_agent.actor.summary()

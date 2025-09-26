@@ -1,4 +1,4 @@
-#include "ppo_policy_actor.h"
+#include "ppo_policy_actor_task0.h"
 
 const uint8_t actor_model[] = {
 

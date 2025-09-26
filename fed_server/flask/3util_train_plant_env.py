@@ -255,39 +255,55 @@ def check_agent_models(agent):
 
 
 def safe_select_action(agent, state):
-    """安全的动作选择函数"""
-    try:
-        # 检查actor模型状态
-        if not hasattr(agent, 'actor') or agent.actor is None:
-            print("Actor模型不存在，创建新模型...")
-            agent.actor = create_new_actor_model(len(state), agent.action_space)
+    """
+    安全选择动作函数，防止 shape 错误和空值
+    返回: action, action_prob, value
+    """
+    import numpy as np
+    import tensorflow as tf
+    import tensorflow_probability as tfp
 
-        if isinstance(agent.actor, bytes):
-            print("Actor是字节对象，重新加载...")
-            check_and_reload_actor_model(agent)
+    # --- 确保 state 为张量 ---
+    if state is None or (isinstance(state, str) and state == ''):
+        state = np.zeros(agent.state_dim, dtype=np.float32)
+    state = np.array(state, dtype=np.float32)
+    if len(state.shape) == 1:
+        state = state[None, :]  # batch 维度
 
-        if not callable(agent.actor):
-            print("Actor不可调用，使用随机动作...")
-            return np.random.randint(agent.action_space), 0.0, 0.0
+    state_tensor = tf.convert_to_tensor(state, dtype=tf.float32)
 
-        # 正常选择动作
-        state_tensor = tf.convert_to_tensor([state], dtype=tf.float32)
-        action_probs = agent.actor(state_tensor)
-        action = tf.random.categorical(tf.math.log(action_probs), 1)[0, 0]
-        action_prob = action_probs[0, action]
+    # --- 计算 policy & value ---
+    value = agent.value_net(state_tensor)
+    value = tf.squeeze(value).numpy()  # 去掉多余维度
 
-        # 获取价值估计
-        if hasattr(agent, 'critic') and callable(agent.critic):
-            value = agent.critic(state_tensor)[0, 0]
+    if agent.is_discrete:
+        logits = agent.get_policy(state_tensor)
+        dist = tfp.distributions.Categorical(logits=logits)
+        action = dist.sample()
+        action_prob = dist.prob(action)
+        # shape 统一
+        action = tf.squeeze(action).numpy()
+        action_prob = tf.squeeze(action_prob).numpy()
+        # 防止 slice 越界
+        if np.isscalar(action):
+            action = int(action)
         else:
-            value = 0.0
+            action = action.astype(int)
+    else:
+        mean, log_std = agent.get_policy(state_tensor)
+        std = tf.exp(log_std)
+        dist = tfp.distributions.Normal(mean, std)
+        action = dist.sample()
+        action_prob = tf.reduce_prod(dist.prob(action), axis=-1)
+        action = tf.squeeze(action).numpy()
+        action_prob = tf.squeeze(action_prob).numpy()
+        # 防止空值
+        if np.any(np.isnan(action)):
+            action = np.zeros(agent.action_dim, dtype=np.float32)
+        if np.any(np.isnan(action_prob)):
+            action_prob = 1.0
 
-        return action.numpy(), action_prob.numpy(), value
-
-    except Exception as e:
-        print(f"选择动作时出错: {e}")
-        # 返回随机动作作为后备
-        return np.random.randint(agent.action_space), 1.0 / agent.action_space, 0.0
+    return action, action_prob, value
 
 
 def buffer_train_ppo_with_lll_alternative(env, agent, task_id=0):
@@ -306,11 +322,9 @@ def buffer_train_ppo_with_lll_alternative(env, agent, task_id=0):
 
     while episode_count < epochs:
         try:
-            # 使用安全的动作选择
             action, action_prob, value = safe_select_action(agent, state)
             next_state, reward, done, _ = env.step(action)
 
-            # 存储经验到缓冲区
             ppo_buffer.store(state, action, action_prob, reward, next_state, done, value)
             state = next_state
             episode_reward += reward
@@ -319,60 +333,27 @@ def buffer_train_ppo_with_lll_alternative(env, agent, task_id=0):
                 ppo_buffer.finish_path()
                 state = env.reset()
                 episode_count += 1
-                #print(f"任务 {task_id}, 回合 {episode_count}: 奖励 = {episode_reward}")
                 episode_reward = 0
 
-                # 检查缓冲区是否准备好训练
-                try:
-                    is_ready = ppo_buffer.is_ready(batch_size)
-                except Exception as e:
-                    print(f"检查缓冲区准备状态时出错: {e}")
-                    is_ready = False
-                if is_ready and episode_count % 10 == 0:  # 每10回合训练一次
+                # 训练条件
+                if ppo_buffer.is_ready(batch_size) and episode_count % 10 == 0:
                     try:
-                        #print("开始训练...")
-
-                        # 获取训练批次生成器
-                        batch_generator = ppo_buffer.get_ppo_batch(batch_size)
-
-                        successful_batches = 0
-                        total_batches = 0
-
-                        # 遍历所有mini-batch
-                        for batch in batch_generator:
-                            total_batches += 1
-
-                            # 正确解包7个值
-                            if len(batch) == 7:
-                                states_batch, actions_batch, old_probs_batch, returns_batch, \
-                                    values_batch, next_states_batch, dones_batch = batch
-
-                                # 执行PPO训练
-                                result = agent.train_on_batch(
-                                    states_batch, actions_batch, old_probs_batch, returns_batch,
-                                    values_batch, next_states_batch, dones_batch
-                                )
-                                if result and result[0] is not None:
-                                    total_loss, policy_loss, value_loss, entropy, ewc_loss = result
-                                    #print(f"训练成功 - 总损失: {total_loss:.4f}")
-                                    successful_batches += 1
-
-                            else:
-                                print(f"批次格式错误: 期望7个值，得到{len(batch)}个")
-
-                        #print(f"成功训练 {successful_batches}/{total_batches} 个批次")
-
+                        for batch in ppo_buffer.get_ppo_batch(batch_size):
+                            states_batch, actions_batch, old_probs_batch, returns_batch, values_batch = batch
+                            result = agent.train_on_batch(states_batch, actions_batch, old_probs_batch,
+                                                          returns_batch, values_batch)
+                            if result and result[0] is not None:
+                                loss, policy_loss, value_loss, entropy, ewc_loss = result
+                                #print(f"任务 {task_id}, 批次训练成功 - 总损失: {loss:.3f}, "
+                                #      f"policy_loss={policy_loss:.3f}, value_loss={value_loss:.3f}, entropy={entropy:.3f}")
                     except Exception as e:
-                        print(f"训练过程中出错: {e}")
-                        import traceback
-                        traceback.print_exc()
+                        print(f"训练批次处理出错: {e}")
 
         except Exception as e:
-            print(f"回合处理过程中出错: {e}")
+            print(f"回合处理出错: {e}")
             state = env.reset()
             episode_reward = 0
             continue
-
     print(f"任务 {task_id} 训练完成")
     return episode_count
 
@@ -503,7 +484,7 @@ if __name__ == "__main__":
             state_dim = env.state_dim
             action_dim = env.action_dim
             # 确保正确设置离散/连续参数
-            agent = PPOAgent(state_dim, action_dim, is_discrete=True)  # 明确设置为离散
+            agent = PPOAgent(state_dim, action_dim, is_discrete=False)  # 明确设置为离散
 
             print(f"开始学习任务 {task_id}...")
             # 在使用agent之前调用修复函数

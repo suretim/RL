@@ -32,12 +32,28 @@ enum enum_flask_state{
 
 enum enum_flask_get_state {
     SPIFFS_DOWN_LOAD_MODEL = 0, 
-    META_MODEL = 1, 
+    FLASK_META_MODEL = 1, 
     IMG_MODEL=2,
     MODEL_BIN_PPO_MD5 = 3,
     ACTOR_MODEL = 4,
     FLASK_GET_COUNT, // This automatically becomes 2, useful for array sizing
 };
+ 
+enum spiffs1_model_type {
+    OPTIMIZED_MODEL = 0, 
+    META_MODEL=1, 
+    ACTOR_MODEL=2,
+    CRITIC_MODEL = 3, 
+    SPIFFS1_MODEL_COUNT,  
+};
+
+enum spiffs2_model_type {
+    BIN_MODEL = 0, 
+    WEIGHT_MODEL=1,  
+    SPIFFS2_MODEL_COUNT,  
+};
+
+
 #define FLASK_STATES_GET_COUNT 2
  
 enum enum_flask_put_state{

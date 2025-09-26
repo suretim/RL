@@ -1,4 +1,4 @@
-#include "ppo_policy_critic.h"
+#include "ppo_policy_critic_task0.h"
 
 const uint8_t critic_model[] = {
 

@@ -31,7 +31,7 @@
   
 #include "esp_partition.h"   
 
-
+#include "infer_esp32_lstm_lll.h"
 #define CURRENT_VERSION  "1.0.0"
 //extern const char * spiffs_model_path ;
 static const char *TAG = "OTA HVAC";
@@ -39,7 +39,7 @@ static const char *TAG = "OTA HVAC";
   uint8_t flask_state_get_flag[FLASK_GET_COUNT]={0};
   uint8_t flask_state_put_flag[FLASK_PUT_COUNT]={0};
 extern std::vector<float> health_result;
-extern const char* spiffs1_model_path[3];
+extern const char* spiffs1_model_path[SPIFFS1_MODEL_COUNT];
 //extern const char optimized_model_path[];
 //extern const char spiffs_ppo_model_bin_path[];
 
@@ -198,7 +198,7 @@ bool parse_policy_model_json(const char *json_str) {
         }
          
         // Save model to SPIFFS or Flash
-        save_model_to_spiffs(decoded_len, model_bin, spiffs1_model_path[SPIFFS_DOWN_LOAD_MODEL]);
+        save_model_to_spiffs(decoded_len, model_bin, spiffs1_model_path[OPTIMIZED_MODEL]);
         
         // save_model_to_flash(b64_str); 
     }
@@ -311,10 +311,7 @@ void http_get_model_json(void *pvParameters) {
     vTaskDelete(NULL);
 }
 
- 
- 
-
-
+   
  char local_md5[64]={0};
  char server_md5[64]={0};
 
@@ -432,7 +429,7 @@ void download_ota_md5_model(void *pvParameters) {
         sprintf(task_url, "http://%s:%s/%s", BASE_URL,POLICY_PORT,task_str);
           
  
-    if (ota_download_md5_event_based(task_url, spiffs1_model_path[MODEL_BIN_PPO_MD5]) != ESP_OK) {
+    if (ota_download_md5_event_based(task_url, spiffs2_model_path[BIN_MODEL]) != ESP_OK) {
         ESP_LOGE(TAG, "OTA download failed");
         flask_state_get_flag[MODEL_BIN_PPO_MD5]=SPIFFS_MODEL_ERR;
         vTaskDelete(NULL); 
@@ -440,7 +437,7 @@ void download_ota_md5_model(void *pvParameters) {
     }
     ESP_LOGI(TAG, "OTA download Suceess!");
     // 验证下载的文件
-    if (!calc_file_md5(spiffs1_model_path[MODEL_BIN_PPO_MD5], local_md5)) {
+    if (!calc_file_md5(spiffs2_model_path[BIN_MODEL], local_md5)) {
         ESP_LOGI(TAG, "Local MD5 calculation ppo_model.bin empty");
         //vTaskDelete(NULL);
         //return;

@@ -646,9 +646,21 @@ class PPOBaseAgent:
 
         return total_loss, actor_loss, value_loss, entropy,ewc_loss
 
-    def train_step(self, states, actions, advantages, old_probs, returns, clip_ratio=0.1, use_ewc=False):
-        """执行一次 PPO 更新（底层函数）"""
+    def train_step(self, states, actions, advantages, old_probs, returns,
+                   clip_ratio=0.1, use_ewc=False,
+                   adv_clip=10.0, logprob_clip=20.0, ratio_clip_max=10.0,
+                   value_clip=10.0, entropy_clip=5.0, grad_clip_norm=5.0,
+                   normalize_returns=False):
+        """受保护的 PPO 更新，平衡 policy_loss 和 value_loss"""
+
+        # 转张量
         states = tf.convert_to_tensor(states, dtype=tf.float32)
+        advantages = tf.convert_to_tensor(advantages, dtype=tf.float32)
+        old_probs = tf.convert_to_tensor(old_probs, dtype=tf.float32)
+        returns = tf.convert_to_tensor(returns, dtype=tf.float32)
+
+        if normalize_returns:
+            returns = (returns - tf.reduce_mean(returns)) / (tf.math.reduce_std(returns) + 1e-8)
 
         if self.is_discrete:
             actions = tf.convert_to_tensor(actions, dtype=tf.int32)
@@ -657,20 +669,15 @@ class PPOBaseAgent:
         else:
             actions = tf.convert_to_tensor(actions, dtype=tf.float32)
 
-        advantages = tf.convert_to_tensor(advantages, dtype=tf.float32)
-        old_probs = tf.convert_to_tensor(old_probs, dtype=tf.float32)
-        returns = tf.convert_to_tensor(returns, dtype=tf.float32)
-
         with tf.GradientTape() as tape:
+            # --- policy & log_probs ---
             if self.is_discrete:
                 logits = self.get_policy(states)
                 dist = tfp.distributions.Categorical(logits=logits)
                 new_log_probs = dist.log_prob(actions)
-
                 actions_one_hot = tf.one_hot(actions, depth=self.action_dim)
                 old_action_probs = tf.reduce_sum(old_probs * actions_one_hot, axis=1)
                 old_log_probs = tf.math.log(old_action_probs + 1e-8)
-
                 new_log_probs = tf.reshape(new_log_probs, [-1, 1])
                 old_log_probs = tf.reshape(old_log_probs, [-1, 1])
             else:
@@ -684,43 +691,57 @@ class PPOBaseAgent:
                 new_log_probs = tf.reduce_sum(dist.log_prob(actions), axis=-1, keepdims=True)
                 old_log_probs = tf.reshape(old_probs, [-1, 1])
 
+            # --- clip log_probs & ratio ---
+            new_log_probs = tf.clip_by_value(new_log_probs, -logprob_clip, logprob_clip)
+            old_log_probs = tf.clip_by_value(old_log_probs, -logprob_clip, logprob_clip)
             ratio = tf.exp(new_log_probs - old_log_probs)
-            advantages = tf.reshape(advantages, [-1, 1])
+            ratio = tf.clip_by_value(ratio, 0.0, ratio_clip_max)
 
+            # --- clip advantages ---
+            advantages = tf.reshape(advantages, [-1, 1])
+            advantages = tf.clip_by_value(advantages, -adv_clip, adv_clip)
+
+            # --- surrogate loss ---
             surrogate1 = ratio * advantages
             surrogate2 = tf.clip_by_value(ratio, 1.0 - clip_ratio, 1.0 + clip_ratio) * advantages
             policy_loss = -tf.reduce_mean(tf.minimum(surrogate1, surrogate2))
 
+            # --- value loss (裁剪 & 可归一化) ---
             values = self.value_net(states)
             returns = tf.reshape(returns, [-1, 1])
-            value_loss = tf.reduce_mean(tf.square(returns - values))
+            value_diff = tf.clip_by_value(returns - values, -value_clip, value_clip)
+            value_loss = tf.reduce_mean(tf.square(value_diff))
 
-            entropy = tf.reduce_mean(dist.entropy())
+            # --- entropy loss ---
+            entropy = tf.reduce_mean(tf.clip_by_value(dist.entropy(), 0.0, entropy_clip))
+
+            # --- 总 loss ---
             loss = policy_loss + self.value_coef * value_loss - self.entropy_coef * entropy
 
+            # --- EWC loss ---
             if use_ewc:
                 ewc_loss_val = self._compute_ewc_loss()
                 loss += ewc_loss_val
             else:
                 ewc_loss_val = tf.constant(0.0)
 
+        # --- 梯度裁剪 ---
         trainable_vars = self.policy_params + self.value_params
         grads = tape.gradient(loss, trainable_vars)
+        grads = [tf.clip_by_norm(g, grad_clip_norm) if g is not None else None for g in grads]
         grads_and_vars = [(g, v) for g, v in zip(grads, trainable_vars) if g is not None]
-
         if grads_and_vars:
             self.optimizer.apply_gradients(grads_and_vars)
 
-        return (loss.numpy(), policy_loss.numpy(), value_loss.numpy(),
-                entropy.numpy(), ewc_loss_val.numpy())
+        # --- 返回各项 loss ---
+        return loss.numpy(), policy_loss.numpy(), value_loss.numpy(), entropy.numpy(), ewc_loss_val.numpy()
 
-    def train_on_batch(self, states, actions, old_probs, returns, values, next_states, dones,
+    def train_on_batch(self, states, actions, old_probs, returns, values,
                        clip_ratio=0.1, use_ewc=False, normalize_adv=True):
         """高层接口：接收 rollout 数据并调用 train_step"""
         try:
             # 保证输入维度正确
             states = self._ensure_2d(states, self.state_dim)
-            next_states = self._ensure_2d(next_states, self.state_dim)
 
             # 计算优势函数
             advantages = self._compute_advantages(returns, values)
@@ -1076,7 +1097,7 @@ class ESP32PPOAgent(PPOBaseAgent):
         except:
             return self.critic.predict(np.array([state]))[0][0]
 
-    def export_for_esp32(self, base_path="ppo_model"):
+    def export_for_esp32(self, base_path="ppo_model",task_id=0):
         """導出ESP32所需的所有文件"""
         os.makedirs(base_path, exist_ok=True)
 
@@ -1085,12 +1106,12 @@ class ESP32PPOAgent(PPOBaseAgent):
         self.critic=self.convert_to_tflite(model_type='critic', quantize=False, optimize_size=False)
 
         # 使用正確的方法名
-        self.save_tflite_model(f"{base_path}/ppo_policy_actor.tflite", 'actor')
-        self.save_tflite_model(f"{base_path}/ppo_policy_critic.tflite", 'critic')
+        self.save_tflite_model(f"{base_path}/actor_task{task_id}.tflite", 'actor')
+        self.save_tflite_model(f"{base_path}/critic_task{task_id}.tflite", 'critic')
 
         # 生成C頭文件
-        self._generate_c_header(f"{base_path}/ppo_policy_actor.tflite", f"{base_path}/ppo_policy_actor.h", 'actor_model')
-        self._generate_c_header(f"{base_path}/ppo_policy_critic.tflite", f"{base_path}/ppo_policy_critic.h", 'critic_model')
+        self._generate_c_header(f"{base_path}/actor_task{task_id}.tflite", f"{base_path}/actor_task{task_id}.h", 'actor_model')
+        self._generate_c_header(f"{base_path}/critic_task{task_id}.tflite", f"{base_path}/critic_task{task_id}.h", 'critic_model')
 
         # 生成示例代碼
         self._generate_example_code(base_path)
@@ -1249,8 +1270,8 @@ void loop() {
 
         while current_units >= 4:
             self.hidden_units = current_units
-            self.actor = self._build_esp32_actor()
-            self.critic = self._build_esp32_critic()
+            self.actor = self._build_actor()
+            self.critic = self._build_critic()
 
             self.convert_to_tflite('actor')
             self.convert_to_tflite('critic')
@@ -1495,7 +1516,6 @@ class ESP32OnlinePPOFisherAgent(ESP32PPOAgent):
         self.state_dim = state_dim
         self.action_dim = action_dim
 
-
         self.clip_ratio = clip_ratio
         self.gamma = gamma
         self.lam = lam
@@ -1509,23 +1529,21 @@ class ESP32OnlinePPOFisherAgent(ESP32PPOAgent):
     def sigmoid(self, x):
         return 1.0 / (1.0 + tf.exp(-x))
 
-
-
     # ================= 收集一条 trajectory =================
     def collect_trajectory(self, env, max_steps=200):
-        states, actions, rewards, log_probs, values = [], [], [], [], []
+        states, actions, rewards, log_probs, values ,dones= [], [], [], [], [],[]
 
-        state, _ = env.reset()
+        state = env.reset()
         for _ in range(max_steps):
             action, log_prob = self.get_action(state)
-            next_state, reward, done, _, _ = env.step(action)
+            next_state, reward, done, _ = env.step(action)
 
             states.append(state)
             actions.append(action)
             rewards.append(reward)
             log_probs.append(log_prob)
             values.append(self.critic(np.expand_dims(state, 0)).numpy()[0, 0])
-
+            dones.append(done)
             state = next_state
             if done:
                 break
@@ -1538,31 +1556,38 @@ class ESP32OnlinePPOFisherAgent(ESP32PPOAgent):
             np.array(actions, dtype=np.float32), \
             np.array(rewards, dtype=np.float32), \
             np.array(log_probs, dtype=np.float32), \
-            np.array(values, dtype=np.float32)
+            np.array(values, dtype=np.float32), \
+            np.array(dones, dtype=np.float32)
 
     # ================= 批量收集多条 trajectory =================
     def collect_trajectories(self, env, num_episodes=10, max_steps=200):
-        all_states, all_actions, all_rewards, all_log_probs, all_values = [], [], [], [], []
+        all_states, all_actions, all_rewards, all_log_probs, all_values,all_dones = [], [], [], [], [], []
 
         for _ in range(num_episodes):
-            states, actions, rewards, log_probs, values = self.collect_trajectory(env, max_steps)
+            states, actions, rewards, log_probs, values,dones = self.collect_trajectory(env, max_steps)
             all_states.append(states)
             all_actions.append(actions)
             all_rewards.append(rewards)
             all_log_probs.append(log_probs)
             all_values.append(values)
+            all_dones.append(dones)
 
-        return all_states, all_actions, all_rewards, all_log_probs, all_values
+        return all_states, all_actions, all_rewards, all_log_probs, all_values,all_dones
 
     # ================= GAE 优势函数计算 =================
-    def compute_gae(rewards, values, dones, gamma=0.99, lam=0.95):
+    def compute_gae(self, rewards, values, dones, gamma=0.99, lam=0.95):
+        rewards = np.array(rewards, dtype=np.float32)
+        dones = np.array(dones, dtype=np.float32)
+        values = np.array(values, dtype=np.float32)  # 長度 = len(rewards)+1
+
         adv = np.zeros_like(rewards, dtype=np.float32)
         gae = 0
         for t in reversed(range(len(rewards))):
             delta = rewards[t] + gamma * (1 - dones[t]) * values[t + 1] - values[t]
             gae = delta + gamma * lam * (1 - dones[t]) * gae
             adv[t] = gae
-        returns = adv + values[:-1]
+
+        returns = adv + values[:-1]  # 去掉最後的 bootstrap
         return adv, returns
 
     def reset_buffer(self):
@@ -1612,104 +1637,119 @@ class ESP32OnlinePPOFisherAgent(ESP32PPOAgent):
             action_prob = dist.prob(action).numpy()
             return action, action_prob
         
-    def rollout_and_train(self,env,  max_episodes=500, rollout_len=200, train_interval=200):
-        for ep in range(max_episodes):
-            state, done, ep_reward = env.reset(), False, 0
-            while not done:
-                action, log_prob = self.select_action(state)
-                value=self.get_value(state)
-                #next_state, reward, terminated, truncated, _ = env.step(action)
-                next_state, reward, done, info= env.step(action)
-                #done = terminated or truncated
-                #self.store(state, action, reward, next_state, done, log_prob)
-                self.ppo_buffer.store( state, action, log_prob, reward, next_state, done, value)
-                state = next_state
-                ep_reward += reward
+    def rollout_and_train(self,env ):
+        for epoch in range(20):
+            # === 批量收集数据 ===
+            all_states, all_actions, all_rewards, all_log_probs, all_values, all_dones = self.collect_trajectories(env)
 
-                # === 条件训练 ===
-                if len(self.states) >= train_interval:
-                    self.train_buffer_step(buf=self.ppo_buffer,batch_size=32,use_ewc=True)
-            print(f"Episode {ep}, Reward {ep_reward}")
-    
-    def train_buffer_step(self, buf=None, batch_size=32,use_ewc=True):
-        if buf is None or len(buf.states) == 0:
-            buf = self.ppo_buffer
-            
-        batch_generator = buf.get_ppo_batch(batch_size=batch_size)
+            # 對每條 trajectory 分別計算 advantage 和 returns
+            all_adv = []
+            all_returns = []
 
-        for batch in batch_generator:
-            states, actions, old_log_probs, returns, values, next_states, dones, advantages = batch
+            for rewards, values, dones in zip(all_rewards, all_values, all_dones):
+                adv, ret = self.compute_gae(rewards, values, dones)
+                all_adv.append(adv)
+                all_returns.append(ret)
 
-            # 转换为张量
-            states = tf.convert_to_tensor(states, dtype=tf.float32)
-            next_states = tf.convert_to_tensor(next_states, dtype=tf.float32)
-            actions = tf.convert_to_tensor(actions, dtype=tf.float32)
-            old_log_probs = tf.convert_to_tensor(old_log_probs, dtype=tf.float32)
-            returns = tf.convert_to_tensor(returns, dtype=tf.float32)
-            advantages = tf.convert_to_tensor(advantages, dtype=tf.float32)
+            # 拼接成大 batch
+            states_batch = np.concatenate(all_states, axis=0)
+            actions_batch = np.concatenate(all_actions, axis=0)
+            log_probs_batch = np.concatenate(all_log_probs, axis=0)
+            adv_batch = np.concatenate(all_adv, axis=0)
+            returns_batch = np.concatenate(all_returns, axis=0)
+            # === 更新策略和价值 ===
+            actor_loss,critic_loss = self.train_step(states_batch, actions_batch,adv_batch, log_probs_batch, returns_batch)
 
-            # === 标准化 advantages ===
-            advantages = (advantages - tf.reduce_mean(advantages)) / (tf.math.reduce_std(advantages) + 1e-8)
 
-            # === Actor 更新 ===
-            with tf.GradientTape() as tape:
-                if self.is_discrete:
-                    logits = self.actor(states)
-                    dist = tfp.distributions.Categorical(logits=logits)
+            print(f"Epoch {epoch}: actor_loss={actor_loss:.3f}, critic_loss={critic_loss:.2f}")
 
-                    actions = tf.cast(tf.squeeze(actions), tf.int32)
-                    new_log_probs = dist.log_prob(actions)
+    def gauss_log_prob(self,mu, log_std, actions):
+        # mu, log_std, actions: [batch, action_dim]
+        pre_sum = -0.5 * (((actions - mu) / tf.exp(log_std)) ** 2 + 2 * log_std + np.log(2 * np.pi))
+        return tf.reduce_sum(pre_sum, axis=1)  # [batch], 每个样本一个 scalar log_prob
 
-                else:  # 连续动作
-                    means = self.actor(states)
-                    log_stds = tf.ones_like(means) * self.log_std
-                    dist = tfp.distributions.Normal(loc=means, scale=tf.exp(log_stds))
+    def train_step(self, states, actions, advantages, old_probs, returns, clip_ratio=0.1, use_ewc=False):
+        """
+        完整稳定版 PPO 训练步骤（支持连续动作可训练 log_std）
+        """
+        states = tf.convert_to_tensor(states, dtype=tf.float32)
+        actions = tf.convert_to_tensor(actions, dtype=tf.float32 if not self.is_discrete else tf.int32)
+        advantages = tf.convert_to_tensor(advantages, dtype=tf.float32)
+        old_probs = tf.convert_to_tensor(old_probs, dtype=tf.float32)
+        returns = tf.convert_to_tensor(returns, dtype=tf.float32)
 
-                    if len(actions.shape) == 1:
-                        actions = tf.expand_dims(actions, -1)
+        # === 标准化 advantages ===
+        advantages = (advantages - tf.reduce_mean(advantages)) / (tf.math.reduce_std(advantages) + 1e-8)
 
-                    new_log_probs = tf.reduce_sum(dist.log_prob(actions), axis=-1)
+        # === Actor 更新 ===
+        with tf.GradientTape() as tape:
+            if self.is_discrete:
+                logits = self.actor(states)
+                dist = tfp.distributions.Categorical(logits=logits)
+                new_log_probs = dist.log_prob(actions)
+                old_log_probs = old_probs
+            else:
+                # 连续动作
+                means = self.actor(states)  # [batch, action_dim]
+                log_stds = tf.broadcast_to(self.log_std, tf.shape(means))  # 可训练 log_std
+                log_stds = tf.clip_by_value(log_stds, -20.0, 2.0)  # 防止 NaN
 
-                # PPO ratio
-                ratio = tf.exp(new_log_probs - old_log_probs)
-                clipped_ratio = tf.clip_by_value(ratio, 1 - self.clip_ratio, 1 + self.clip_ratio)
+                dist = tfp.distributions.Normal(loc=means, scale=tf.exp(log_stds))
+                new_log_probs = tf.reduce_sum(dist.log_prob(actions), axis=-1)
 
-                # Actor 损失
-                actor_loss = -tf.reduce_mean(tf.minimum(ratio * advantages, clipped_ratio * advantages))
+                # 旧动作 log_prob
+                old_means = old_probs
+                old_log_stds = tf.broadcast_to(self.log_std, tf.shape(old_means))
+                old_log_stds = tf.clip_by_value(old_log_stds, -20.0, 2.0)
+                old_dist = tfp.distributions.Normal(loc=old_means, scale=tf.exp(old_log_stds))
+                old_log_probs = tf.reduce_sum(old_dist.log_prob(actions), axis=-1)
 
-                # 熵奖励
-                entropy = tf.reduce_mean(dist.entropy())
+            # PPO ratio
+            log_ratio = new_log_probs - old_log_probs
+            log_ratio = tf.clip_by_value(log_ratio, -5.0, 5.0)  # 防止 exp 溢出
+            ratio = tf.exp(log_ratio)
+            clipped_ratio = tf.clip_by_value(ratio, 1 - clip_ratio, 1 + clip_ratio)
 
-                # Actor 总损失
-                actor_total_loss = actor_loss - self.ent_coef * entropy
+            # Actor 损失
+            actor_loss = -tf.reduce_mean(tf.minimum(ratio * advantages, clipped_ratio * advantages))
 
-                if use_ewc and self.online_fisher is not None:
-                    actor_total_loss += self.ewc_regularization()
+            # 熵奖励
+            entropy = tf.reduce_mean(dist.entropy())
 
-            actor_grads = tape.gradient(actor_total_loss, self.actor.trainable_variables)
-            actor_grads, _ = tf.clip_by_global_norm(actor_grads, 0.5)
-            self.actor_opt.apply_gradients(zip(actor_grads, self.actor.trainable_variables))
+            # Actor 总损失
+            actor_total_loss = actor_loss - self.ent_coef * entropy
+            if use_ewc and self.online_fisher is not None:
+                actor_total_loss += self.ewc_regularization()
 
-            # === Critic 更新 ===
-            with tf.GradientTape() as tape:
-                values_pred = tf.squeeze(self.critic(states))
-                critic_loss = tf.reduce_mean(tf.square(returns - values_pred))
+        # Actor 梯度更新（包含 log_std）
+        actor_vars = self.actor.trainable_variables + [self.log_std]
+        actor_grads = tape.gradient(actor_total_loss, actor_vars)
+        actor_grads, _ = tf.clip_by_global_norm(actor_grads, 0.3)
+        self.actor_opt.apply_gradients(zip(actor_grads, actor_vars))
 
-                if use_ewc and self.online_fisher is not None:
-                    critic_loss += self.ewc_regularization()
+        # === Critic 更新 ===
+        with tf.GradientTape() as tape:
+            values_pred = tf.squeeze(self.critic(states))
 
-            critic_grads = tape.gradient(critic_loss, self.critic.trainable_variables)
-            critic_grads, _ = tf.clip_by_global_norm(critic_grads, 0.5)
-            self.critic_opt.apply_gradients(zip(critic_grads, self.critic.trainable_variables))
+            # 对 returns 做归一化
+            returns_norm = (returns - tf.reduce_mean(returns)) / (tf.math.reduce_std(returns) + 1e-8)
 
-            # === 日志打印 ===
-            print(f"Actor Loss: {actor_loss.numpy():.3f}, "
-                f"Critic Loss: {critic_loss.numpy():.3f}, "
-                f"Entropy: {entropy.numpy():.3f}")
+            critic_loss = tf.reduce_mean(tf.square(returns_norm - values_pred))
+            if use_ewc and self.online_fisher is not None:
+                critic_loss += self.ewc_regularization()
+
+        critic_grads = tape.gradient(critic_loss, self.critic.trainable_variables)
+        critic_grads, _ = tf.clip_by_global_norm(critic_grads, 0.3)
+        self.critic_opt.apply_gradients(zip(critic_grads, self.critic.trainable_variables))
+
+        # === 日志打印 ===
+        print(f"Actor Loss: {actor_loss.numpy():.3f}, "
+              f"Critic Loss: {critic_loss.numpy():.3f}, "
+              f"Entropy: {entropy.numpy():.3f}, "
+              f"Returns range: {tf.reduce_min(returns).numpy():.3f} ~ {tf.reduce_max(returns).numpy():.3f}, "
+              f"log_std: {tf.reduce_mean(self.log_std).numpy():.3f}")
 
         return actor_loss.numpy(), critic_loss.numpy()
-        
-        
 
     def _normalize_rewards(self, rewards):
         """奖励标准化"""
@@ -1930,9 +1970,18 @@ class PPOBuffer:
 
         # 初始化缓冲区数组
         self.states = np.zeros((buffer_size, state_dim), dtype=np.float32)
-        self.actions = np.zeros(buffer_size, dtype=np.int32)  # 存整数动作
+
+
+        self.actions = np.zeros((buffer_size, action_dim), dtype=np.float32)
+
+        #self.actions = np.zeros(buffer_size, dtype=np.int32)  # 存整数动作
         self.rewards = np.zeros(buffer_size, dtype=np.float32)
+        self.log_probs = np.zeros(buffer_size, dtype=np.float32)
         self.values = np.zeros(buffer_size, dtype=np.float32)  # 修正：应该是1D，不是2D
+
+
+        self.next_values = np.zeros(buffer_size, dtype=np.float32)  # 修正：应该是1D，不是2D
+
         self.next_states = np.zeros((buffer_size, state_dim), dtype=np.float32)
         self.probs = np.zeros((buffer_size, action_dim), dtype=np.float32)
         self.dones = np.zeros(buffer_size, dtype=bool)  # 修正：使用bool类型
@@ -1947,7 +1996,7 @@ class PPOBuffer:
         self.size = buffer_size 
         self.lam = lam
 
-        self.reset()
+        #self.reset()
 
     def reset(self):
         self.states = []
@@ -1957,68 +2006,81 @@ class PPOBuffer:
         self.log_probs = []
         self.values = []
         self.next_values = []
+        self.next_states = []
 
-     
-    def compute_advantages(self):
-        """计算GAE优势 & returns"""
-        rewards = np.array(self.rewards, dtype=np.float32)
-        values = np.array(self.values, dtype=np.float32)
-        next_values = np.array(self.next_values, dtype=np.float32)
-        dones = np.array(self.dones, dtype=np.float32)
+    def compute_advantages(self, rewards, values, dones, gamma=0.99, lam=0.95):
+        """
+        计算 Generalized Advantage Estimation (GAE-Lambda)
+        Args:
+            rewards: [T] 轨迹中的奖励
+            values:  [T] critic 估计的 V(s_t)
+            dones:   [T] 每一步是否 episode 结束
+            gamma:   折扣因子
+            lam:     GAE 的 λ 系数
 
-        deltas = rewards + self.gamma * next_values * (1 - dones) - values
+        Returns:
+            advantages: [T] 每一步的优势估计
+            returns:    [T] TD(λ) 回报 (等价于优势+value)
+        """
+        T = len(rewards)
+        values = np.array(values, dtype=np.float32)
+        next_values = np.zeros_like(values)
 
-        advantages = []
+        # 构建 next_values
+        for t in range(T - 1):
+            next_values[t] = values[t + 1]
+        next_values[-1] = 0.0 if dones[-1] else values[-1]
+
+        advantages = np.zeros_like(rewards, dtype=np.float32)
         gae = 0.0
-        for delta, done in zip(deltas[::-1], dones[::-1]):
-            gae = delta + self.gamma * self.lam * (1 - done) * gae
-            advantages.insert(0, gae)
 
-        advantages = np.array(advantages, dtype=np.float32)
+        # 反向计算 GAE
+        for t in reversed(range(T)):
+            # δ_t = r_t + γ V(s_{t+1}) - V(s_t)
+            delta = rewards[t] + gamma * next_values[t] * (1 - dones[t]) - values[t]
+            gae = delta + gamma * lam * (1 - dones[t]) * gae
+            advantages[t] = gae
+
         returns = advantages + values
-
         return advantages, returns
 
-    def get_ppo_batch(self, batch_size=64, shuffle=True):
-        """生成 PPO 的 mini-batch，按 trajectory 计算好 advantages & returns"""
+    def get_ppo_batch(self, batch_size=64, shuffle=True, gamma=0.99, lam=0.95):
+        """生成 PPO 的 mini-batch，自动计算好 advantages & returns"""
         if len(self.states) == 0:
-            raise ValueError(" Buffer is empty!")
+            raise ValueError("Buffer is empty!")
 
-        if len(self.states) == 1:
-            # 如果只有一个 state，直接复制自己
-            next_states = np.array(self.states, dtype=np.float32)
-        else:
-            next_states = np.array(self.states[1:] + [self.states[-1]], dtype=np.float32)
-
-        advantages, returns = self.compute_advantages()
-
+        # === 转 numpy ===
         states = np.array(self.states, dtype=np.float32)
         actions = np.array(self.actions, dtype=np.float32)
         log_probs = np.array(self.log_probs, dtype=np.float32)
         values = np.array(self.values, dtype=np.float32)
-        #next_states = np.array(self.states[1:] + [self.states[-1]], dtype=np.float32)  # shift 1
+        rewards = np.array(self.rewards, dtype=np.float32)
+        dones = np.array(self.dones, dtype=np.float32)
 
+        # === 调用 GAE ===
+        advantages, returns = self.compute_advantages(
+            rewards, values, dones, gamma, lam
+        )
+
+        # === 打乱索引 ===
         n = len(states)
         indices = np.arange(n)
-
         if shuffle:
             np.random.shuffle(indices)
 
+        # === mini-batch 生成器 ===
         for start in range(0, n, batch_size):
             end = start + batch_size
             batch_idx = indices[start:end]
 
             yield (
-                states[batch_idx],
-                actions[batch_idx],
-                log_probs[batch_idx],
-                returns[batch_idx],
-                values[batch_idx],
-                next_states[batch_idx],
-                np.array(self.dones)[batch_idx],
-                advantages[batch_idx]
+                states[batch_idx],  # (B, state_dim)
+                actions[batch_idx],  # (B,)
+                log_probs[batch_idx],  # (B,)
+                returns[batch_idx],  # (B,)
+                advantages[batch_idx]  # (B,)
             )
-    
+
     def is_full(self):
         return self.num_samples == self.buffer_size
 
