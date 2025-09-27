@@ -25,21 +25,18 @@
 #include "esp_system.h" 
 #include "cJSON.h"
 #include "esp_system.h"
-#include "esp_log.h"
-
-#include "esp_err.h"
-  
-#include "esp_partition.h"   
-
+#include "esp_log.h" 
+#include "esp_err.h" 
+#include "esp_partition.h"    
 #include "infer_esp32_lstm_lll.h"
-#define CURRENT_VERSION  "1.0.0"
-//extern const char * spiffs_model_path ;
+#define CURRENT_VERSION  "1.0.0" 
 static const char *TAG = "OTA HVAC";
 
   uint8_t flask_state_get_flag[FLASK_GET_COUNT]={0};
   uint8_t flask_state_put_flag[FLASK_PUT_COUNT]={0};
 extern std::vector<float> health_result;
 extern const char* spiffs1_model_path[SPIFFS1_MODEL_COUNT];
+extern const char* spiffs2_model_path[SPIFFS2_MODEL_COUNT];
 //extern const char optimized_model_path[];
 //extern const char spiffs_ppo_model_bin_path[];
 
@@ -67,7 +64,7 @@ esp_err_t _http_down_load_event_handler(esp_http_client_event_t *evt) {
             if (f_model) {
                 fclose(f_model);
                 f_model = NULL;
-                ESP_LOGI(TAG, "OTA file saved to %s", spiffs1_model_path[SPIFFS_DOWN_LOAD_MODEL]);
+                ESP_LOGI(TAG, "OTA file saved to %s", spiffs1_model_path[FLASK_OPTI_MODEL]);
             }
             break;
         case HTTP_EVENT_DISCONNECTED:
@@ -128,7 +125,7 @@ bool save_model_to_spiffs(unsigned int decoded_len,   unsigned char  *model_bin,
     }
 
      
-    flask_state_get_flag[SPIFFS_DOWN_LOAD_MODEL] = SPIFFS_MODEL_SAVED;
+    flask_state_get_flag[FLASK_OPTI_MODEL] = SPIFFS_MODEL_SAVED;
      
     return true;
 }
@@ -266,7 +263,7 @@ esp_err_t _http_event_model_json_handler(esp_http_client_event_t *evt) {
 void http_get_model_json(void *pvParameters) {
      
     http_response_data.clear(); // 清空之前的数据
-    flask_state_get_flag[SPIFFS_DOWN_LOAD_MODEL]=SPIFFS_MODEL_ERR;
+    flask_state_get_flag[FLASK_OPTI_MODEL]=SPIFFS_MODEL_ERR;
     esp_http_client_config_t config = {
         .url = HTTP_GET_MODEL_JSON_URL,        
         .timeout_ms = 10000,
@@ -722,7 +719,7 @@ void (*functionPutArray[FLASK_PUT_COUNT])(void *pvParameters) = {
 };
  
 
-extern "C" void wifi_get_package(int type ) {
+void wifi_get_package(int type ) {
     if(type>=0 && type<FLASK_STATES_GET_COUNT)
     //if(type==0)
     {
@@ -739,7 +736,7 @@ extern "C" void wifi_get_package(int type ) {
     return   ;
 }
 
-extern "C" void wifi_put_package(int type ) {
+void wifi_put_package(int type ) {
     if(type>=0 && type<FLASK_PUT_COUNT)
     //if(type==0)
     {
@@ -761,10 +758,10 @@ extern float* load_float_bin(const char* path, size_t &length) ;
 extern "C" void hvac_agent(void) {
      
     vTaskDelay(pdMS_TO_TICKS(5000)); // 等 WiFi 連線
-
-    float *buf=load_float_bin("/spiffs1/ppo_model.bin");
+    size_t  length = 0;
+    float *buf=load_float_bin("/spiffs1/ppo_model.bin", length);
     // ======= 從 SPIFFS 加載模型 =======
-    if (buff!=nullptr) {
+    if (buf  ==NULL) {
         ESP_LOGI(TAG, "Model loaded successfully");
     } else {
         ESP_LOGE(TAG, "Failed to load model");

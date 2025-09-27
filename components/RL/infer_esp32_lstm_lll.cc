@@ -3,23 +3,23 @@
 extern "C" {
 #endif
 
-// Undefine any potentially conflicting macros
-#ifdef CHOOSE_MACRO_VA_ARG
-#undef CHOOSE_MACRO_VA_ARG
-#endif
-#ifdef foo
-#undef foo
-#endif
-// 彻底清理所有可能冲突的宏
-#pragma push_macro("CHOOSE_MACRO_VA_ARG")
-#pragma push_macro("foo")
-#pragma push_macro("ESP_STATIC_ASSERT")
-#pragma push_macro("__SELECT_MACRO_VA_ARG_SIZE__")
+// // Undefine any potentially conflicting macros
+// #ifdef CHOOSE_MACRO_VA_ARG
+// #undef CHOOSE_MACRO_VA_ARG
+// #endif
+// #ifdef foo
+// #undef foo
+// #endif
+// // 彻底清理所有可能冲突的宏
+// #pragma push_macro("CHOOSE_MACRO_VA_ARG")
+// #pragma push_macro("foo")
+// #pragma push_macro("ESP_STATIC_ASSERT")
+// #pragma push_macro("__SELECT_MACRO_VA_ARG_SIZE__")
 
-#undef CHOOSE_MACRO_VA_ARG
-#undef foo
-#undef ESP_STATIC_ASSERT
-#undef __SELECT_MACRO_VA_ARG_SIZE__
+// #undef CHOOSE_MACRO_VA_ARG
+// #undef foo
+// #undef ESP_STATIC_ASSERT
+// #undef __SELECT_MACRO_VA_ARG_SIZE__
  
 // 首先包含最基本的ESP头文件
 #include "esp_system.h"
@@ -31,10 +31,10 @@ extern "C" {
 #include "freertos/task.h"
 
 // 恢复宏（在包含所有ESP头文件之后）
-#pragma pop_macro("__SELECT_MACRO_VA_ARG_SIZE__")
-#pragma pop_macro("ESP_STATIC_ASSERT")
-#pragma pop_macro("foo")
-#pragma pop_macro("CHOOSE_MACRO_VA_ARG")
+// #pragma pop_macro("__SELECT_MACRO_VA_ARG_SIZE__")
+// #pragma pop_macro("ESP_STATIC_ASSERT")
+// #pragma pop_macro("foo")
+// #pragma pop_macro("CHOOSE_MACRO_VA_ARG")
 
 
   
@@ -49,7 +49,6 @@ extern "C" {
 #include <string.h> 
 #include "sensor_module.h" 
 #include "hvac_q_agent.h"
-#include "classifier_storage.h"
 
 
   
@@ -67,7 +66,7 @@ extern "C" {
 #include "esp_partition.h"  
 #include "spi_flash_mmap.h"   // 替代 esp_spi_flash.h
 #include "nn.h"
-
+ 
 // -------------------------
 // 模型数据 (TFLite flatbuffer) lstm_encoder_contrastive 和 meta_lstm_classifier
 // -------------------------
@@ -916,7 +915,7 @@ bool ppo_inference(float *input_data) {
         micro_op_resolver.AddUnpack();           // Unpack操作
 
         micro_op_resolver.AddTranspose();        // 转置操作
-        if(    init_model(SPIFFS_DOWN_LOAD_MODEL)==false){
+        if(    init_model(OPTIMIZED_MODEL)==false){
             ESP_LOGE(TAG,"Init ppo_inference Model Failed");
             return false;
         } 
@@ -1008,7 +1007,7 @@ bool sarsa_inference( float* input_seq) {
      
     //int num_classes = output->dims->data[1];
     //memcpy(out_logits, output->data.f, num_classes * sizeof(float));
-    infer_loop();
+    infer_loop(META_MODEL);
      
      
      
@@ -1062,7 +1061,7 @@ bool img_inference( float* input_seq) {
     // 7) 读取输出 
     //int num_classes = output->dims->data[1];
     //memcpy(out_logits, output->data.f, num_classes * sizeof(float));
-    infer_loop(); 
+    infer_loop(IMG_MODEL); 
      
     vTaskDelay(1); // to avoid watchdog trigger 
    //   interpreter->ResetTempAllocations();
@@ -1117,7 +1116,8 @@ void prepare_lstm_input() {
  
 
 
-void catch_tensor_dim(enum CaseType type) {
+//void catch_tensor_dim(enum CaseType type) {
+void catch_tensor_dim(int type) {
     classifier_params.infer_case=INFER_CASE;
     classifier_params.feature_dim = FEATURE_DIM;
     classifier_params.num_classes = NUM_CLASSES;

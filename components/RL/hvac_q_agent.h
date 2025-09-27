@@ -31,11 +31,11 @@ enum enum_flask_state{
 };
 
 enum enum_flask_get_state {
-    SPIFFS_DOWN_LOAD_MODEL = 0, 
+    FLASK_OPTI_MODEL = 0, 
     FLASK_META_MODEL = 1, 
     IMG_MODEL=2,
     MODEL_BIN_PPO_MD5 = 3,
-    ACTOR_MODEL = 4,
+    FLASK_ACTOR_MODEL = 4,
     FLASK_GET_COUNT, // This automatically becomes 2, useful for array sizing
 };
  
@@ -43,7 +43,8 @@ enum spiffs1_model_type {
     OPTIMIZED_MODEL = 0, 
     META_MODEL=1, 
     ACTOR_MODEL=2,
-    CRITIC_MODEL = 3, 
+    CRITIC_MODEL = 3,
+    VIT_MODEL=4, 
     SPIFFS1_MODEL_COUNT,  
 };
 
@@ -64,6 +65,21 @@ enum enum_flask_put_state{
 
 
 #define  post_data   "{\"model_path\": \"./saved_models/ppo_policy_actor\"}" 
+
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
+void wifi_get_package(int type); 
+void wifi_put_package(int type);  
+void hvac_agent(void); 
+
+#ifdef __cplusplus
+}
+#endif
+
 #if 0
 const int STATE_SIZES[STATE_DIM] = {2, 2, 2, 3, 3}; // 例：health 0/1, light 0/1/2 等
 

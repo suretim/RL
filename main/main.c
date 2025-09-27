@@ -28,6 +28,7 @@
 #include "plant_make.h"
 #include "hvac_q_agent.h"
 #include "config_spiffs.h"
+#include "classifier_storage.h"
 #define TAG "main      " // 10个字符
 
 
@@ -468,7 +469,7 @@ void main_task(void *pvParameters)
 					{
 						wifi_get_package(i);    
 					}
-					if(flask_state_get_flag[SPIFFS_DOWN_LOAD_MODEL]==SPIFFS_MODEL_SAVED){
+					if(flask_state_get_flag[FLASK_OPTI_MODEL]==SPIFFS_MODEL_SAVED){
 						 
 						break;
 					}
@@ -477,10 +478,10 @@ void main_task(void *pvParameters)
 			}
 			
 			flag_100ms++;
-		    if (  flag_100ms>=100 && flask_state_get_flag[SPIFFS_DOWN_LOAD_MODEL]==SPIFFS_MODEL_SAVED )
+		    if (  flag_100ms>=100 && flask_state_get_flag[FLASK_OPTI_MODEL]==SPIFFS_MODEL_SAVED )
 			{
 				flag_100ms = 1;	
-				if(	lll_tensor_run(SPIFFS_DOWN_LOAD_MODEL)==ESP_FAIL){
+				if(	lll_tensor_run(PPO_CASE)==ESP_FAIL){
 					 
 					break;
 
