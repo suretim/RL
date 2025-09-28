@@ -34,41 +34,54 @@ public:
     PPOModel() {
         // 初始化模型等
     }
+    void calculateLossAndGradients(const std::vector<float>& state_batch,
+                               const std::vector<float>& old_probs,
+                               const std::vector<float>& advantages,
+                               const std::vector<float>& returns,
+                               const std::vector<float>& old_action_probs,
+                               std::vector<float>& grads) {
+        // 1) basic size checks
+        if (state_batch.size() == 0 || old_probs.size() == 0 || advantages.size() == 0 || returns.size() == 0) {
+            ESP_LOGE(NN_TAG, "calculateLossAndGradients: input batch empty");
+            return;
+        }
+        if (old_probs.size() != (size_t)ACTION_DIM || old_action_probs.size() != (size_t)ACTION_DIM) {
+            ESP_LOGW(NN_TAG, "calculateLossAndGradients: old_probs size mismatch: %zu", old_probs.size());
+            // optionally return or continue with clamp to action_dim
+        }
 
-    void calculateLossAndGradients(const std::vector<float>& newExperience, 
-                                    const std::vector<float>& old_probs, 
-                                    const std::vector<float>& advantages, 
-                                    const std::vector<float>& returns, 
-                                    const std::vector<float>& old_action_probs,
-                                    std::vector<float>& grads) {
-        // 执行前向传播，得到新的动作概率和状态价值
-        std::vector<float> action_probs(newExperience.size(), 0.0f);
+        // action_probs must be action_dim
+        std::vector<float> action_probs((size_t)ACTION_DIM, 0.0f);
         float value = 0.0f;
-        forwardPass(newExperience, action_probs, value);
+        forwardPass(state_batch, action_probs, value); // 确保 forwardPass 将 action_probs 填满
 
-        // 计算 PPO 损失
+        // ensure action_probs length is correct
+        if (action_probs.size() != (size_t)ACTION_DIM) {
+            ESP_LOGE(NN_TAG, "action_probs size %zu != ACTION_DIM %d", action_probs.size(), ACTION_DIM);
+            return;
+        }
+
+        // sizes for advantages / returns likely represent batch size; make sure to use matching indexing
+        // 以下示例仅为演示：请根据你的 batch 定义调整
         float policy_loss = calculatePolicyLoss(action_probs, old_action_probs, advantages);
         float value_loss = calculateValueLoss(returns, value);
         float entropy_loss = calculateEntropyLoss(action_probs);
-        
-        // 总损失
+
         float total_loss = policy_loss + 0.5f * value_loss - 0.01f * entropy_loss;
 
-        // 计算梯度
-        // 注意，这里是一个示例，实际的梯度计算需要反向传播
-        std::vector<float> policy_gradients = calculatePolicyGradients(action_probs, old_action_probs, advantages);
-        std::vector<float> value_gradients = calculateValueGradients(returns, value);
-        std::vector<float> entropy_gradients = calculateEntropyGradients(action_probs);
+        auto policy_gradients = calculatePolicyGradients(action_probs, old_action_probs, advantages);
+        auto value_gradients = calculateValueGradients(returns, value);
+        auto entropy_gradients = calculateEntropyGradients(action_probs);
 
-        // 将各个部分的梯度合并到 grads 向量中
+        // 合并时先清空
+        grads.clear();
         grads.insert(grads.end(), policy_gradients.begin(), policy_gradients.end());
         grads.insert(grads.end(), value_gradients.begin(), value_gradients.end());
         grads.insert(grads.end(), entropy_gradients.begin(), entropy_gradients.end());
 
-        // 输出总损失（用于调试）
-        std::cout << "Total Loss: " << total_loss << std::endl;
+        ESP_LOGI(NN_TAG, "Total Loss: %f, grads size: %zu", total_loss, grads.size());
     }
-    
+
 private:
  
     // 神经网络前向传播

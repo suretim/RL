@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include "esp_err.h"
 
-enum CaseType { PPO_CASE, META_CASE ,IMG_CASE,NN_PPO_CASE,NUM_CASE};
+enum CaseType { PPO_CASE,NN_PPO_CASE, META_CASE ,IMG_CASE,NUM_CASE};
 
 
 //#define PPO_CASE 0

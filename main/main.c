@@ -469,16 +469,17 @@ void main_task(void *pvParameters)
 					{
 						wifi_get_package(i);    
 					}
-					if(flask_state_get_flag[FLASK_OPTI_MODEL]==SPIFFS_MODEL_SAVED){
+					//if(flask_state_get_flag[FLASK_OPTI_MODEL]==SPIFFS_MODEL_SAVED){
 						 
-						break;
-					}
+					//	break;
+					//}
 					 
 				}
 			}
 			
 			flag_100ms++;
-		    if (  flag_100ms>=100 && flask_state_get_flag[FLASK_OPTI_MODEL]==SPIFFS_MODEL_SAVED )
+		    //if (  flag_100ms>=100 && flask_state_get_flag[FLASK_OPTI_MODEL]==SPIFFS_MODEL_SAVED )
+			if (  flag_100ms>=100   )
 			{
 				flag_100ms = 1;	
 				if(	lll_tensor_run(PPO_CASE)==ESP_FAIL){
