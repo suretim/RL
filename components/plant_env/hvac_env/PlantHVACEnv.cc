@@ -64,26 +64,26 @@ float PlantHVACEnv::get_param(const std::map<std::string,float>& params, const s
     return 0.0f;
 }
 //extern float pid_map(float x, float in_min, float in_max, float out_min, float out_max);
-// ==== Step 函数 ====
 PlantHVACEnv::StepResult PlantHVACEnv::step(const std::array<int,PORT_CNT>& action,
                                             const std::map<std::string,float>& params)
 {
     StepResult result;
 
-    int ac = action[0];
-    int humi = action[1];
-    int heat = action[2];
+    int ac     = action[0];
+    int humi   = action[1];
+    int heat   = action[2];
     int dehumi = action[3];
 
     // --- 环境动力学 ---
-    
     float light_effect = get_param(params, "light_penalty") * (action[4] == 1 ? 0.1f : 0.0f);
-    float co2_effect = get_param(params, "co2_penalty") * (action[5] == 1 ? 0.1f : 0.0f);
+    float co2_effect   = get_param(params, "co2_penalty")   * (action[5] == 1 ? 0.1f : 0.0f);
 
-    temp += (ac==1 ? -0.5f : 0.2f) + (heat==1 ? 0.5f : 0.0f);
-    humid += (humi==1 ? 0.05f : -0.02f) + (heat==1 ? -0.03f : 0.0f) + (dehumi==1 ? -0.05f : 0.0f);
+    temp  += (ac==1 ? -0.5f : 0.2f) + (heat==1 ? 0.5f : 0.0f);
+    humid += (humi==1 ? 0.05f : -0.02f) 
+           + (heat==1 ? -0.03f : 0.0f) 
+           + (dehumi==1 ? -0.05f : 0.0f);
 
-    temp = std::max(15.0f, std::min(temp, 35.0f));
+    temp  = std::max(15.0f, std::min(temp, 35.0f));
     humid = std::max(0.0f, std::min(humid, 1.0f));
 
     health = (22.0f <= temp && temp <= 28.0f && 0.4f <= humid && humid <= 0.7f) ? 0 : 1;
@@ -101,7 +101,7 @@ PlantHVACEnv::StepResult PlantHVACEnv::step(const std::array<int,PORT_CNT>& acti
     std::vector<float> soft_label = (*proto_cls)(z);
     float flower_prob = soft_label.size()>2 ? soft_label[2] : 0.0f;
 
-    // --- Reward 计算 ---
+    // --- Reward 基础 ---
     float health_reward = (health==0 ? 1.0f : -1.0f);
 
     float action_sum = static_cast<float>(ac+humi+heat+dehumi);
@@ -112,32 +112,70 @@ PlantHVACEnv::StepResult PlantHVACEnv::step(const std::array<int,PORT_CNT>& acti
     float switch_penalty = get_param(params,"switch_penalty_per_toggle")*switch_diff;
 
     float vpd_current = calc_vpd(temp, humid);
-    float vpd_reward = -std::abs(vpd_current - get_param(params,"vpd_target"))*get_param(params,"vpd_penalty");
+    float vpd_reward  = -std::abs(vpd_current - get_param(params,"vpd_target"))
+                        * get_param(params,"vpd_penalty");
 
-    float reward = health_reward - energy_cost - switch_penalty + flower_prob*vpd_reward;
+    // --- 花期环境 penalty ---
+    float flower_env_penalty = 0.0f;
+    bool is_flowering = (flower_prob > 0.5f);  // 以 soft_label 作为阶段判定条件
+
+    if(is_flowering) {
+        // 将 humid 从 [0,1] 转换成 [%]
+        float humid_pct = humid * 100.0f;
+
+        // 湿度目标区间：早期/盛花/收获前
+        float target_min_RH = 45.0f, target_max_RH = 55.0f;
+        if (flower_prob > 0.6f && flower_prob <= 0.75f) {
+            target_min_RH = 45.0f; target_max_RH = 55.0f;
+        } else if (flower_prob > 0.75f && flower_prob <= 0.9f) {
+            target_min_RH = 40.0f; target_max_RH = 50.0f;
+        } else if (flower_prob > 0.9f) {
+            target_min_RH = 35.0f; target_max_RH = 45.0f;
+        }
+
+        // 湿度 penalty
+        if (humid_pct < target_min_RH || humid_pct > target_max_RH) {
+            float diff = (humid_pct < target_min_RH) ? (target_min_RH - humid_pct) : (humid_pct - target_max_RH);
+            flower_env_penalty -= get_param(params,"flower_humi_penalty") * diff;
+        }
+
+        // 温度 penalty (理想 20–26 ℃)
+        if (temp < 20.0f || temp > 26.0f) {
+            float diff = (temp < 20.0f) ? (20.0f - temp) : (temp - 26.0f);
+            flower_env_penalty -= get_param(params,"flower_temp_penalty") * diff;
+        }
+    }
+
+    // --- Reward 汇总 ---
+    float reward = health_reward 
+                 - energy_cost 
+                 - switch_penalty 
+                 + flower_prob * vpd_reward 
+                 + flower_env_penalty;   // << 花期 penalty 动态加入
 
     // --- 更新状态 ---
     prev_action = action;
     t++;
     bool done = t>=seq_len;
 
+    // --- PID feeds (保持原来结构) ---
+    float v_feed  = pid_map((bp_pid_th.v_feed),  c_pid_vpd_min,   c_pid_vpd_max,   0, 1);
+    float t_feed  = pid_map((bp_pid_th.t_feed),  c_pid_temp_min,  c_pid_temp_max,  0, 1);
+    float h_feed  = pid_map((bp_pid_th.h_feed),  c_pid_humi_min,  c_pid_humi_max,  0, 1);
+    float l_feed  = pid_map((bp_pid_th.l_feed),  c_pid_light_min, c_pid_light_max, 0, 1);
+    float c_feed  = pid_map((bp_pid_th.c_feed),  c_pid_co2_min,   c_pid_co2_max,   0, 1);
 
-    float v_feed  = pid_map((bp_pid_th.v_feed+vpd_current)/2.0,  c_pid_vpd_min, c_pid_vpd_max, 0, 1);
-    float t_feed  = pid_map((bp_pid_th.t_feed+temp)/2.0,  c_pid_temp_min, c_pid_temp_max, 0, 1);
-    float h_feed  = pid_map((bp_pid_th.h_feed+humid)/2.0,  c_pid_humi_min, c_pid_humi_max, 0, 1);
-    float l_feed  = pid_map((bp_pid_th.l_feed)/1.0,  c_pid_light_min, c_pid_light_max, 0, 1);
-    float c_feed  = pid_map((bp_pid_th.c_feed)/1.0,  c_pid_co2_min, c_pid_co2_max, 0, 1);
     // --- 填充结果 ---
     result.state = _get_state();
     result.reward = reward;
     result.done = done;
     result.latent_soft_label = soft_label;
     result.flower_prob = flower_prob;
-    result.temp = t_feed;
+    result.temp  = t_feed;
     result.humid = h_feed;
     result.light = l_feed;
-    result.co2 =   c_feed;
-    result.vpd = v_feed;
+    result.co2   = c_feed;
+    result.vpd   = v_feed;
 
     return result;
 }

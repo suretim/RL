@@ -995,9 +995,6 @@ class ESP32PPOAgent(PPOBaseAgent):
         return tflite_model
 
     def convert_to_tflite(self, model_type='actor', quantize=False, optimize_size=False):
-        """
-        將模型轉換為TFLite格式,針對ESP32優化
-        """
         if model_type == 'actor':
             model = self.actor
         elif model_type == 'critic':
@@ -1011,15 +1008,11 @@ class ESP32PPOAgent(PPOBaseAgent):
             converter.optimizations = [tf.lite.Optimize.DEFAULT]
 
             if quantize:
+                # 用 float16 权重量化，ESP32 float32 内核也能跑
                 converter.target_spec.supported_types = [tf.float16]
 
-            converter.target_spec.supported_ops = [
-                tf.lite.OpsSet.TFLITE_BUILTINS,
-                tf.lite.OpsSet.SELECT_TF_OPS
-            ]
-
-            converter.experimental_new_converter = True
-            converter._experimental_lower_tensor_list_ops = False
+            # 删除 SELECT_TF_OPS
+            converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS]
 
         try:
             tflite_model = converter.convert()
@@ -1088,7 +1081,7 @@ class ESP32PPOAgent(PPOBaseAgent):
             action = (probs > 0.5).astype(np.float32)
             return action
         except:
-            return super().get_action(state,return_probs)
+            return super().get_action(state)
 
     def get_esp32_value(self, state):
         """專為ESP32設計的值預測方法"""

@@ -36,26 +36,18 @@ extern "C" void plant_env_step() {
          
         return seq_input;
     }); 
-     
-    //for(int t=0; t<20; t++){
-        //std::array<int,4> action = {t%2, (t+1)%2, t%2, (t+1)%2};
+      
         auto  result = env.step(plant_action);
         std::vector<float> new_state = result.state;   // 当前新的状态
         float reward = result.reward;                   // 当前的奖励值
         bool done = result.done;                        // 是否任务完成
-
-        // 记录状态和奖励，通常是为了强化学习中的状态-动作-奖励序列
-        // 假设你有一个 `state_history` 和 `reward_history` 来存储这些数据
+ 
         state_history.push_back(new_state);  // 存储当前状态
         reward_history.push_back(reward);    // 存储当前奖励
 
         // 如果任务完成，可能需要重新初始化环境
-        if (done) {
-            // 这里你可以做一些清理操作或重新初始化环境
-            // 比如，重置环境状态、更新模型、或打印日志
-            std::cout << "Task finished. Resetting environment." << std::endl;
-            
-            // 重新开始新的环境步骤
+        if (done) { 
+            std::cout << "Task finished. Resetting environment." << std::endl; 
             env.reset();
         }
 

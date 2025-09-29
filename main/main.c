@@ -459,7 +459,7 @@ void main_task(void *pvParameters)
 			run_per100ms();	
 			main_flash_heart();
 			// ai_check_plug_in(1);   // called per sec
-			if(flag_100ms==0) 
+			if(flag_100ms==101) 
 			{
 				
 				for(int i=0;i<FLASK_STATES_GET_COUNT;i++)
@@ -549,7 +549,7 @@ void plant_env_make_task(void *pvParameters)
 			vTaskDelay(pdMS_TO_TICKS(1000));
 			break;
 		}
-		hvac_agent();
+		//hvac_agent();
 		vTaskDelay(pdMS_TO_TICKS(10000));
 	} 
 }

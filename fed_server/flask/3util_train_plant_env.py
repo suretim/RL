@@ -512,7 +512,8 @@ if __name__ == "__main__":
             print("模型参数数量:")
             print(f"Actor: {agent._count_params(agent.actor)}")
             print(f"Critic: {agent._count_params(agent.critic)}")
-
+            agent.actor.summary()
+            agent.critic.summary()
             agent.export_for_esp32()
             print(f"任务 {task_id} 学习完成")
 

@@ -25,10 +25,10 @@ public:
         float humid;
         float light;
         float co2;
-        float vpd;
+        float vpd; 
 
         StepResult() : reward(0.0f), done(false), flower_prob(0.0f),
-                       temp(0.0f), humid(0.0f),light(0.0f), co2(0.0f), vpd(0.0f) {}
+                       temp(0.0f), humid(0.0f),light(0.0f), co2(0.0f), vpd(0.0f)  {}
     };
 
 private:
@@ -51,15 +51,32 @@ private:
     std::array<int,PORT_CNT> prev_action;
 
     SeqFetcher seq_fetcher;
+    std::map<std::string,float> default_params = {
+    // --- 基础 ---
+    {"energy_penalty", 0.05f},                // 能耗惩罚
+    {"switch_penalty_per_toggle", 0.1f},      // 开关切换惩罚
+    {"light_penalty", 0.02f},                 // 光照过度惩罚
+    {"co2_penalty", 0.02f},                   // CO2 过度惩罚
 
-    std::map<std::string, float> default_params = {
-        {"energy_penalty", 0.1f},
-        {"switch_penalty_per_toggle", 0.2f},
-        {"vpd_target", 1.2f},
-        {"vpd_penalty", 2.0f},
-        {"light_penalty", 0.3f},  // 光照惩罚系数
-        {"co2_penalty", 0.4f}     // CO2惩罚系数
-    };
+    // --- VPD ---
+    {"vpd_target", 1.2f},                     // 目标蒸汽压差 (kPa)
+    {"vpd_penalty", 0.5f},                    // 偏差惩罚系数
+
+    // --- 生长阶段 ---
+    {"flowering_start_step", 500.0f},         // 从 step=500 开始进入开花期
+
+    // --- 开花期专用 penalty ---
+    {"flower_temp_penalty", 0.3f},            // 温度偏差惩罚系数
+    {"flower_humi_penalty", 0.5f},            // 湿度偏差惩罚系数
+};
+    // std::map<std::string, float> default_params = {
+    //     {"energy_penalty", 0.1f},
+    //     {"switch_penalty_per_toggle", 0.2f},
+    //     {"vpd_target", 1.2f},
+    //     {"vpd_penalty", 2.0f},
+    //     {"light_penalty", 0.3f},  // 光照惩罚系数
+    //     {"co2_penalty", 0.4f}     // CO2惩罚系数
+    // };
 
 public:
     PlantHVACEnv(int seq_len = 20, int n_features = 3, float temp_init = 25.0f,
