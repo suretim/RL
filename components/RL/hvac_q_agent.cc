@@ -40,6 +40,8 @@ extern const char* spiffs2_model_path[SPIFFS2_MODEL_COUNT];
 //extern const char optimized_model_path[];
 //extern const char spiffs_ppo_model_bin_path[];
 
+//#define  post_data   "{\"model_path\": \"./saved_models/ppo_policy_actor\"}" 
+
 //const int num_flask_task=3;
 char flask_get_name[FLASK_STATES_GET_COUNT][64]={
      "optimized_model_path",
@@ -47,7 +49,7 @@ char flask_get_name[FLASK_STATES_GET_COUNT][64]={
 };
 //const int num_flask_task=3;
 char flask_put_name[FLASK_PUT_COUNT][64]={
-    post_data, 
+    "post_data"
 }; 
 // ---------------- OTA Callback ----------------
 esp_err_t _http_down_load_event_handler(esp_http_client_event_t *evt) {
@@ -78,8 +80,6 @@ esp_err_t _http_down_load_event_handler(esp_http_client_event_t *evt) {
     return ESP_OK;
 }
  
-// ======= PPO 模型 =======
-ESP32EWCModel ewcppoModel;
 uint32_t swap_endian(uint32_t value) {
     return ((value >> 24) & 0xFF) | 
            ((value << 8) & 0xFF0000) | 
@@ -752,71 +752,6 @@ void wifi_put_package(int type ) {
     } 
     return   ;
 }
-
-extern float* load_float_bin(const char* path, size_t &length) ; 
-//load model.tflite  
-extern "C" void hvac_agent(void) {
-     
-    vTaskDelay(pdMS_TO_TICKS(5000)); // 等 WiFi 連線
-    size_t  length = 0;
-    float *buf=load_float_bin("/spiffs1/ppo_model.bin", length);
-    // ======= 從 SPIFFS 加載模型 =======
-    if (buf  ==NULL) {
-        ESP_LOGI(TAG, "Model loaded successfully");
-    } else {
-        ESP_LOGE(TAG, "Failed to load model");
-    } 
-    std::vector<float> observation(5, 0.0f); // 5维状态
-    // 填充实际数据
-    observation[0] = bp_pid_th.t_feed;
-    observation[1] = bp_pid_th.h_feed;
-    observation[2] = bp_pid_th.l_feed;
-    observation[3] = bp_pid_th.c_feed;
-    observation[4] = 0;
-    // ======= 推理 =======
-    std::vector<float> action_probs = ewcppoModel.predict(observation);
-    //std::vector<float> value = ewcppoModel.predictValue(observation);
-    float value = ewcppoModel.predictValue(observation); 
-    // 假设优势函数 = Q(s, a) - V(s)，我们计算优势。
-    std::vector<float> advantages(action_probs.size(), 0.0f);
-    for (size_t i = 0; i < action_probs.size(); ++i) {
-        advantages[i] = action_probs[i] - value ;  // 这里是一个简单的示例，按需调整
-    }
-
-    printf("Action probs: ");
-    for (auto v : action_probs) printf("%.3f ", v);
-    printf("\n");
-
-    // ======= 持续学习 (EWC) =======
-    std::vector<float> newExperience = observation;  // 假设新经验就是当前观测值
-
-    static PPOModel ppoModel;  // 只初始化一次，之后重复使用
-    std::vector<float> old_probs = action_probs;  // 示例的旧概率
-
-     
-    // 更新旧动作概率
-    static std::vector<float> old_action_probs = {0.0f, 0.0f, 0.0f};  
-
-    std::vector<float> grads;
-    ppoModel.calculateLossAndGradients(newExperience, old_probs, advantages, health_result, old_action_probs, grads);
-
-
-    ewcppoModel.continualLearningEWC(grads);
-
-    vTaskDelay(pdMS_TO_TICKS(5000)); // 每 5 秒推理一次
-    // 更新旧动作概率以供下一轮使用
-    old_action_probs = action_probs;
-
-    // 可选：打印梯度
-    ESP_LOGI(TAG, "Gradients: ");
-    for (auto& grad : grads) {
-        printf("%.3f ", grad);
-    }
-    printf("\n"); 
- 
- 
-}
- 
 //load model.bin
 extern "C" pid_run_output_st nn_ppo_infer(void) {
     pid_run_output_st output_speed;

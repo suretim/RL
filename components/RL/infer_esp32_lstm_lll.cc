@@ -666,6 +666,8 @@ struct TrainableArray {
         old_weights.assign(n, 0.0f);
     }
 };
+
+
 TfLiteStatus infer_loop(int type) {
     auto&ctx=model_contexts[type];
     int seq_len  = classifier_params.seq_len;
@@ -1088,7 +1090,12 @@ void catch_tensor_dim(int type) {
     }
     
 }
-extern std::array<int,PORT_CNT> plant_action;
+std::array<int,PORT_CNT>  action;
+//extern void set_plant_action(const std::array<int, PORT_CNT>& action);
+void set_plant_action(const std::array<int, PORT_CNT>& action) {
+    extern std::array<int, PORT_CNT> plant_action ;
+    plant_action = action;
+}
 //u_int8_t get_tensor_state(void);
 esp_err_t  lll_tensor_run(int type) 
 { 
@@ -1118,7 +1125,8 @@ esp_err_t  lll_tensor_run(int type)
     for(int port=1;port< PORT_CNT;port++)
     {    
         ml_pid_out_speed.speed[port] += out_speed.speed[port];
-        plant_action[port-1]=ml_pid_out_speed.speed[port];
+        action[port-1]=ml_pid_out_speed.speed[port];
+        set_plant_action(action);
     }
     
     int ret=load_up_input_seq(classifier_params.infer_case,classifier_params.seq_len); 

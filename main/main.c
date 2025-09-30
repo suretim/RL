@@ -534,7 +534,7 @@ void plant_env_make_task(void *pvParameters)
 {
 
 	vTaskDelay(3000 / portTICK_PERIOD_MS);
-	 
+	static uint16_t flag_100ms=0; 
 	while(1)
 	{  
 		//for(int i=0;i<NUM_FLASK_TASK;i++)
@@ -548,6 +548,15 @@ void plant_env_make_task(void *pvParameters)
 		if(plant_env_step() ==0){
 			vTaskDelay(pdMS_TO_TICKS(1000));
 			break;
+		}
+		flag_100ms++;
+		if(flag_100ms==101)
+		{
+			if (send_seq_to_server()) {
+				ESP_LOGI("APP", "送到 server 成功！");
+			} else {
+				ESP_LOGE("APP", "送到 server 失敗！");
+			}
 		}
 		//hvac_agent();
 		vTaskDelay(pdMS_TO_TICKS(10000));

@@ -113,8 +113,8 @@ def serve_ota_package():
 
 
 # 模型存放路徑
-MODEL_DIR = "esp32_model"
-ACTOR_MODEL = "actor.tflite"
+MODEL_DIR    = "ppo_model"
+ACTOR_MODEL  = "actor.tflite"
 CRITIC_MODEL = "critic.tflite"
 
 # 計算文件 hash，方便 ESP32 檢查版本

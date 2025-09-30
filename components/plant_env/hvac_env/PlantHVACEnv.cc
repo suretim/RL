@@ -6,6 +6,8 @@
 #include <iostream>
 
 #include "ml_pid.h"
+
+
 // 构建编码器
 HVACEncoder* build_hvac_encoder(int seq_len, int n_features, int latent_dim) {
     return new HVACEncoder(seq_len, n_features, latent_dim);
@@ -35,7 +37,7 @@ void PlantHVACEnv::set_seq_fetcher(SeqFetcher fetcher) {
 
 // ==== 获取状态 ====
 std::vector<float> PlantHVACEnv::_get_state() const {
-    return {static_cast<float>(health), temp, humid};
+    return {static_cast<float>(health), temp, humid,soil,light,co2,vpd};
 }
 
 std::vector<float> PlantHVACEnv::get_state() const {
@@ -68,25 +70,28 @@ PlantHVACEnv::StepResult PlantHVACEnv::step(const std::array<int,PORT_CNT>& acti
                                             const std::map<std::string,float>& params)
 {
     StepResult result;
-
+    struct st_bp_pid_th    v_env_th = {0};
     int ac     = action[0];
     int humi   = action[1];
     int heat   = action[2];
     int dehumi = action[3];
+    ModeParam m_params = mode_params[plant_mode]; 
+    if(true_env){
+        v_env_th   = bp_pid_th;
+    }else{
+        // --- 环境动力学 ---
+        float light_effect = get_param(params, "light_penalty") * (action[4] == 1 ? 0.1f : 0.0f);
+        float co2_effect   = get_param(params, "co2_penalty")   * (action[5] == 1 ? 0.1f : 0.0f);
 
-    // --- 环境动力学 ---
-    float light_effect = get_param(params, "light_penalty") * (action[4] == 1 ? 0.1f : 0.0f);
-    float co2_effect   = get_param(params, "co2_penalty")   * (action[5] == 1 ? 0.1f : 0.0f);
-
-    temp  += (ac==1 ? -0.5f : 0.2f) + (heat==1 ? 0.5f : 0.0f);
-    humid += (humi==1 ? 0.05f : -0.02f) 
-           + (heat==1 ? -0.03f : 0.0f) 
-           + (dehumi==1 ? -0.05f : 0.0f);
-
-    temp  = std::max(15.0f, std::min(temp, 35.0f));
-    humid = std::max(0.0f, std::min(humid, 1.0f));
-
-    health = (22.0f <= temp && temp <= 28.0f && 0.4f <= humid && humid <= 0.7f) ? 0 : 1;
+        v_env_th.t_feed  += (ac==1?-0.5f:0.2f) + (heat==1?0.5f:0.0f);
+        v_env_th.h_feed += (humi==1?0.05f:-0.02f) + (heat==1?-0.03f:0.0f) + (dehumi==1?-0.05f:0.0f);
+        // 使用方法
+        float light_noise = rand_normal(0.0f, 20.0f);
+        float co2_noise   = rand_normal(0.0f, 10.0f);
+        v_env_th.l_feed   += light_effect+light_noise;
+        v_env_th.c_feed   += co2_effect+co2_noise;
+        v_env_th.v_feed = calc_vpd(temp, humid);
+    } 
 
     // --- 获取序列 ---
     std::vector<std::vector<float>> seq_input;
@@ -99,24 +104,52 @@ PlantHVACEnv::StepResult PlantHVACEnv::step(const std::array<int,PORT_CNT>& acti
     // --- 编码和原型分类 ---
     std::vector<float> z = encoder->encode(seq_input, false);
     std::vector<float> soft_label = (*proto_cls)(z);
-    float flower_prob = soft_label.size()>2 ? soft_label[2] : 0.0f;
+    float flower_prob = soft_label.size()>2 ? soft_label[2] : 0.0f; 
+    int optimal = 0;
+    if(v_env_th.t_feed >=m_params.temp_range.first  && temp  <=m_params.temp_range.second) optimal++;
+    if(v_env_th.h_feed >=m_params.humid_range.first && humid <=m_params.humid_range.second) optimal++;
+    if(v_env_th.v_feed >=m_params.vpd_range.first   && vpd   <=m_params.vpd_range.second) optimal++;
+    if(v_env_th.l_feed >=m_params.light_range.first && light <=m_params.light_range.second) optimal++;
+    if(v_env_th.c_feed >=m_params.co2_range.first   && co2   <=m_params.co2_range.second) optimal++;
+    float vpd_target  =(m_params.vpd_range.first  +m_params.vpd_range.second)/2.0;
+    float light_target=(m_params.light_range.first+m_params.light_range.second)/2.0;
+    float co2_target  =(m_params.co2_range.first  +m_params.co2_range.second)/2.0;
+    health = (optimal>=4?0:(optimal>=2?1:2)); 
 
-    // --- Reward 基础 ---
-    float health_reward = (health==0 ? 1.0f : -1.0f);
+    // --- Reward ---
+    float health_reward = (health==0?2.0f:(health==1?0.5f:-1.0f));
+    float energy_cost = (params.count("energy_penalty")?params.at("energy_penalty"):0.1f)*(ac+humi+heat+dehumi);
 
-    float action_sum = static_cast<float>(ac+humi+heat+dehumi);
-    float energy_cost = get_param(params,"energy_penalty") * action_sum;
+    int switch_diff = 0;
+    for(int i=0;i<4;i++) switch_diff += std::abs(action[i]-prev_action[i]);
+    float switch_penalty = (params.count("switch_penalty_per_toggle")?params.at("switch_penalty_per_toggle"):0.05f)*switch_diff;
 
-    float switch_diff = 0.0f;
-    for(int i=0;i<4;++i) switch_diff += std::abs(action[i]-prev_action[i]);
-    float switch_penalty = get_param(params,"switch_penalty_per_toggle")*switch_diff;
+    float vpd_reward   = -std::abs(v_env_th.v_feed -vpd_target) *(params.count("vpd_penalty")?params.at("vpd_penalty"):0.5f);
+    float light_reward = -std::abs(v_env_th.l_feed -light_target)*(params.count("light_penalty")?params.at("light_penalty"):0.5f);
+    float co2_reward   = -std::abs(v_env_th.c_feed -co2_target)  *(params.count("co2_penalty")?params.at("co2_penalty"):0.5f);
 
-    float vpd_current = calc_vpd(temp, humid);
-    float vpd_reward  = -std::abs(vpd_current - get_param(params,"vpd_target"))
-                        * get_param(params,"vpd_penalty");
-
-    // --- 花期环境 penalty ---
     float flower_env_penalty = 0.0f;
+    if(flower_prob>0.5f && plant_mode=="flowering") {
+        if(!(humid>=0.45f && humid<=0.55f)) flower_env_penalty -= (params.count("flower_humi_penalty")?params.at("flower_humi_penalty"):0.1f);
+        if(!(temp>=0.2f && temp<=0.26f))    flower_env_penalty -= (params.count("flower_temp_penalty")?params.at("flower_temp_penalty"):0.1f);
+    }
+
+    float soft_label_bonus = 0.0f;
+    if(plant_mode=="flowering") 
+        soft_label_bonus = flower_prob*(params.count("soft_label_bonus")?params.at("soft_label_bonus"):0.5f);
+    else if(plant_mode=="seeding") 
+        soft_label_bonus = soft_label[1]*(params.count("soft_label_bonus")?params.at("soft_label_bonus"):0.5f);
+    else //growing
+        soft_label_bonus = soft_label[0]*(params.count("soft_label_bonus")?params.at("soft_label_bonus"):0.5f);
+
+    float learning_reward = 0.0f;
+    if (true_label != -1) {
+        int pred_class = std::distance(
+            soft_label.begin(),
+            std::max_element(soft_label.begin(), soft_label.end())
+        );
+        learning_reward = (pred_class == true_label ? 0.5f : -0.3f);
+    } 
     bool is_flowering = (flower_prob > 0.5f);  // 以 soft_label 作为阶段判定条件
 
     if(is_flowering) {
@@ -145,37 +178,44 @@ PlantHVACEnv::StepResult PlantHVACEnv::step(const std::array<int,PORT_CNT>& acti
             flower_env_penalty -= get_param(params,"flower_temp_penalty") * diff;
         }
     }
-
-    // --- Reward 汇总 ---
+    
+    
+    vpd  = pid_map(v_env_th.v_feed,  m_params.vpd_range.first,   m_params.vpd_range.second,   0, 1);
+    temp  = pid_map(v_env_th.t_feed,  m_params.temp_range.first,  m_params.temp_range.second,  0, 1);
+    humid  = pid_map(v_env_th.h_feed,  m_params.humid_range.first, m_params.humid_range.second, 0, 1);
+    light  = pid_map(v_env_th.l_feed,  m_params.light_range.first, m_params.light_range.second, 0, 1);
+    co2  = pid_map(v_env_th.c_feed,  m_params.co2_range.first,   m_params.co2_range.second,   0, 1);
+    
+    
     float reward = health_reward 
                  - energy_cost 
                  - switch_penalty 
-                 + flower_prob * vpd_reward 
-                 + flower_env_penalty;   // << 花期 penalty 动态加入
+                 + vpd_reward 
+                 + light_reward 
+                 + co2_reward 
+                 + flower_env_penalty 
+                 + soft_label_bonus 
+                 + learning_reward;
+ 
+     
 
     // --- 更新状态 ---
     prev_action = action;
     t++;
     bool done = t>=seq_len;
-
-    // --- PID feeds (保持原来结构) ---
-    float v_feed  = pid_map((bp_pid_th.v_feed),  c_pid_vpd_min,   c_pid_vpd_max,   0, 1);
-    float t_feed  = pid_map((bp_pid_th.t_feed),  c_pid_temp_min,  c_pid_temp_max,  0, 1);
-    float h_feed  = pid_map((bp_pid_th.h_feed),  c_pid_humi_min,  c_pid_humi_max,  0, 1);
-    float l_feed  = pid_map((bp_pid_th.l_feed),  c_pid_light_min, c_pid_light_max, 0, 1);
-    float c_feed  = pid_map((bp_pid_th.c_feed),  c_pid_co2_min,   c_pid_co2_max,   0, 1);
-
+    
+    
     // --- 填充结果 ---
     result.state = _get_state();
     result.reward = reward;
     result.done = done;
     result.latent_soft_label = soft_label;
     result.flower_prob = flower_prob;
-    result.temp  = t_feed;
-    result.humid = h_feed;
-    result.light = l_feed;
-    result.co2   = c_feed;
-    result.vpd   = v_feed;
+    result.temp  = temp;
+    result.humid = humid;
+    result.light = light;
+    result.co2   = co2;
+    result.vpd   = vpd;
 
     return result;
 }

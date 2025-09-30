@@ -359,7 +359,7 @@ def buffer_train_ppo_with_lll_alternative(env, agent, task_id=0):
 
 
 # 修复agent的序列化问题
-def fix_agent_serialization(agent):
+def fix_agent_serialization(agent: object) -> None:
     """修复agent的序列化问题"""
     print("=== 修复Agent序列化 ===")
 

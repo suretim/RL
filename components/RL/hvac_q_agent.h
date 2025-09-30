@@ -64,8 +64,6 @@ enum enum_flask_put_state{
 };
 
 
-#define  post_data   "{\"model_path\": \"./saved_models/ppo_policy_actor\"}" 
-
 
 #ifdef __cplusplus
 extern "C" {

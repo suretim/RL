@@ -46,7 +46,7 @@ dev_type_t devs_type_list[PORT_CNT];
 //float pitch_limit[2][NUM_PTH_TYPE]={{20,80,300},{40,160,600}};
 //float tmp_pitch[NUM_UPDOWN][NUM_PTH_TYPE]= {{0.99,0.99,0.99 },{1.01,1.01,1.01 }};
 unsigned int tmp_pdx[DIM]={0};
-struct st_bp_pid_th    bp_pid_th = {0};
+struct st_bp_pid_th bp_pid_th = {0};
 struct pso_optimizer pso = {0};
 struct svd_optimizer svd = {0};
 static float hvac_margin[NUM_ENV_TYPE]={0.030,0.030,0.050};

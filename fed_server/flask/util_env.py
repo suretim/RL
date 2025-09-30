@@ -16,7 +16,7 @@ class PlantLLLHVACEnv:
         self.action_dim = 4
         self.latent_dim = 64
         # 構建encoder
-        self.encoder = self._build_lstm_encoder(seq_len, self.state_dim,self.latent_dim)
+        self.lstm_encoder = self._build_lstm_encoder(seq_len, self.state_dim,self.latent_dim)
 
         # LLL模型
         self.lll_model = self._build_lll_model(self.latent_dim, hidden_dim=self.latent_dim, output_dim=self.action_dim)
@@ -84,7 +84,7 @@ class PlantLLLHVACEnv:
             soft_label: 軟標籤預測概率
         """
         # 編碼序列數據
-        latent_representation = self.encoder(sequence_input)
+        latent_representation = self.lstm_encoder(sequence_input)
 
         # 獲取預測
         soft_label = self.lll_model(latent_representation)
@@ -210,6 +210,12 @@ class PlantLLLHVACEnv:
         vpd = es - ea
         return max(vpd, 0.1)
 
+    def pid_map(self, x, in_min, in_max, out_min, out_max):
+        if x < in_min:
+            return out_min
+        if x > in_max:
+            return out_max
+        return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
     def step(self, action, params=None, true_label=None):
         # Ensure params is not None
         if params is None:
@@ -272,12 +278,6 @@ class PlantLLLHVACEnv:
         self.light += np.random.normal(0, 20)
         self.co2 += np.random.normal(0, 10)
 
-        # Boundary constraints
-        self.temp = np.clip(self.temp, 15, 35)
-        self.humid = np.clip(self.humid, 0, 1)
-        self.light = np.clip(self.light, 100, 1000)
-        self.co2 = np.clip(self.co2, 300, 1200)
-
         # Get ideal environment parameters based on current mode
         mode_param = self.mode_params[self.mode]
         temp_min, temp_max = mode_param["temp_range"]
@@ -285,27 +285,47 @@ class PlantLLLHVACEnv:
         vpd_min, vpd_max = mode_param["vpd_range"]
         light_min, light_max = mode_param["light_range"]
         co2_min, co2_max = mode_param["co2_range"]
-
         # Calculate enhanced VPD
         vpd_current = self._calculate_enhanced_vpd(self.temp, self.humid, self.light, self.co2)
-
         # Health assessment
-        temp_ok = temp_min <= self.temp <= temp_max
-        humid_ok = humid_min <= self.humid <= humid_max
-        vpd_ok = vpd_min <= vpd_current <= vpd_max
-        light_ok = light_min <= self.light <= light_max
-        co2_ok = co2_min <= self.co2 <= co2_max
+        #temp_ok = temp_min <= self.temp <= temp_max
+        #humid_ok = humid_min <= self.humid <= humid_max
+        #vpd_ok = vpd_min <= vpd_current <= vpd_max
+        #light_ok = light_min <= self.light <= light_max
+        #co2_ok = co2_min <= self.co2 <= co2_max
+        # Boundary constraints
+        self.temp  =self.pid_map(self.temp, temp_min, temp_max, 0, 1)  #np.clip(self.temp, 15, 35)
+        self.humid =self.pid_map(self.humid, humid_min, humid_max, 0, 1)  #np.clip(self.humid, 0, 1)
+        self.light =self.pid_map(self.light, light_min, light_max, 0, 1)  #np.clip(self.light, 100, 1000)
+        self.co2   =self.pid_map(self.co2, co2_min, co2_max, 0, 1) #np.clip(self.co2, 300, 1200)
+        vpd_current   =self.pid_map(vpd_current, vpd_min, vpd_max, 0, 1)
+
+
+
+
 
         # Comprehensive health assessment
-        optimal_conditions = sum([temp_ok, humid_ok, vpd_ok, light_ok, co2_ok])
+        #optimal_conditions = sum([temp_ok, humid_ok, vpd_ok, light_ok, co2_ok])
+
+        #if optimal_conditions >= 4:
+        #    self.health = 0  # Healthy
+        #elif optimal_conditions >= 2:
+        #    self.health = 1  # Subhealthy
+        #else:
+        #    self.health = 2  # Unhealthy
+        optimal_conditions = 0
+        if 0.22 <= self.temp <= 0.28: optimal_conditions += 1
+        if 0.4 <= self.humid <= 0.7: optimal_conditions += 1
+        if 0.3 <= vpd_current <= 0.7: optimal_conditions += 1
+        if 0.3 <= self.light <= 0.7: optimal_conditions += 1
+        if 0.3 <= self.co2 <= 0.7: optimal_conditions += 1
 
         if optimal_conditions >= 4:
-            self.health = 0  # Healthy
+            self.health = 0
         elif optimal_conditions >= 2:
-            self.health = 1  # Subhealthy
+            self.health = 1
         else:
-            self.health = 2  # Unhealthy
-
+            self.health = 2
         # Update sequence data
         new_data_point = np.array([self.health, self.temp, self.humid, self.light, self.co2])
         self.update_sequence(new_data_point)
@@ -332,13 +352,12 @@ class PlantLLLHVACEnv:
         )
 
         # Environmental factor rewards
-        vpd_ideal = (vpd_min + vpd_max) / 2
+        vpd_ideal   = 0.5 # (vpd_min + vpd_max) / 2
+        light_ideal = 0.5 #(light_min + light_max) / 2
+        co2_ideal   = 0.5 #(co2_min + co2_max) / 2
+
         vpd_reward = -abs(vpd_current - vpd_ideal) * params.get("vpd_penalty", 2.0)
-
-        light_ideal = (light_min + light_max) / 2
         light_reward = -abs(self.light - light_ideal) * params.get("light_penalty", 0.5)
-
-        co2_ideal = (co2_min + co2_max) / 2
         co2_reward = -abs(self.co2 - co2_ideal) * params.get("co2_penalty", 0.3)
 
         learning_reward = 0
