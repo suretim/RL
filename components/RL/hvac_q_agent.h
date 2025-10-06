@@ -7,7 +7,7 @@
 #include <stdio.h>
 
 // 假设状态维度 5：health + ac_target + dehum_target + light + humidity
-#define STATE_DIM 5
+//#define STATE_DIM 5
 //#define NUM_FLASK_GET_TASK 2
 //#define NUM_FLASK_PUT_TASK 1
 

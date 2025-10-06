@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "esp_err.h"
-
+#include "version.h"
 enum CaseType { PPO_CASE,NN_PPO_CASE, META_CASE ,IMG_CASE,NUM_CASE};
 
 
@@ -16,18 +16,18 @@ enum CaseType { PPO_CASE,NN_PPO_CASE, META_CASE ,IMG_CASE,NUM_CASE};
 #define INFER_CASE PPO_CASE
 
 #define MAX_FEATURE_DIM 64
-#define MAX_NUM_CLASSES  4
+#define MAX_NUM_CLASSES  PORT_CNT
 #define MAX_SEQ_LEN 64
 
 // 全局参数 (需在你的工程中定义实际大小)
  
-#define PPO_FEATURE_DIM 5
-#define NN_PPO_FEATURE_DIM 5
-#define META_FEATURE_DIM 7
+#define PPO_FEATURE_DIM STATE_CNT 
+#define NN_PPO_FEATURE_DIM STATE_CNT
+#define META_FEATURE_DIM STATE_CNT
 #define IMG_FEATURE_DIM 64 
  
-#define PPO_CLASSES 4
-#define NN_PPO_CLASSES 4
+#define PPO_CLASSES PORT_CNT
+#define NN_PPO_CLASSES PORT_CNT
 #define META_CLASSES 3
 #define IMG_CLASSES 3
 

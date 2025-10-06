@@ -26,7 +26,13 @@ std::array<int, PORT_CNT> plant_action{};
 PlantHVACEnv env(20, 3, 25.0f, 0.5f, 64);
 
 static const char *TAG = "HTTP_CLIENT";
-
+struct Transition {
+    std::vector<float> state;   // 状态
+    int action;                 // 动作
+    float reward;               // 奖励
+    float value;                // Critic 估值
+    float old_log_prob;         // 动作的 log_prob
+};
 // 將向量轉 JSON
 char* vec_to_json(const std::vector<float>& data) {
     cJSON *root = cJSON_CreateObject();
@@ -123,10 +129,7 @@ extern "C" void plant_env_step() {
         std::cout << std::endl;
         
         std::cout << "Reward: " << reward << std::endl;
-        //printf("Step %d, Temp: %.2f, Humid: %.2f, VPD: %.2f, Reward: %.3f\n",
-        //       t, result.temp, result.humid, result.vpd, result.reward);
-        //if(result.done) break;
-        //} 
+        
         std::vector<float> health_result={
             result.temp,
             result.humid ,
@@ -141,71 +144,96 @@ extern "C" void plant_env_step() {
  
 
 // ======= PPO 模型 =======
-ESP32EWCModel ewcppoModel;
-struct st_bp_pid_th bp_pid_th = {0};
+PPOEWCModel ewcppoModel;
+extern struct st_bp_pid_th bp_pid_th ;
 extern float* load_float_bin(const char* path, size_t &length) ; 
-//load model.tflite  
-extern "C" void hvac_agent(void) {
-     
-    vTaskDelay(pdMS_TO_TICKS(5000)); // 等 WiFi 連線
-    size_t  length = 0;
-    float *buf=load_float_bin("/spiffs1/ppo_model.bin", length);
-    // ======= 從 SPIFFS 加載模型 =======
-    if (buf  ==NULL) {
+  extern "C" void hvac_ewc(void) {
+    vTaskDelay(pdMS_TO_TICKS(5000)); // 等 WiFi 连接
+
+    size_t length = 0;
+    float *buf = load_float_bin("/spiffs1/ppo_model.bin", length);
+    if (buf == NULL) {
         ESP_LOGI(TAG, "Model loaded successfully");
     } else {
         ESP_LOGE(TAG, "Failed to load model");
-    } 
-    std::vector<float> observation(5, 0.0f); // 5维状态
-    // 填充实际数据
-    observation[0] = bp_pid_th.t_feed;
-    observation[1] = bp_pid_th.h_feed;
-    observation[2] = bp_pid_th.l_feed;
-    observation[3] = bp_pid_th.c_feed;
-    observation[4] = 0;
-    // ======= 推理 =======
-    std::vector<float> action_probs = ewcppoModel.predict(observation);
-    //std::vector<float> value = ewcppoModel.predictValue(observation);
-    float value = ewcppoModel.predictValue(observation); 
-    // 假设优势函数 = Q(s, a) - V(s)，我们计算优势。
-    std::vector<float> advantages(action_probs.size(), 0.0f);
-    for (size_t i = 0; i < action_probs.size(); ++i) {
-        advantages[i] = action_probs[i] - value ;  // 这里是一个简单的示例，按需调整
     }
 
-    printf("Action probs: ");
-    for (auto v : action_probs) printf("%.3f ", v);
-    printf("\n");
+    // 初始化环境
+   
+    env.reset();
 
-    // ======= 持续学习 (EWC) =======
-    std::vector<float> newExperience = observation;  // 假设新经验就是当前观测值
+    // PPO 模型
+    PPOEWCModel ewcppoModel;
+    ewcppoModel.initModel();  // 如果有 initModel()
 
-    static PPOModel ppoModel;  // 只初始化一次，之后重复使用
-    std::vector<float> old_probs = action_probs;  // 示例的旧概率
+    static std::vector<float> old_action_probs = {0.0f, 0.0f, 0.0f};
 
-     
-    // 更新旧动作概率
-    static std::vector<float> old_action_probs = {0.0f, 0.0f, 0.0f};  
+    if (true) {
+ 
 
-    std::vector<float> grads;
-    ppoModel.calculateLossAndGradients(newExperience, old_probs, advantages, health_result, old_action_probs, grads);
+#if 1
+        // ====== 环境状态 ======
+        std::vector<float> observation = env.get_state();
 
+        // ====== 模型推理 ======
+        auto [action_probs, value] = ewcppoModel.predictFull(observation);
+        
+        // 选一个动作 (argmax)
+        //int action = std::distance(action_probs.begin(),
+        //                           std::max_element(action_probs.begin(), action_probs.end()));
 
-    ewcppoModel.continualLearningEWC(grads);
+        // ====== 环境交互 ======
+        auto result = env.step(plant_action, env.default_params);
+        std::vector<float> new_state = result.state;
+        float reward = result.reward;
+        bool done = result.done;
+#endif
+        // ====== 优势计算 ======
+        std::vector<float> advantages(action_probs.size(), 0.0f);
+        for (size_t i = 0; i < action_probs.size(); ++i) {
+            // 这里简单用 reward 代替 TD 误差，可以换成 GAE
+            advantages[i] = reward - value;
+        }
 
-    vTaskDelay(pdMS_TO_TICKS(5000)); // 每 5 秒推理一次
-    // 更新旧动作概率以供下一轮使用
-    old_action_probs = action_probs;
+        // // ====== health_result ======
+        // std::vector<float> health_result = {
+        //     result.temp,
+        //     result.humid,
+        //     result.soil,
+        //     result.light,
+        //     result.co2,
+        //     result.vpd,
+        //     result.reward,
+        //     result.flower_prob
+        // };
 
-    // 可选：打印梯度
-    ESP_LOGI(TAG, "Gradients: ");
-    for (auto& grad : grads) {
-        printf("%.3f ", grad);
+        // ====== 计算梯度 + EWC 更新 ======
+        std::vector<float> grads;
+        ewcppoModel.calculateGradients(observation, action_probs,
+                                       advantages, health_result,
+                                       old_action_probs, grads);
+
+        ewcppoModel.continualLearningEWC(grads);
+
+        // ====== 更新 old_action_probs ======
+        old_action_probs = action_probs;
+
+        // ====== 打印调试 ======
+        //printf("Action: %d, Reward: %.3f\n", plant_action, reward);
+        printf("Action probs: ");
+        for (auto v : action_probs) printf("%.3f ", v);
+        printf("\n");
+
+        ESP_LOGI(TAG, "Gradients: ");
+        for (auto& grad : grads) printf("%.3f ", grad);
+        printf("\n");
+
+        // 如果环境结束，重置
+        if (done) {
+            env.reset();
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(5000)); // 每 5 秒交互一次
     }
-    printf("\n"); 
- 
- 
 }
- 
-
 

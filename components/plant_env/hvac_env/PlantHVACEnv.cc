@@ -38,6 +38,10 @@ void PlantHVACEnv::set_seq_fetcher(SeqFetcher fetcher) {
 // ==== 获取状态 ====
 std::vector<float> PlantHVACEnv::_get_state() const {
     return {static_cast<float>(health), temp, humid,soil,light,co2,vpd};
+} 
+
+int PlantHVACEnv::_get_state_cnt() const {
+    return static_cast<int>(_get_state().size());
 }
 
 std::vector<float> PlantHVACEnv::get_state() const {

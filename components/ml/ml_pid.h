@@ -328,7 +328,7 @@ struct st_bp_pid_th
 };
 
 
-
+extern pid_run_output_st ml_pid_out_speed;
 
 #ifdef __cplusplus
 }

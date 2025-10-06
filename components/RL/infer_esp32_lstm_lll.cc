@@ -259,8 +259,8 @@ void parse_model_weights(uint8_t *buffer, size_t size) {
     size_t offset = 0;
 
     // 清空之前的 vector 并填充新数据
-    W1.assign(ptr + offset, ptr + offset + H1 * INPUT_DIM);
-    offset += H1 * INPUT_DIM;
+    W1.assign(ptr + offset, ptr + offset + H1 * STATE_DIM);
+    offset += H1 * STATE_DIM;
 
     b1.assign(ptr + offset, ptr + offset + H1);
     offset += H1;
@@ -587,8 +587,8 @@ extern "C" {
 #endif
  
 
-#include "ml_pid.h"
 
+#include "ml_pid.h"
 
 
 pid_run_input_st lll_tensor_run_input = {0};  
@@ -716,7 +716,8 @@ TfLiteStatus infer_loop(int type) {
     float* output = ctx.output_tensor ->data.f;
     TfLiteTensor* out = ctx.interpreter ->output(0); 
     size_t m = 1;
-    for (int i = 0; i < out->dims->size; ++i) {
+    int i=0;
+    for (  i = 0; i < out->dims->size; ++i) {
         m *= out->dims->data[i];
     } 
     std::vector<float>  output_vec ;
@@ -730,9 +731,16 @@ TfLiteStatus infer_loop(int type) {
     }
     else if (type == OPTIMIZED_MODEL || type == ACTOR_MODEL) {
         printf("Actor/Optimized output: ");
-        for (int i=0; i<m; i++) {
+        float sum=0.0f;
+        for (  i=0; i<m; i++) {
             printf("%.4f ", output[i]);
-            ml_pid_out_speed.speed[i+1] = output[i];
+            sum+=output[i];
+        }
+        for (  i=0; i<m; i++) {
+            if(sum< 1e-8)
+                ml_pid_out_speed.speed[i+1]=1.0f/m;
+            else
+                ml_pid_out_speed.speed[i+1] = output[i]/sum;
         }
         printf("\n");
     }

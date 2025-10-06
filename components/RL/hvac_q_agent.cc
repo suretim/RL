@@ -10,7 +10,6 @@
 #include "esp_wifi.h"
 #include "esp_http_client.h"
 #include "ota_model_updater.h"
-#include "esp32_model_loader.h"
 #include "ml_pid.h"
 #include "nn.h" 
 #include "hvac_q_agent.h"

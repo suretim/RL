@@ -140,6 +140,7 @@ public:
         };
 private:
     std::vector<float> _get_state() const;
+    int _get_state_cnt() const;
     float get_param(const std::map<std::string,float>& params, const std::string& key) const;
     float calc_vpd(float temp, float humid) const;
 };
