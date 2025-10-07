@@ -394,6 +394,7 @@ uint16_t get_main_heart_cnt()
 /**
  * 	主程序监控程序 
  */
+uint16_t flag_100ms=0;
 extern uint16_t port_get_wait_poweron();
 void main_monitor_task(void *pvParameters)
 {
@@ -432,15 +433,10 @@ void main_monitor_task(void *pvParameters)
 */
 void main_task(void *pvParameters)
 {
-	EventBits_t bits = 0;
-
-	//uint8_t cnt = 0;
-    static uint16_t flag_100ms=0;
-	
-	_Init();
-
-	//powerON_Pro();
-    
+	EventBits_t bits = 0; 
+	//uint8_t cnt = 0;  
+	_Init(); 
+	//powerON_Pro(); 
 	while (1)
 	{
 
@@ -457,37 +453,15 @@ void main_task(void *pvParameters)
 		{
 			run_per100ms_2();
 			run_per100ms();	
-			main_flash_heart();
-			// ai_check_plug_in(1);   // called per sec
-			if(flag_100ms==101) 
-			{
-				
-				for(int i=0;i<FLASK_STATES_GET_COUNT;i++)
-				{
-					vTaskDelay(pdMS_TO_TICKS(10000));
-					if(flask_state_get_flag[i]==SPIFFS_MODEL_EMPTY)
-					{
-						wifi_get_package(i);    
-					}
-					//if(flask_state_get_flag[FLASK_OPTI_MODEL]==SPIFFS_MODEL_SAVED){
-						 
-					//	break;
-					//}
-					 
-				}
-			}
-			
+			main_flash_heart();  
 			flag_100ms++;
 		    //if (  flag_100ms>=100 && flask_state_get_flag[FLASK_OPTI_MODEL]==SPIFFS_MODEL_SAVED )
 			if (  flag_100ms>=100   )
 			{
 				flag_100ms = 1;	
-				if(	lll_tensor_run(PPO_CASE)==ESP_FAIL){
-					 
-					break;
-
-				}
-				 	
+				if(	lll_tensor_run(PPO_CASE)==ESP_FAIL){ 
+					break; 
+				} 
 				//ai_check_plug_in(1);   // called per sec
 				// ESP_LOGW(TAG, "heap free=%ld, min=%ld",esp_get_free_heap_size(),esp_get_minimum_free_heap_size() );
 				//ESP_LOGW(TAG, "inter heap free=%ld, min=%d",esp_get_free_internal_heap_size(), heap_caps_get_minimum_free_size( MALLOC_CAP_8BIT | MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL ) );
@@ -498,10 +472,8 @@ void main_task(void *pvParameters)
 		#if ((_TYPE_of(VER_HARDWARE) == _TYPE_(_OUTLET)))
 			switch_sync_sta();
 		#endif
-		}
-
-		xSemaphoreGive(mutex_mainTask);
-
+		} 
+		xSemaphoreGive(mutex_mainTask); 
 		// vTaskDelay(pdMS_TO_TICKS(1));
 
 #else
@@ -518,17 +490,44 @@ void main_task(void *pvParameters)
 		}
 		vTaskDelay(pdMS_TO_TICKS(10));
 
-		xSemaphoreGive(mutex_mainTask);
-
-
-#endif
-
+		xSemaphoreGive(mutex_mainTask);  
+#endif 
 	}
 
 	vTaskDelete(NULL);
 }
  
 
+void plant_net_task(void *pvParameters)
+{
+	while(1)
+	{  
+		if(flag_100ms==101) 
+		{
+				
+			for(int i=0;i<FLASK_STATES_GET_COUNT;i++)
+			{
+				vTaskDelay(pdMS_TO_TICKS(10000));
+				if(flask_state_get_flag[i]==SPIFFS_MODEL_EMPTY)
+				{
+					wifi_get_package(i);    
+				}
+				//if(flask_state_get_flag[FLASK_OPTI_MODEL]==SPIFFS_MODEL_SAVED){
+						
+				//	break;
+				//}
+					
+			} 
+			//for(int i=0;i<NUM_FLASK_TASK;i++)
+			for(int i=0;i<FLASK_PUT_COUNT;i++)
+			{
+				vTaskDelay(pdMS_TO_TICKS(10000));
+				if(flask_state_put_flag[i]==SPIFFS_MODEL_EMPTY)
+					wifi_put_package(i);     
+			}
+		}
+	}
+}
 
 void plant_env_make_task(void *pvParameters)
 {
@@ -537,15 +536,8 @@ void plant_env_make_task(void *pvParameters)
 	static uint16_t flag_100ms=0; 
 	while(1)
 	{  
-		//for(int i=0;i<NUM_FLASK_TASK;i++)
-        for(int i=0;i<FLASK_PUT_COUNT;i++)
-        {
-            vTaskDelay(pdMS_TO_TICKS(10000));
-            if(flask_state_put_flag[i]==SPIFFS_MODEL_EMPTY)
-                wifi_put_package(i);    
-
-        }
-		if(plant_env_step() ==0){
+		 
+		if(hvac_ewc() ==0){  //hvac_ewc();  plant_env_step
 			vTaskDelay(pdMS_TO_TICKS(1000));
 			break;
 		}
@@ -553,12 +545,12 @@ void plant_env_make_task(void *pvParameters)
 		if(flag_100ms==101)
 		{
 			if (send_seq_to_server()) {
-				ESP_LOGI("APP", "送到 server 成功！");
+				ESP_LOGI(TAG, "送到 server 成功！");
 			} else {
-				ESP_LOGE("APP", "送到 server 失敗！");
+				ESP_LOGE(TAG, "送到 server 失敗！");
 			}
 		}
-		//hvac_agent();
+		
 		vTaskDelay(pdMS_TO_TICKS(10000));
 	} 
 }
@@ -625,7 +617,7 @@ xTaskCreate(main_task, 			TASK_NAME_MAIN, 	TASK_STACK_MAIN, 	NULL, TASK_PRIO_MAI
 //tcp_client_creat_rcv_task();
 //xTaskCreate(chgup_load_task, 	TASK_NAME_CHGUPLOAD, TASK_STACK_CHGUPLOAD, NULL, TASK_PRIO_CHGUPLOAD, NULL);
 
-	 xTaskCreate(plant_env_make_task,TASK_NAME_COMMDECODE, TASK_STACK_COMMDECODE, NULL, TASK_PRIO_COMMDECODE, NULL);	// 通信数据解析
+	 xTaskCreate(plant_env_make_task,TASK_NAME_PLANT_ENV, TASK_STACK_PLANT_ENV, NULL, TASK_PRIO_PLANT_ENV, NULL);	// 通信数据解析
 
 	// xTaskCreate(comm_decode_task, 	TASK_NAME_COMMDECODE, TASK_STACK_COMMDECODE, NULL, TASK_PRIO_COMMDECODE, NULL);	// 通信数据解析
 	// xTaskCreate(cmd_decode_task, 	TASK_NAME_CMDDECODE, TASK_STACK_CMDDECODE, NULL, TASK_PRIO_CMDDECODE, NULL);	// 通信数据包解析

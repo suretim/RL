@@ -111,7 +111,7 @@ class LLLTrainer():
             self.lll_model = lll_model
         else:
             self.lll_model = PlantLLLHVACEnv().lll_model
-
+        self.latent_dim = self.lll_model.input_shape[1]
     def compute_fisher(self, data, labels):
         """
         估算旧任务参数的重要性 (Fisher 信息)
@@ -164,42 +164,43 @@ class LLLTrainer():
 # --------------------------
 # 示例：多任务训练
 # --------------------------
-latent_dim = 64
-num_classes = 3
-batch_size = 32
-num_epochs_per_task = 3
-num_tasks = 3
-env = PlantLLLHVACEnv(seq_len=10,   mode="growing")
-lll_model=env.lll_model
-# 创建简单模型
-'''
-lll_model = tf.keras.Sequential([
-    tf.keras.layers.Input(shape=(latent_dim,)),
-    tf.keras.layers.Dense(latent_dim, activation='relu'),
-    tf.keras.layers.Dense(num_classes, activation='softmax')
-])
-'''
-trainer = LLLTrainer(lll_model, learning_rate=0.001, ewc_lambda=0.4)
+#latent_dim = 64
+#num_classes = 3
+#batch_size = 32
+def test(latent_dim, num_classes,batch_size):
+    num_epochs_per_task = 3
+    num_tasks = 3
+    env = PlantLLLHVACEnv(seq_len=10,   mode="growing")
+    lll_model=env.lll_model
+    # 创建简单模型
+    '''
+    lll_model = tf.keras.Sequential([
+        tf.keras.layers.Input(shape=(latent_dim,)),
+        tf.keras.layers.Dense(latent_dim, activation='relu'),
+        tf.keras.layers.Dense(num_classes, activation='softmax')
+    ])
+    '''
+    trainer = LLLTrainer(lll_model, learning_rate=0.001, ewc_lambda=0.4)
 
-# 模拟多任务数据
-for task_id in range(num_tasks):
-    print(f"\n=== Training Task {task_id+1} ===")
-    num_samples = 200
-    latent_features = np.random.randn(num_samples, latent_dim).astype(np.float32)
-    labels = np.random.randint(0, num_classes, size=(num_samples,)).astype(np.int32)
+    # 模拟多任务数据
+    for task_id in range(num_tasks):
+        print(f"\n=== Training Task {task_id+1} ===")
+        num_samples = 200
+        latent_features = np.random.randn(num_samples, latent_dim).astype(np.float32)
+        labels = np.random.randint(0, num_classes, size=(num_samples,)).astype(np.int32)
 
-    # 按 batch 训练当前任务
-    for epoch in range(num_epochs_per_task):
-        indices = np.random.permutation(num_samples)
-        latent_features_shuffled = latent_features[indices]
-        labels_shuffled = labels[indices]
+        # 按 batch 训练当前任务
+        for epoch in range(num_epochs_per_task):
+            indices = np.random.permutation(num_samples)
+            latent_features_shuffled = latent_features[indices]
+            labels_shuffled = labels[indices]
 
-        for start_idx in range(0, num_samples, batch_size):
-            end_idx = start_idx + batch_size
-            batch_latent = latent_features_shuffled[start_idx:end_idx]
-            batch_labels = labels_shuffled[start_idx:end_idx]
-            loss = trainer._train_lll_model(batch_latent, batch_labels)
-        print(f"  Epoch {epoch+1}, Last batch loss: {loss:.4f}")
+            for start_idx in range(0, num_samples, batch_size):
+                end_idx = start_idx + batch_size
+                batch_latent = latent_features_shuffled[start_idx:end_idx]
+                batch_labels = labels_shuffled[start_idx:end_idx]
+                loss = trainer._train_lll_model(batch_latent, batch_labels)
+                print(f"  Epoch {epoch+1}, Last batch loss: {loss:.4f}")
 
-    # 训练完当前任务后，更新 EWC 信息
-    trainer.update_ewc(latent_features, labels)
+        # 训练完当前任务后，更新 EWC 信息
+        trainer.update_ewc(latent_features, labels)

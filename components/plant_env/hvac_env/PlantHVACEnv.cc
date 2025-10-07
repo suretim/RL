@@ -70,7 +70,7 @@ float PlantHVACEnv::get_param(const std::map<std::string,float>& params, const s
     return 0.0f;
 }
 //extern float pid_map(float x, float in_min, float in_max, float out_min, float out_max);
-PlantHVACEnv::StepResult PlantHVACEnv::step(const std::array<int,PORT_CNT>& action,
+PlantHVACEnv::StepResult PlantHVACEnv::step(const std::array<int,ACTION_CNT>& action,
                                             const std::map<std::string,float>& params)
 {
     StepResult result;
@@ -184,11 +184,11 @@ PlantHVACEnv::StepResult PlantHVACEnv::step(const std::array<int,PORT_CNT>& acti
     }
     
     
-    vpd  = pid_map(v_env_th.v_feed,  m_params.vpd_range.first,   m_params.vpd_range.second,   0, 1);
+    vpd   = pid_map(v_env_th.v_feed,  m_params.vpd_range.first,   m_params.vpd_range.second,   0, 1);
     temp  = pid_map(v_env_th.t_feed,  m_params.temp_range.first,  m_params.temp_range.second,  0, 1);
-    humid  = pid_map(v_env_th.h_feed,  m_params.humid_range.first, m_params.humid_range.second, 0, 1);
-    light  = pid_map(v_env_th.l_feed,  m_params.light_range.first, m_params.light_range.second, 0, 1);
-    co2  = pid_map(v_env_th.c_feed,  m_params.co2_range.first,   m_params.co2_range.second,   0, 1);
+    humid = pid_map(v_env_th.h_feed,  m_params.humid_range.first, m_params.humid_range.second, 0, 1);
+    light = pid_map(v_env_th.l_feed,  m_params.light_range.first, m_params.light_range.second, 0, 1);
+    co2   = pid_map(v_env_th.c_feed,  m_params.co2_range.first,   m_params.co2_range.second,   0, 1);
     
     
     float reward = health_reward 

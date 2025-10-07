@@ -74,18 +74,14 @@ def generate_smart_representative_data(env, num_samples=1000, mode_weights=None,
         env.mode = mode
         env.reset()
 
+        action = [1, 0, 0, 0, 0, 1, 0, 0]
         # 生成该模式的数据
         for i in range(num_mode_samples):
-            if mode == "growing":
-                action = np.random.choice([0, 1], size=4, p=[0.3, 0.7])
-            elif mode == "flowering":
-                action = np.random.choice([0, 1], size=4, p=[0.5, 0.5])
-            else:  # seeding
-                action = np.random.choice([0, 1], size=4, p=[0.7, 0.3])
+
 
             # 执行动作
             true_label = modes.index(mode)
-            next_state, reward, done, info = env.step(action, true_label=true_label)
+            next_state, reward, done, info = env.step(action , true_label=true_label)
 
             # 添加数据点 & 标签
             current_data_point = env.current_sequence[0, -1]
@@ -94,7 +90,8 @@ def generate_smart_representative_data(env, num_samples=1000, mode_weights=None,
 
             if done:
                 env.reset()
-
+            print("New state:", next_state)
+            print("Reward:",  reward)
     # 转 numpy
     all_data = np.array(all_data, dtype=np.float32)
     all_labels = np.array(all_labels, dtype=np.int32)
@@ -109,11 +106,11 @@ def generate_smart_representative_data(env, num_samples=1000, mode_weights=None,
     else:
         return all_data[:num_samples]
 
-def env_pipe_trainer(lll_model=None,num_tasks=3,latent_dim=64,num_classes=3,num_epochs_per_task=3,batch_size=32, learning_rate=0.001, ewc_lambda=0.4):
+def env_pipe_trainer(lll_model=None,num_tasks=3,num_classes=3,num_epochs_per_task=3,batch_size=32, learning_rate=0.001, ewc_lambda=0.4):
     #env_lll_model, state_dim, action_dim, hidden_units,learning_rate=0.001, ewc_lambda=0.4
 
     trainer = LLLTrainer(lll_model=lll_model, learning_rate=0.001, ewc_lambda=0.4)
-
+    latent_dim=trainer.latent_dim
     # 模拟多任务数据
     for task_id in range(num_tasks):
         print(f"\n=== Training Task {task_id + 1} ===")
@@ -385,18 +382,17 @@ if __name__ == "__main__":
         PlantLLLHVACEnv(seq_len=10,mode="seeding"),
         PlantLLLHVACEnv(seq_len=10,mode="growing"),
     ]
-    latent_dim = 64
+    #latent_dim = 32
     #action_dim=4
     #num_classes = 3
     batch_size = 32
     num_epochs_per_task = 20
-    num_tasks = len(tasks) #"flowing, seedding, growing"
+    num_tasks = len(tasks) #"flowing, seeding, growing"
     plant_mode=0
     env = tasks[plant_mode]
     env_pipe_trainer(
         lll_model=env.lll_model ,
         num_tasks=num_tasks,
-        latent_dim=latent_dim,
         num_classes=env.action_dim,
         num_epochs_per_task= num_epochs_per_task,
         batch_size=batch_size,
@@ -409,7 +405,7 @@ if __name__ == "__main__":
 
     # 确保形状匹配（如果需要序列数据）
     if len(representative_data.shape) == 2:
-        representative_data = representative_data.reshape(-1, 1, 5)
+        representative_data = representative_data.reshape(-1, 1, env.state_dim)
     agent = ESP32OnlinePPOFisherAgent(state_dim=env.state_dim, action_dim=env.action_dim, hidden_units=8)
 
     agent.compute_env_fisher_matrix(representative_data)

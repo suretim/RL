@@ -1098,10 +1098,10 @@ void catch_tensor_dim(int type) {
     }
     
 }
-std::array<int,PORT_CNT>  action;
-//extern void set_plant_action(const std::array<int, PORT_CNT>& action);
-void set_plant_action(const std::array<int, PORT_CNT>& action) {
-    extern std::array<int, PORT_CNT> plant_action ;
+std::array<int,ACTION_CNT>  action;
+//extern void set_plant_action(const std::array<int, ACTION_CNT>& action);
+void set_plant_action(const std::array<int, ACTION_CNT>& action) {
+    extern std::array<int, ACTION_CNT> plant_action ;
     plant_action = action;
 }
 //u_int8_t get_tensor_state(void);
@@ -1130,7 +1130,7 @@ esp_err_t  lll_tensor_run(int type)
         lll_tensor_run_input.is_switch[port] = 1;
     }
     pid_run_output_st out_speed = pid_run_rule( &lll_tensor_run_input );
-    for(int port=1;port< PORT_CNT;port++)
+    for(int port=1;port<= ACTION_CNT;port++)
     {    
         ml_pid_out_speed.speed[port] += out_speed.speed[port];
         action[port-1]=ml_pid_out_speed.speed[port];

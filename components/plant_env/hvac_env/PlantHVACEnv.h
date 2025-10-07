@@ -90,7 +90,7 @@ private:
     bool done;
     int health;
     int t;
-    std::array<int,PORT_CNT> prev_action;
+    std::array<int,ACTION_CNT> prev_action;
 
     SeqFetcher seq_fetcher;
     
@@ -120,7 +120,7 @@ public:
 
     void set_seq_fetcher(SeqFetcher fetcher);
 
-    StepResult step(const std::array<int,PORT_CNT>& action,
+    StepResult step(const std::array<int,ACTION_CNT>& action,
                     const std::map<std::string,float>& params = {});
 
     std::vector<float> get_state() const;

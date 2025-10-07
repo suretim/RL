@@ -16,7 +16,7 @@
 
 void rl_sync_speed( ml_output_port_t* output_port_list, rule_speed_t *dev_speeds, dev_type_t* dev_type_list )
 {
-	for(uint8_t i=0; i<PORT_CNT; i++){
+	for(uint8_t i=0; i<ACTION_CNT; i++){
 		if(output_port_list[i].flag.speed_updata){
 			dev_speeds[i].is_set = true;
 			dev_speeds[i].speed = output_port_list[i].speed;

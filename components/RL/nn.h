@@ -15,7 +15,7 @@
 static const char *NN_TAG = "PPOEWC";
 
 // 假設 ACTION_DIM, STATE_DIM 已經定義
-#define ACTION_DIM PORT_CNT
+#define ACTION_DIM ACTION_CNT
 #define STATE_DIM STATE_CNT 
 #define HIDDEN_DIM 32 
 
@@ -180,11 +180,11 @@ public:
     // Forward actor returns softmax probabilities; always safe (if not ready returns uniform)
     std::vector<float> forwardActor(const std::vector<float>& state) {
         if (!model_ready) {
-            ESP_LOGW(NN_TAG, "forwardActor called but model not ready -> uniform output");
-            std::vector<float> action_prob;
-            for (int i=0;i<PORT_CNT;i++)
-                 action_prob[i]= ml_pid_out_speed.speed[i];
-            return action_prob;
+            //ESP_LOGW(NN_TAG, "forwardActor called but model not ready -> uniform output");
+            std::vector<float> action_prob(ACTION_CNT);
+            for (int i = 0; i < ACTION_CNT; i++)
+                action_prob[i] = ml_pid_out_speed.speed[i+1];
+            return action_prob; 
         }
         if ((int)state.size() != input_dim) {
             ESP_LOGE(NN_TAG, "forwardActor: state size %d != input_dim %d", (int)state.size(), input_dim);
@@ -222,8 +222,9 @@ public:
     // Critic forward (returns 0.0 if not ready)
     float forwardCritic(const std::vector<float>& state) {
         if (!model_ready) {
-            ESP_LOGW(NN_TAG, "forwardCritic called but model not ready -> 0.0");
-            return 0.0f;
+            //ESP_LOGW(NN_TAG, "forwardCritic called but model not ready -> 0.0");
+            //return 0.0f; 
+            return ml_pid_out_speed.speed[0]; 
         }
         if ((int)state.size() != input_dim) {
             ESP_LOGE(NN_TAG, "forwardCritic: state size %d != input_dim %d", (int)state.size(), input_dim);

@@ -21,7 +21,7 @@ std::vector<float> health_result;
 std::vector<std::vector<float>> state_history; // 存储每步的状态
 std::vector<float> reward_history;
 
-std::array<int, PORT_CNT> plant_action{};   
+std::array<int, ACTION_CNT> plant_action{};   
 
 PlantHVACEnv env(20, 3, 25.0f, 0.5f, 64);
 
@@ -81,12 +81,12 @@ extern "C" bool send_seq_to_server(void) {
 
 
 
-const std::array<int, PORT_CNT>& get_plant_action() {
+const std::array<int, ACTION_CNT>& get_plant_action() {
     return plant_action;
 }
 
 
-extern "C" void fetch_seq_from_server_step() {
+void fetch_seq_from_server_step() {
     
     env.set_seq_fetcher([](int t) -> std::vector<std::vector<float>> {
         std::vector<std::vector<float>> seq_input;
@@ -105,10 +105,10 @@ extern "C" void fetch_seq_from_server_step() {
         return seq_input;
     }); 
 }
-extern "C" void plant_env_step() {  
+extern "C" void plant_env_step(void) {  
         
         auto  result = env.step(plant_action,env.default_params);
-        std::vector<float> new_state = result.state;   // 当前新的状态
+        std::vector<float> new_state = result.state;    // 当前新的状态
         float reward = result.reward;                   // 当前的奖励值
         bool done = result.done;                        // 是否任务完成
  
@@ -140,6 +140,7 @@ extern "C" void plant_env_step() {
             result.reward ,
             result.flower_prob            
         };
+        return  ;
 }
  
 
@@ -147,19 +148,19 @@ extern "C" void plant_env_step() {
 PPOEWCModel ewcppoModel;
 extern struct st_bp_pid_th bp_pid_th ;
 extern float* load_float_bin(const char* path, size_t &length) ; 
-  extern "C" void hvac_ewc(void) {
+extern "C" bool hvac_ewc(void) {
     vTaskDelay(pdMS_TO_TICKS(5000)); // 等 WiFi 连接
 
-    size_t length = 0;
-    float *buf = load_float_bin("/spiffs1/ppo_model.bin", length);
-    if (buf == NULL) {
-        ESP_LOGI(TAG, "Model loaded successfully");
-    } else {
-        ESP_LOGE(TAG, "Failed to load model");
-    }
+    // size_t length = 0;
+    // float *buf = load_float_bin("/spiffs1/ppo_model.bin", length);
+    // if (buf == NULL) {
+    //     ESP_LOGI(TAG, "Model loaded successfully");
+    // } else {
+    //     ESP_LOGE(TAG, "Failed to load model");
+    // }
 
     // 初始化环境
-   
+    bool done =false;
     env.reset();
 
     // PPO 模型
@@ -168,7 +169,7 @@ extern float* load_float_bin(const char* path, size_t &length) ;
 
     static std::vector<float> old_action_probs = {0.0f, 0.0f, 0.0f};
 
-    if (true) {
+    while (done == false) {
  
 
 #if 1
@@ -186,7 +187,7 @@ extern float* load_float_bin(const char* path, size_t &length) ;
         auto result = env.step(plant_action, env.default_params);
         std::vector<float> new_state = result.state;
         float reward = result.reward;
-        bool done = result.done;
+        done = result.done;
 #endif
         // ====== 优势计算 ======
         std::vector<float> advantages(action_probs.size(), 0.0f);
@@ -196,16 +197,16 @@ extern float* load_float_bin(const char* path, size_t &length) ;
         }
 
         // // ====== health_result ======
-        // std::vector<float> health_result = {
-        //     result.temp,
-        //     result.humid,
-        //     result.soil,
-        //     result.light,
-        //     result.co2,
-        //     result.vpd,
-        //     result.reward,
-        //     result.flower_prob
-        // };
+        std::vector<float> health_result = {
+            result.temp,
+            result.humid,
+            result.soil,
+            result.light,
+            result.co2,
+            result.vpd,
+            result.reward,
+            result.flower_prob
+        };
 
         // ====== 计算梯度 + EWC 更新 ======
         std::vector<float> grads;
@@ -235,5 +236,6 @@ extern float* load_float_bin(const char* path, size_t &length) ;
 
         vTaskDelay(pdMS_TO_TICKS(5000)); // 每 5 秒交互一次
     }
+    return done;
 }
 
