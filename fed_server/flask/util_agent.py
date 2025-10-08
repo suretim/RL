@@ -139,36 +139,7 @@ class PPOBaseAgent:
                 return 0, 0.25
             else:
                 return np.zeros(self.action_dim), 0.5
-    def select_action(self, state):
-        """选择动作 - 修复返回值问题"""
-        try:
-            state = tf.expand_dims(tf.convert_to_tensor(state, dtype=tf.float32), 0)
 
-            if self.is_discrete:
-                # 离散动作空间
-                logits = self.actor(state)
-                dist = tfp.distributions.Categorical(logits=logits)
-                action = dist.sample()[0].numpy()
-                action_prob = dist.prob(action).numpy()
-                return int(action), float(action_prob)
-            else:
-                # 连续动作空间
-                mean = self.actor(state)
-                log_std = tf.ones_like(mean) * self.log_std
-                dist = tfp.distributions.Normal(loc=mean, scale=tf.exp(log_std))
-                action = dist.sample()[0].numpy()
-                action_prob = dist.prob(action).numpy()
-                # 对于连续动作，返回概率的乘积
-                action_prob = np.prod(action_prob)
-                return action, float(action_prob)
-
-        except Exception as e:
-            print(f"选择动作时出错: {e}")
-            # 返回默认动作和概率
-            if self.is_discrete:
-                return 0, 0.25  # 对于4个动作的均匀概率
-            else:
-                return np.zeros(self.action_dim), 0.5
     def get_value(self, state):
         state_tensor = np.expand_dims(state, axis=0)  # (1, state_dim)
         value = self.critic(state_tensor).numpy()[0, 0]
@@ -646,7 +617,7 @@ class PPOBaseAgent:
 
         return total_loss, actor_loss, value_loss, entropy,ewc_loss
 
-    def train_step(self, states, actions, advantages, old_probs, returns,
+    def train_step(self, states, actions, advantages, old_log_probs, returns,
                    clip_ratio=0.1, use_ewc=False,
                    adv_clip=10.0, logprob_clip=20.0, ratio_clip_max=10.0,
                    value_clip=10.0, entropy_clip=5.0, grad_clip_norm=5.0,
@@ -656,7 +627,7 @@ class PPOBaseAgent:
         # 转张量
         states = tf.convert_to_tensor(states, dtype=tf.float32)
         advantages = tf.convert_to_tensor(advantages, dtype=tf.float32)
-        old_probs = tf.convert_to_tensor(old_probs, dtype=tf.float32)
+        old_log_probs = tf.convert_to_tensor(old_log_probs, dtype=tf.float32)
         returns = tf.convert_to_tensor(returns, dtype=tf.float32)
 
         if normalize_returns:
@@ -676,10 +647,10 @@ class PPOBaseAgent:
                 dist = tfp.distributions.Categorical(logits=logits)
                 new_log_probs = dist.log_prob(actions)
                 actions_one_hot = tf.one_hot(actions, depth=self.action_dim)
-                old_action_probs = tf.reduce_sum(old_probs * actions_one_hot, axis=1)
-                old_log_probs = tf.math.log(old_action_probs + 1e-8)
+                #old_action_probs = tf.reduce_sum(old_probs * actions_one_hot, axis=1)
+                #old_log_probs = tf.math.log(old_action_probs + 1e-8)
                 new_log_probs = tf.reshape(new_log_probs, [-1, 1])
-                old_log_probs = tf.reshape(old_log_probs, [-1, 1])
+                #old_log_probs = tf.reshape(old_log_probs, [-1, 1])
             else:
                 policy_output = self.get_policy(states)
                 if isinstance(policy_output, (list, tuple)) and len(policy_output) == 2:
@@ -689,11 +660,12 @@ class PPOBaseAgent:
                 std = tf.exp(log_std)
                 dist = tfp.distributions.Normal(mean, std)
                 new_log_probs = tf.reduce_sum(dist.log_prob(actions), axis=-1, keepdims=True)
-                old_log_probs = tf.reshape(old_probs, [-1, 1])
+                #old_log_probs = tf.reshape(old_log_probs, [-1, 1])
 
             # --- clip log_probs & ratio ---
             new_log_probs = tf.clip_by_value(new_log_probs, -logprob_clip, logprob_clip)
             old_log_probs = tf.clip_by_value(old_log_probs, -logprob_clip, logprob_clip)
+
             ratio = tf.exp(new_log_probs - old_log_probs)
             ratio = tf.clip_by_value(ratio, 0.0, ratio_clip_max)
 
@@ -918,6 +890,58 @@ class PPOBaseAgent:
 
         return total_reward
 
+
+    def select_action(self,   state):
+
+        # --- 确保 state 为张量 ---
+        if state is None or (isinstance(state, str) and state == ''):
+            state = np.zeros(self.state_dim, dtype=np.float32)
+        state = np.array(state, dtype=np.float32)
+        if len(state.shape) == 1:
+            state = state[None, :]  # batch 维度
+
+        state_tensor = tf.convert_to_tensor(state, dtype=tf.float32)
+
+        # --- 计算 policy & value ---
+        value = self.value_net(state_tensor)
+        value = tf.squeeze(value).numpy()  # 去掉多余维度
+
+        if self.is_discrete:
+            logits = self.get_policy(state_tensor)
+            dist = tfp.distributions.Categorical(logits=logits)
+            action = dist.sample()
+            log_prob = dist.log_prob(action)
+            action = tf.squeeze(action).numpy()
+            log_prob = tf.squeeze(log_prob).numpy()
+
+            # 防止类型问题
+            if np.isscalar(action):
+                action = int(action)
+            else:
+                action = action.astype(int)
+        else:
+            mean, log_std = self.get_policy(state_tensor)
+            std = tf.exp(log_std)
+            dist = tfp.distributions.Normal(mean, std)
+            action = dist.sample()
+            log_prob = tf.reduce_sum(dist.log_prob(action), axis=-1)
+
+            # mean, log_std = agent.get_policy(state_tensor)
+            # std = tf.exp(log_std)
+            # dist = tfp.distributions.Normal(mean, std)
+            # action = dist.sample()
+            # action  = tf.nn.softmax(action).numpy().flatten()
+            # action_prob = tf.reduce_prod(dist.prob(action), axis=-1)
+            # action_prob = tf.squeeze(action_prob).numpy()
+
+            action = tf.squeeze(action).numpy()
+            # 防止空值
+            if np.any(np.isnan(action)):
+                action = np.zeros(self.action_dim, dtype=np.float32)
+            if np.any(np.isnan(log_prob)):
+                log_prob = 1.0
+
+        return action, log_prob, value
 
 
 class ESP32PPOAgent(PPOBaseAgent):
@@ -1491,10 +1515,10 @@ class ESP32OnlinePPOFisherAgent(ESP32PPOAgent):
 
         self.hidden_units = hidden_units
         self._tflite_models = {}
-        self.actor = self._build_actor()
-        self.critic = self._build_critic()
+        #self.actor = self._build_actor()
+        #self.critic = self._build_critic()
         self.optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
-        self.value_net = self.critic
+        #self.value_net = self.critic
 
         self.logits_layer = self.actor.layers[-1]
 
@@ -1526,9 +1550,13 @@ class ESP32OnlinePPOFisherAgent(ESP32PPOAgent):
     def collect_trajectory(self, env, max_steps=200):
         states, actions, rewards, log_probs, values ,dones= [], [], [], [], [],[]
 
-        state = env.reset()
+        #state = env.reset()
+        #prev_action=state.prev_action
+        #state_vec= [state.health,state.temp,state.humid,state.light,state.co2,state.ph, state.water]
+        health, temp, humid, light, co2, ph, water,*prev_action=env.reset()
+        state = [health, temp, humid, light, co2, ph, water]
         for _ in range(max_steps):
-            action, log_prob = self.get_action(state)
+            action, log_prob = self.get_action(state )
             next_state, reward, done, _ = env.step(action)
 
             states.append(state)
@@ -2549,7 +2577,7 @@ class PPOAgent(ESP32PPOAgent):
             if episode % 10 == 0:
                 print(f"回合 {episode}, 奖励: {episode_reward}")
 
-    def select_action(self, state):
+    def xselect_action(self, state):
         """选择动作"""
         state_tensor = tf.convert_to_tensor([state], dtype=tf.float32)
         action_probs = self.actor(state_tensor)

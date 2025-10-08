@@ -1,3 +1,4 @@
+//PlantHVACEnv.h
 #ifndef PLANTHVACENV_H
 #define PLANTHVACENV_H
 
@@ -14,6 +15,7 @@ struct ModeParam {
     std::pair<float,float> soil_range;
     std::pair<float,float> light_range;
     std::pair<float,float> co2_range;
+    std::pair<float,float> ph_range;
     std::pair<float,float> vpd_range;
     
     float soft_label_bonus;   
@@ -38,10 +40,11 @@ public:
         float soil;
         float light;
         float co2;
+        float ph;
         float vpd; 
         
         StepResult() : reward(0.0f), done(false), flower_prob(0.0f),
-                       temp(0.0f), humid(0.0f),soil(0.0f), light(0.0f), co2(0.0f), vpd(0.0f)  {}
+                       temp(0.0f), humid(0.0f),soil(0.0f), light(0.0f), co2(0.0f), ph(7.0f), vpd(0.0f)  {}
     };
     std::map<std::string, ModeParam> mode_params;
     uint32_t rng_seed = 12345;
@@ -65,9 +68,9 @@ public:
      
     PlantHVACEnv() {
         mode_params = {
-            {"growing",  ModeParam{{22,28},{50.0f,70.0f},{25.0f, 35.0f},{300,600},{400,800} ,{0.8f,1.2f}, 0.2f, -0.1f}},
-            {"flowering",ModeParam{{20,26},{40.0f,60.0f},{30.0f, 40.0f},{500,800},{600,1000},{1.0f,1.5f}, 0.3f, -0.15f}},
-            {"seeding",  ModeParam{{24,30},{50.0f,70.0f},{20.0f, 30.0f},{200,400},{400,600} ,{0.4f,0.8f},0.1f, -0.05f}}
+            {"growing",  ModeParam{{22,28},{0.50f,0.70f},{0.25f, 0.35f},{300,600},{400,800} ,{5.8f,6.5f},{0.8f,1.2f}, 0.2f, -0.1f}},
+            {"flowering",ModeParam{{20,26},{0.40f,0.60f},{0.30f, 0.40f},{500,800},{600,1000},{5.8f,6.3f},{1.0f,1.5f}, 0.3f, -0.15f}},
+            {"seeding",  ModeParam{{24,30},{0.50f,0.70f},{0.20f, 0.30f},{200,400},{400,600} ,{5.5f,6.2f},{0.4f,0.8f},0.1f, -0.05f}}
         };
          
     }

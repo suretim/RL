@@ -47,7 +47,7 @@ def ewc_update(actor, fisher, optimal_params, current_params, learning_rate=1e-3
 
 
 
-def generate_smart_representative_data(env, num_samples=1000, mode_weights=None, return_labels=False):
+def generate_smart_representative_data(env, agent,num_samples=1000, mode_weights=None, return_labels=False):
     """
     智能生成代表性数据，覆盖不同模式和工况
 
@@ -78,10 +78,11 @@ def generate_smart_representative_data(env, num_samples=1000, mode_weights=None,
         # 生成该模式的数据
         for i in range(num_mode_samples):
 
-
+            #current_state_tuple = (self.health, self.temp, self.humid, self.water, self.light, self.co2, self.ph)
+            action_vec,prob,value = env.select_action_eps_greedy(agent)
             # 执行动作
             true_label = modes.index(mode)
-            next_state, reward, done, info = env.step(action , true_label=true_label)
+            next_state, reward, done, info = env.step(action_vec , true_label=true_label)
 
             # 添加数据点 & 标签
             current_data_point = env.current_sequence[0, -1]
@@ -399,14 +400,15 @@ if __name__ == "__main__":
         learning_rate=0.001,
         ewc_lambda=0.4)
 
+    agent = ESP32OnlinePPOFisherAgent(state_dim=env.state_dim, action_dim=env.action_dim, hidden_units=8)
+
     # 生成代表性数据
     
-    representative_data, y_train    = generate_smart_representative_data(env, 100, return_labels=True)
+    representative_data, y_train    = generate_smart_representative_data(env,agent, 100, return_labels=True)
 
     # 确保形状匹配（如果需要序列数据）
     if len(representative_data.shape) == 2:
         representative_data = representative_data.reshape(-1, 1, env.state_dim)
-    agent = ESP32OnlinePPOFisherAgent(state_dim=env.state_dim, action_dim=env.action_dim, hidden_units=8)
 
     agent.compute_env_fisher_matrix(representative_data)
     # 保存 Fisher & Optimal Params
@@ -422,7 +424,7 @@ if __name__ == "__main__":
 
 
 
-    policy_agent=ESP32OnlinePPOFisherAgent(fisher_matrix=agent.fisher_matrix,optimal_params=agent.optimal_params)
+    policy_agent=ESP32OnlinePPOFisherAgent(state_dim=env.state_dim, action_dim=env.action_dim,fisher_matrix=agent.fisher_matrix,optimal_params=agent.optimal_params)
     #trainbytask_lifelong_ppo(env,policy_agent,tasks=tasks[plant_mode])
     #policy_agent.learn(total_timesteps=1000000)
     #policy_agent.train_buffer_step(use_ewc=True)

@@ -270,8 +270,8 @@ private:
 public:
     PPOEWCModel() {
         
-        input_dim = ACTION_DIM;   
-        action_dim = STATE_DIM;  
+        input_dim = STATE_DIM;   
+        action_dim = ACTION_DIM ;  
         // 初始化网络参数
         initModel();
     }

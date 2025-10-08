@@ -7,7 +7,7 @@
 
 #include "ml_pid.h"
 
-
+ModeParam m_params;
 // 构建编码器
 HVACEncoder* build_hvac_encoder(int seq_len, int n_features, int latent_dim) {
     return new HVACEncoder(seq_len, n_features, latent_dim);
@@ -79,7 +79,7 @@ PlantHVACEnv::StepResult PlantHVACEnv::step(const std::array<int,ACTION_CNT>& ac
     int humi   = action[1];
     int heat   = action[2];
     int dehumi = action[3];
-    ModeParam m_params = mode_params[plant_mode]; 
+    m_params = mode_params[plant_mode]; 
     if(true_env){
         v_env_th   = bp_pid_th;
     }else{

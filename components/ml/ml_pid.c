@@ -1475,7 +1475,7 @@ static pid_run_output_st bp_pid_th_proc(short dev_type,uint8_t *input_dev_type  
 
 		//if(tick_cmp(geer_spk_tmr, bp_pid_th.tmr*2) == c_ret_ok)
 		//{	
-			 bp_pid_th.dev_token=0;//(pso.mae_buf[1][idx>>1]>=hvac_margin[idx>>1])? (1<<idx) :bp_pid_th.dev_token; 
+			bp_pid_th.dev_token=0;//(pso.mae_buf[1][idx>>1]>=hvac_margin[idx>>1])? (1<<idx) :bp_pid_th.dev_token; 
 			for(uint8_t port=1; port < PORT_CNT; port++ )
 			{   
 				output.speed[port] =find_gear_level(devs_type_list[port].real_type, input_dev_type[port],on_tmr );

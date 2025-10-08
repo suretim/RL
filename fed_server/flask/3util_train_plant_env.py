@@ -3,7 +3,7 @@ from tensorflow.keras import layers, Model
 import numpy as np
 from collections import deque
 import random
-  
+import tensorflow_probability as tfp
 import os
 
 from util_agent import PPOBuffer
@@ -163,7 +163,7 @@ def process_batch_data(batch_bytes):
         return []
 
 
-def safe_train_step(agent, **kwargs):
+def xsafe_train_step(agent, **kwargs):
     """安全的训练步骤包装器"""
     try:
         # 检查所有输入参数
@@ -254,57 +254,6 @@ def check_agent_models(agent):
         check_and_reload_actor_model(agent)
 
 
-def safe_select_action(agent, state):
-    """
-    安全选择动作函数，防止 shape 错误和空值
-    返回: action, action_prob, value
-    """
-    import numpy as np
-    import tensorflow as tf
-    import tensorflow_probability as tfp
-
-    # --- 确保 state 为张量 ---
-    if state is None or (isinstance(state, str) and state == ''):
-        state = np.zeros(agent.state_dim, dtype=np.float32)
-    state = np.array(state, dtype=np.float32)
-    if len(state.shape) == 1:
-        state = state[None, :]  # batch 维度
-
-    state_tensor = tf.convert_to_tensor(state, dtype=tf.float32)
-
-    # --- 计算 policy & value ---
-    value = agent.value_net(state_tensor)
-    value = tf.squeeze(value).numpy()  # 去掉多余维度
-
-    if agent.is_discrete:
-        logits = agent.get_policy(state_tensor)
-        dist = tfp.distributions.Categorical(logits=logits)
-        action = dist.sample()
-        action_prob = dist.prob(action)
-        # shape 统一
-        action = tf.squeeze(action).numpy()
-        action_prob = tf.squeeze(action_prob).numpy()
-        # 防止 slice 越界
-        if np.isscalar(action):
-            action = int(action)
-        else:
-            action = action.astype(int)
-    else:
-        mean, log_std = agent.get_policy(state_tensor)
-        std = tf.exp(log_std)
-        dist = tfp.distributions.Normal(mean, std)
-        action = dist.sample()
-        action_prob = tf.reduce_prod(dist.prob(action), axis=-1)
-        action = tf.squeeze(action).numpy()
-        action_prob = tf.squeeze(action_prob).numpy()
-        # 防止空值
-        if np.any(np.isnan(action)):
-            action = np.zeros(agent.action_dim, dtype=np.float32)
-        if np.any(np.isnan(action_prob)):
-            action_prob = 1.0
-
-    return action, action_prob, value
-
 
 def buffer_train_ppo_with_lll_alternative(env, agent, task_id=0):
     batch_size = 10
@@ -322,9 +271,12 @@ def buffer_train_ppo_with_lll_alternative(env, agent, task_id=0):
 
     while episode_count < epochs:
         try:
-            action, action_prob, value = safe_select_action(agent, state)
+            action , action_prob, value = env.select_action_eps_greedy(agent)
+            #action, action_prob, value  = agent.select_action(  state)
+            #
+            # 执行动作
+            #true_label = modes.index(mode)
             next_state, reward, done, _ = env.step(action)
-
             ppo_buffer.store(state, action, action_prob, reward, next_state, done, value)
             state = next_state
             episode_reward += reward
@@ -395,69 +347,6 @@ def fix_agent_serialization(agent: object) -> None:
 
 
 
-class TFLitePPOTrainer:
-    def __init__(self):
-        self.model = self._build_tflite_compatible_model()
-
-    def _build_tflite_compatible_model(self):
-        """构建兼容TFLite的简单模型"""
-        model = tf.keras.Sequential([
-            tf.keras.layers.Dense(8, activation='relu', input_shape=(3,)),
-            tf.keras.layers.Dense(4, activation='sigmoid', name='action_probs')
-        ])
-        return model
-
-    def train(self, experiences):
-        """训练模型"""
-        # 简化训练逻辑
-        states = np.array([exp['state'] for exp in experiences])
-        advantages = np.array([exp['advantage'] for exp in experiences])
-
-        # 这里使用简化训练，实际应该用PPO算法
-        self.model.fit(states, advantages, epochs=10, verbose=0)
-
-    def convert_to_tflite(self, output_path):
-        """转换为TFLite模型"""
-        # 转换模型
-        converter = tf.lite.TFLiteConverter.from_keras_model(self.model)
-        converter.optimizations = [tf.lite.Optimize.DEFAULT]  # 优化模型大小
-        converter.target_spec.supported_ops = [
-            tf.lite.OpsSet.TFLITE_BUILTINS,  # 启用TFLite内置操作
-            tf.lite.OpsSet.SELECT_TF_OPS  # 启用TensorFlow操作
-        ]
-
-        tflite_model = converter.convert()
-
-        # 保存模型
-        with open(output_path, 'wb') as f:
-            f.write(tflite_model)
-
-        print(f"Model converted to TFLite: {output_path}")
-        print(f"Model size: {len(tflite_model)} bytes")
-
-        return tflite_model
-
-    def generate_c_array(self, tflite_model, output_path):
-        """生成C数组格式的模型"""
-        with open(output_path, 'w') as f:
-            f.write('#ifndef MODEL_DATA_H\n')
-            f.write('#define MODEL_DATA_H\n\n')
-            f.write('#include <cstdint>\n\n')
-            f.write(f'const unsigned char g_model[] = {{\n')
-
-            # 每行16个字节
-            for i in range(0, len(tflite_model), 16):
-                line = ', '.join(f'0x{byte:02x}' for byte in tflite_model[i:i + 16])
-                f.write(f'  {line},\n')
-
-            f.write('};\n')
-            f.write(f'const unsigned int g_model_len = {len(tflite_model)};\n')
-            f.write('#endif\n')
-
-        print(f"C array header generated: {output_path}")
-
-
-
 if __name__ == "__main__":
     physical_devices = tf.config.list_physical_devices('GPU')
     if physical_devices:
@@ -484,22 +373,22 @@ if __name__ == "__main__":
             state_dim = env.state_dim
             action_dim = env.action_dim
             # 确保正确设置离散/连续参数
-            agent = PPOAgent(state_dim, action_dim, is_discrete=False)  # 明确设置为离散
+            agent = PPOAgent(state_dim=state_dim, action_dim=action_dim, is_discrete=False)  # 明确设置为离散
 
             print(f"开始学习任务 {task_id}...")
             # 在使用agent之前调用修复函数
-            fix_agent_serialization(agent)
+            #fix_agent_serialization(agent)
             # 测试任务性能（安全调用）
-            try:
-                performance = agent.test_task_performance(tasks[task_id])
-                print(f"任务 {task_id} 性能: {performance}")
-            except ValueError as e:
-                print(f"测试任务性能时出错: {e}")
-                # 使用调试版本
-                performance = agent.test_task_performance_debug(tasks[task_id])
-            except Exception as e:
-                print(f"测试任务性能时未知错误: {e}")
-                performance = 0.0
+            #try:
+            #    performance = agent.test_task_performance(tasks[task_id])
+            #    print(f"任务 {task_id} 性能: {performance}")
+            #except ValueError as e:
+            #    print(f"测试任务性能时出错: {e}")
+
+            #    performance = agent.test_task_performance_debug(tasks[task_id])
+            #except Exception as e:
+            #    print(f"测试任务性能时未知错误: {e}")
+            #    performance = 0.0
             # 使用调试版本
             #test_state = env.reset()
             #print("测试act方法...")

@@ -20,7 +20,7 @@ extern "C" {
 #include <string.h> 
 #include "sensor_module.h" 
 #include "hvac_q_agent.h"
- 
+
 #ifdef __cplusplus
 }
 #endif
@@ -29,7 +29,7 @@ extern "C" {
 #include "tensorflow/lite/micro/micro_interpreter.h"
 #include "tensorflow/lite/micro/system_setup.h"
 #include "tensorflow/lite/schema/schema_generated.h"  
-
+#include "PlantHVACEnv.h" 
 #include "classifier_storage.h" 
 #include "config_mqtt.h"
 #include "esp_partition.h"  
@@ -1105,27 +1105,32 @@ void set_plant_action(const std::array<int, ACTION_CNT>& action) {
     plant_action = action;
 }
 //u_int8_t get_tensor_state(void);
+extern ModeParam m_params;
+
 esp_err_t  lll_tensor_run(int type) 
 { 
     catch_tensor_dim(type); 
     read_all_sensor_trigger();
     // pid_param_get(&g_ai_setting, NULL, NULL, NULL, &pid_run_input );
-     
+    float temp_target  =(m_params.temp_range.first  +m_params.temp_range.second)/2.0;
+    float humid_target  =(m_params.humid_range.first  +m_params.humid_range.second)/2.0;
+    float light_target=(m_params.light_range.first+m_params.light_range.second)/2.0;
+    float co2_target  =(m_params.co2_range.first  +m_params.co2_range.second)/2.0; 
     lll_tensor_run_input.env_en_bit  = 0xff;
     lll_tensor_run_input.ml_run_sta  = 1;
-    lll_tensor_run_input.env_target[ENV_TEMP] =30.0;
-    lll_tensor_run_input.env_target[ENV_HUMID]=60.0;
-    lll_tensor_run_input.env_target[ENV_LIGHT]=32.0;
-    lll_tensor_run_input.env_target[ENV_CO2]  =50.0;
-    devs_type_list[1].real_type = lll_tensor_run_input.dev_type[1] =loadType_A_C;
-    devs_type_list[2].real_type = lll_tensor_run_input.dev_type[2]= loadType_heater;
-    devs_type_list[3].real_type = lll_tensor_run_input.dev_type[3]= loadType_dehumi;
-    devs_type_list[4].real_type = lll_tensor_run_input.dev_type[4]= loadType_humi;
-    devs_type_list[5].real_type = lll_tensor_run_input.dev_type[5]= loadType_A_C;
-    devs_type_list[6].real_type = lll_tensor_run_input.dev_type[6]= loadType_heater;
-    devs_type_list[7].real_type = lll_tensor_run_input.dev_type[7]= loadType_dehumi;
-    devs_type_list[8].real_type = lll_tensor_run_input.dev_type[8]= loadType_humi;
-    for(int port=1;port<9;port++)
+    lll_tensor_run_input.env_target[ENV_TEMP] =temp_target;
+    lll_tensor_run_input.env_target[ENV_HUMID]=humid_target;
+    lll_tensor_run_input.env_target[ENV_LIGHT]=light_target;
+    lll_tensor_run_input.env_target[ENV_CO2]  =co2_target;
+    devs_type_list[1].real_type = lll_tensor_run_input.dev_type[1] =loadType_heater ;
+    devs_type_list[2].real_type = lll_tensor_run_input.dev_type[2]= loadType_A_C;
+    devs_type_list[3].real_type = lll_tensor_run_input.dev_type[3]= loadType_humi ;
+    devs_type_list[4].real_type = lll_tensor_run_input.dev_type[4]= loadType_dehumi;
+    devs_type_list[5].real_type = lll_tensor_run_input.dev_type[5]= loadType_water_pump;
+    devs_type_list[6].real_type = lll_tensor_run_input.dev_type[6]= loadType_growLight;
+    devs_type_list[7].real_type = lll_tensor_run_input.dev_type[7]= loadType_co2_generator;
+    devs_type_list[8].real_type = lll_tensor_run_input.dev_type[8]= loadType_pump;
+    for(int port=1;port<PORT_CNT;port++)
     {    
         lll_tensor_run_input.is_switch[port] = 1;
     }
