@@ -6,12 +6,7 @@
 #include "version.h"
 enum CaseType { PPO_CASE,NN_PPO_CASE, META_CASE ,IMG_CASE,NUM_CASE};
 
-
-//#define PPO_CASE 0
-//#define META_CASE 1
-//#define IMG_CASE 2
-//#define NN_PPO_CASE 3
-//#define INIT_CASE 4
+ 
 
 #define INFER_CASE PPO_CASE
 

@@ -183,7 +183,7 @@ public:
             //ESP_LOGW(NN_TAG, "forwardActor called but model not ready -> uniform output");
             std::vector<float> action_prob(ACTION_CNT);
             for (int i = 0; i < ACTION_CNT; i++)
-                action_prob[i] = ml_pid_out_speed.speed[i+1];
+                action_prob[i] = lstm_pid_out_speed.speed[i+1];
             return action_prob; 
         }
         if ((int)state.size() != input_dim) {
@@ -224,7 +224,7 @@ public:
         if (!model_ready) {
             //ESP_LOGW(NN_TAG, "forwardCritic called but model not ready -> 0.0");
             //return 0.0f; 
-            return ml_pid_out_speed.speed[0]; 
+            return lstm_pid_out_speed.speed[0]; 
         }
         if ((int)state.size() != input_dim) {
             ESP_LOGE(NN_TAG, "forwardCritic: state size %d != input_dim %d", (int)state.size(), input_dim);

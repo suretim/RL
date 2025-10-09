@@ -464,29 +464,36 @@ class PlantHVACEnv:
         self.fisher_matrix = None
         self.prev_weights = None
         self.memory = deque(maxlen=1000)  # 簡單的記憶緩衝區
-
+        #  PlantHVACEnv() {
+        #         mode_params = {
+        #             {"growing",  ModeParam{{22,28},{0.40f,0.70f},{0.25f, 0.35f},{300,600},{400,800} ,{5.8f,6.5f},{0.8f,1.2f}, 0.2f, -0.1f}},
+        #             {"flowering",ModeParam{{20,26},{0.40f,0.60f},{0.30f, 0.40f},{500,800},{600,1000},{5.8f,6.3f},{1.0f,1.5f}, 0.3f, -0.15f}},
+        #             {"seeding",  ModeParam{{24,30},{0.50f,0.70f},{0.20f, 0.30f},{200,400},{400,600} ,{5.5f,6.2f},{0.4f,0.8f},0.1f, -0.05f}}
+        #         };
+                
+        #     }
         # 不同模式的理想環境參數（添加光照和CO2範圍）
         self.mode_params = {
             "growing": {
-                "temp_range": (22, 28),
+                "temp_range":  (22, 28),
                 "humid_range": (0.4, 0.7),
-                "vpd_range": (0.8, 1.5),
+                "vpd_range":   (0.8, 1.5),
                 "light_range": (300, 600),  # lux
-                "co2_range": (400, 800)  # ppm
+                "co2_range":   (400, 800)  # ppm
             },
             "flowering": {
-                "temp_range": (20, 26),
+                "temp_range":  (20, 26),
                 "humid_range": (0.4, 0.6),
-                "vpd_range": (1.0, 1.8),
+                "vpd_range":   (1.0, 1.8),
                 "light_range": (500, 800),  # lux
-                "co2_range": (600, 1000)  # ppm
+                "co2_range":   (600, 1000)  # ppm
             },
             "seeding": {
-                "temp_range": (24, 30),
+                "temp_range":  (24, 30),
                 "humid_range": (0.5, 0.7),
-                "vpd_range": (0.7, 1.3),
+                "vpd_range":   (0.7, 1.3),
                 "light_range": (200, 400),  # lux
-                "co2_range": (400, 600)  # ppm
+                "co2_range":   (400, 600)  # ppm
             }
         }
 

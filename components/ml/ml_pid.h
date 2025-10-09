@@ -129,22 +129,22 @@
 #define c_ret_nk            	1
 
 
-#define c_pid_temp_min			1
-#define c_pid_temp_max			40
-#define c_pid_humi_min			10
-#define c_pid_humi_max			100
-#define c_pid_light_min			100
-#define c_pid_light_max			800
-#define c_pid_co2_min			100
-#define c_pid_co2_max			1000
-#define c_pid_vpd_min			0
-#define c_pid_vpd_max			4
+// #define c_pid_temp_min			1
+// #define c_pid_temp_max			40
+// #define c_pid_humi_min			0.1
+// #define c_pid_humi_max			0.8
+// #define c_pid_water_min			0.1
+// #define c_pid_water_max			0.8
+// #define c_pid_light_min			100
+// #define c_pid_light_max			800
+// #define c_pid_co2_min			100
+// #define c_pid_co2_max			1000
+// #define c_pid_vpd_min			0
+// #define c_pid_vpd_max			4
+
 #define c_pid_ptch_min			-400
 #define c_pid_ptch_max			400
-// #define c_pid_gain_min			 2000
-// #define c_pid_gain_max			 20000
-
-
+ 
 
 #define FREE_ARG char*
 #define SIGN(a,b) ((b) >= 0.0 ? fabs(a) : -fabs(a))
@@ -165,7 +165,7 @@ static int iminarg1,iminarg2;
 #define NM MN
 #define NU (MN-1)
 
-#define	c_bp_pid_dbg_en			1
+#define	c_bp_pid_dbg_en			0
 #define bp_dbg(format, ...)			printf(" "format, ##__VA_ARGS__)
 #define bp_pid_dbg(format, ...)			printf("bp_pid_d "format, ##__VA_ARGS__)
 #define bp_pid_wave(format, ...)		printf("bp_pid_w "format, ##__VA_ARGS__)
@@ -181,6 +181,25 @@ extern "C" {
 #include "define.h"
 #include "ai.h"
 #include "ai_out.h"
+
+typedef struct {
+    float first;
+    float second;
+} Range;
+
+typedef struct {
+    Range temp_range;      // 温度范围
+    Range humid_range;     // 湿度范围
+    Range water_range;      // 土壤湿度范围
+    Range light_range;     // 光照范围
+    Range co2_range;       // CO2 范围
+    Range ph_range;        // pH 范围
+    Range vpd_range;       // VPD 范围
+
+    float soft_label_bonus;  // 软标签奖励
+    float penalty;           // 惩罚值
+} ModeParam;
+
 typedef struct{
     uint8_t ml_run_sta;
     uint8_t dev_type[PORT_CNT];
@@ -203,6 +222,8 @@ typedef struct{
 extern pid_run_output_st pid_run_rule(pid_run_input_st* input);
 extern struct st_bp_pid_th    bp_pid_th ;
 extern dev_type_t devs_type_list[PORT_CNT]; 
+extern pid_run_output_st lstm_pid_out_speed;
+
 extern float pid_map(float param1, float param2, float param3, float param4, float param5); 
 // struct st_pos_val_arg
 // {
@@ -317,8 +338,11 @@ struct st_bp_pid_th
     //double tu ;  //tgain delta
     u_int8_t		u_gear_tmr[NUM_ENVDEV]; 
 	//float 			u_gain_tmr[NUM_ENVDEV]; 
-	float			t_target, t_feed, t_outside,h_target, h_feed,h_outside, v_target, v_feed,v_outside; 
-    float l_feed,c_feed;
+	float t_target, t_feed, t_outside;
+    float h_target, h_feed, h_outside;
+    float v_target, v_feed, v_outside; 
+
+    float l_feed,c_feed,w_feed,p_feed,e_feed;
 	unsigned char	mode; 
 	unsigned int	dev_type,   version ; 
 	unsigned short port_setgear[2][NUM_ENVDEV];
@@ -329,7 +353,7 @@ struct st_bp_pid_th
 
 
 extern pid_run_output_st ml_pid_out_speed;
-
+extern ModeParam m_range_params;
 #ifdef __cplusplus
 }
 #endif

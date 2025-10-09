@@ -591,24 +591,21 @@ extern "C" {
 #include "ml_pid.h"
 
 
-pid_run_input_st lll_tensor_run_input = {0};  
-pid_run_output_st ml_pid_out_speed;
+pid_run_input_st pid_input = {0};  
+//extern pid_run_output_st lstm_pid_out_speed;
 
 CLASSIFIER_Prams classifier_params;
 extern float pid_map(float x, float in_min, float in_max, float out_min, float out_max);
 int load_up_input_seq(int type,int seq_len)
 {
     int cnt=0;
-    float v_feed  = pid_map(bp_pid_th.v_feed,  c_pid_vpd_min, c_pid_vpd_max, 0, 1);
-    float t_feed  = pid_map(bp_pid_th.t_feed,  c_pid_temp_min, c_pid_temp_max, 0, 1);
-    float h_feed  = pid_map(bp_pid_th.h_feed,  c_pid_humi_min, c_pid_humi_max, 0, 1);
-    float l_feed  = pid_map(bp_pid_th.l_feed,  c_pid_light_min, c_pid_light_max, 0, 1);
-    float c_feed  = pid_map(bp_pid_th.c_feed,  c_pid_co2_min, c_pid_co2_max, 0, 1);
-    // float v_feed  = pid_map(bp_pid_th.v_feed,  c_pid_vpd_min, c_pid_vpd_max,    c_pid_vpd_min, c_pid_vpd_max);
-    // float t_feed  = pid_map(bp_pid_th.t_feed,  c_pid_temp_min, c_pid_temp_max,  c_pid_temp_min, c_pid_temp_max);
-    // float h_feed  = pid_map(bp_pid_th.h_feed,  c_pid_humi_min, c_pid_humi_max,  c_pid_humi_min, c_pid_humi_max);
-    // float l_feed  = pid_map(bp_pid_th.l_feed,  c_pid_light_min, c_pid_light_max,c_pid_light_min, c_pid_light_max);
-    // float c_feed  = pid_map(bp_pid_th.c_feed,  c_pid_co2_min, c_pid_co2_max,    c_pid_co2_min, c_pid_co2_max);
+    float t_feed  = pid_map(bp_pid_th.t_feed,   m_range_params.temp_range.first, m_range_params.temp_range.second, 0, 1);
+    float h_feed  = pid_map(bp_pid_th.h_feed,   m_range_params.humid_range.first, m_range_params.humid_range.second, 0, 1);
+    float w_feed  = pid_map(bp_pid_th.w_feed,   m_range_params.water_range.first, m_range_params.water_range.second, 0, 1);
+    float l_feed  = pid_map(bp_pid_th.l_feed,   m_range_params.light_range.first, m_range_params.light_range.second, 0, 1);
+    float c_feed  = pid_map(bp_pid_th.c_feed,   m_range_params.co2_range.first, m_range_params.co2_range.second, 0, 1);
+    float p_feed  = pid_map(bp_pid_th.p_feed,   m_range_params.ph_range.first, m_range_params.ph_range.second, 0, 1);
+    float v_feed  = pid_map(bp_pid_th.v_feed,   m_range_params.vpd_range.first, m_range_params.vpd_range.second, 0, 1);
     
     if(type == PPO_CASE)
     {
@@ -727,7 +724,7 @@ TfLiteStatus infer_loop(int type) {
         output_vec.resize(m);
         memcpy(output_vec.data(), ctx.interpreter ->typed_output_tensor<float>(0), m * sizeof(float)); 
         printf("Critic output: %.4f\n", output_vec[0]); 
-        ml_pid_out_speed.speed[0] = output_vec[0]; 
+        lstm_pid_out_speed.speed[0] = output_vec[0]; 
     }
     else if (type == OPTIMIZED_MODEL || type == ACTOR_MODEL) {
         printf("Actor/Optimized output: ");
@@ -738,9 +735,9 @@ TfLiteStatus infer_loop(int type) {
         }
         for (  i=0; i<m; i++) {
             if(sum< 1e-8)
-                ml_pid_out_speed.speed[i+1]=1.0f/m;
+                lstm_pid_out_speed.speed[i+1]=1.0f/m;
             else
-                ml_pid_out_speed.speed[i+1] = output[i]/sum;
+                lstm_pid_out_speed.speed[i+1] = output[i]/sum;
         }
         printf("\n");
     }
@@ -1035,41 +1032,7 @@ bool (*functionInferArray[4])(int type) = {
     img_inference
 };
  
-
-void prepare_lstm_input(int type) {
-    // 获取输入张量
-     
-    auto& ctx = model_contexts[type];
-    // 检查输入维度
-    ESP_LOGI("INFERENCE", "Input dimensions: %dD", ctx.input_tensor ->dims->size);
-    for (int i = 0; i < ctx.input_tensor->dims->size; i++) {
-        ESP_LOGI("INFERENCE", "  dim[%d]: %d", i, ctx.input_tensor ->dims->data[i]);
-    }
-    
-    // 输入应该是 [1, 10, 7] - batch=1, timesteps=10, features=7
-    if (ctx.input_tensor ->dims->size != 3 || 
-        ctx.input_tensor ->dims->data[0] != 1 || 
-        ctx.input_tensor ->dims->data[1] != 10 || 
-        ctx.input_tensor ->dims->data[2] != 7) {
-        ESP_LOGE("INFERENCE", "Unexpected input shape");
-        return;
-    }
-    
-    // 准备输入数据 - 需要10个时间步，每个时间步7个特征
-    float* input_data = ctx.input_tensor ->data.f;
-    
-    // 示例：填充10个时间步的数据
-    for (int timestep = 0; timestep < 10; timestep++) {
-        for (int feature = 0; feature < 7; feature++) {
-            // 这里根据您的实际数据填充
-            // 例如：input_data[timestep * 7 + feature] = your_sensor_data[feature];
-            input_data[timestep * 7 + feature] = 0.0f; // 临时用0填充
-        }
-    }
-}
-
  
-
 
 //void catch_tensor_dim(enum CaseType type) {
 void catch_tensor_dim(int type) {
@@ -1105,43 +1068,49 @@ void set_plant_action(const std::array<int, ACTION_CNT>& action) {
     plant_action = action;
 }
 //u_int8_t get_tensor_state(void);
-extern ModeParam m_params;
+ 
 
-esp_err_t  lll_tensor_run(int type) 
-{ 
-    catch_tensor_dim(type); 
+void pid_run(void) 
+{   
     read_all_sensor_trigger();
     // pid_param_get(&g_ai_setting, NULL, NULL, NULL, &pid_run_input );
-    float temp_target  =(m_params.temp_range.first  +m_params.temp_range.second)/2.0;
-    float humid_target  =(m_params.humid_range.first  +m_params.humid_range.second)/2.0;
-    float light_target=(m_params.light_range.first+m_params.light_range.second)/2.0;
-    float co2_target  =(m_params.co2_range.first  +m_params.co2_range.second)/2.0; 
-    lll_tensor_run_input.env_en_bit  = 0xff;
-    lll_tensor_run_input.ml_run_sta  = 1;
-    lll_tensor_run_input.env_target[ENV_TEMP] =temp_target;
-    lll_tensor_run_input.env_target[ENV_HUMID]=humid_target;
-    lll_tensor_run_input.env_target[ENV_LIGHT]=light_target;
-    lll_tensor_run_input.env_target[ENV_CO2]  =co2_target;
-    devs_type_list[1].real_type = lll_tensor_run_input.dev_type[1] =loadType_heater ;
-    devs_type_list[2].real_type = lll_tensor_run_input.dev_type[2]= loadType_A_C;
-    devs_type_list[3].real_type = lll_tensor_run_input.dev_type[3]= loadType_humi ;
-    devs_type_list[4].real_type = lll_tensor_run_input.dev_type[4]= loadType_dehumi;
-    devs_type_list[5].real_type = lll_tensor_run_input.dev_type[5]= loadType_water_pump;
-    devs_type_list[6].real_type = lll_tensor_run_input.dev_type[6]= loadType_growLight;
-    devs_type_list[7].real_type = lll_tensor_run_input.dev_type[7]= loadType_co2_generator;
-    devs_type_list[8].real_type = lll_tensor_run_input.dev_type[8]= loadType_pump;
+    float temp_target  =(m_range_params.temp_range.first  + m_range_params.temp_range.second)/2.0;
+    float humid_target =(m_range_params.humid_range.first + m_range_params.humid_range.second)/2.0;
+    float light_target =(m_range_params.light_range.first + m_range_params.light_range.second)/2.0;
+    float co2_target   =(m_range_params.co2_range.first   + m_range_params.co2_range.second)/2.0; 
+    pid_input.env_en_bit  = (1 << ENV_TEMP) | (1 << ENV_HUMID)| (1 << ENV_VPD);
+    pid_input.ml_run_sta  = 1;
+    pid_input.env_target[ENV_TEMP] =temp_target;
+    pid_input.env_target[ENV_HUMID]=humid_target;
+    pid_input.env_target[ENV_LIGHT]=light_target;
+    pid_input.env_target[ENV_CO2]  =co2_target;
+    devs_type_list[1].real_type = pid_input.dev_type[1] =loadType_heater ;
+    devs_type_list[2].real_type = pid_input.dev_type[2]= loadType_A_C;
+    devs_type_list[3].real_type = pid_input.dev_type[3]= loadType_humi ;
+    devs_type_list[4].real_type = pid_input.dev_type[4]= loadType_dehumi;
+    devs_type_list[5].real_type = pid_input.dev_type[5]= loadType_water_pump;
+    devs_type_list[6].real_type = pid_input.dev_type[6]= loadType_growLight;
+    devs_type_list[7].real_type = pid_input.dev_type[7]= loadType_co2_generator;
+    devs_type_list[8].real_type = pid_input.dev_type[8]= loadType_pump;
     for(int port=1;port<PORT_CNT;port++)
     {    
-        lll_tensor_run_input.is_switch[port] = 1;
-    }
-    pid_run_output_st out_speed = pid_run_rule( &lll_tensor_run_input );
+        pid_input.is_switch[port] = 1;
+    } 
+	 
+    pid_run_output_st out_speed = pid_run_rule( &pid_input );
     for(int port=1;port<= ACTION_CNT;port++)
     {    
         ml_pid_out_speed.speed[port] += out_speed.speed[port];
         action[port-1]=ml_pid_out_speed.speed[port];
         set_plant_action(action);
     }
-    
+    return;
+}
+
+
+esp_err_t  lll_tensor_run(int type) 
+{ 
+    catch_tensor_dim(type); 
     int ret=load_up_input_seq(classifier_params.infer_case,classifier_params.seq_len); 
      
     if(ret==0)

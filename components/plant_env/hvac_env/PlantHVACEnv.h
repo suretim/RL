@@ -9,18 +9,20 @@
 #include <functional>
 #include "version.h"
 #include "math.h"
-struct ModeParam {
-    std::pair<float,float> temp_range;
-    std::pair<float,float> humid_range;
-    std::pair<float,float> soil_range;
-    std::pair<float,float> light_range;
-    std::pair<float,float> co2_range;
-    std::pair<float,float> ph_range;
-    std::pair<float,float> vpd_range;
+#include "ml_pid.h" 
+// struct ModeParam {
+//     std::pair<float,float> temp_range;
+//     std::pair<float,float> humid_range;
+//     std::pair<float,float> soil_range;
+//     std::pair<float,float> light_range;
+//     std::pair<float,float> co2_range;
+//     std::pair<float,float> ph_range;
+//     std::pair<float,float> vpd_range;
     
-    float soft_label_bonus;   
-    float penalty;   
-};
+//     float soft_label_bonus;   
+//     float penalty;   
+// };
+
 // 前向声明
 class HVACEncoder;
 class PrototypeClassifierSimple;
@@ -68,7 +70,7 @@ public:
      
     PlantHVACEnv() {
         mode_params = {
-            {"growing",  ModeParam{{22,28},{0.50f,0.70f},{0.25f, 0.35f},{300,600},{400,800} ,{5.8f,6.5f},{0.8f,1.2f}, 0.2f, -0.1f}},
+            {"growing",  ModeParam{{22,28},{0.40f,0.70f},{0.25f, 0.35f},{300,600},{400,800} ,{5.8f,6.5f},{0.8f,1.2f}, 0.2f, -0.1f}},
             {"flowering",ModeParam{{20,26},{0.40f,0.60f},{0.30f, 0.40f},{500,800},{600,1000},{5.8f,6.3f},{1.0f,1.5f}, 0.3f, -0.15f}},
             {"seeding",  ModeParam{{24,30},{0.50f,0.70f},{0.20f, 0.30f},{200,400},{400,600} ,{5.5f,6.2f},{0.4f,0.8f},0.1f, -0.05f}}
         };

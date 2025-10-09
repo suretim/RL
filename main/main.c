@@ -454,6 +454,7 @@ void main_task(void *pvParameters)
 			run_per100ms_2();
 			run_per100ms();	
 			main_flash_heart();  
+			pid_run();//tim modify
 			flag_100ms++;
 		    //if (  flag_100ms>=100 && flask_state_get_flag[FLASK_OPTI_MODEL]==SPIFFS_MODEL_SAVED )
 			if (  flag_100ms>=100   )
