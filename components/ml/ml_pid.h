@@ -39,6 +39,13 @@
 #define ENV_V				2  
 #define NUM_ENV_TH		    2 //t,h  
 
+#define NUM_ENV_EXT_TYPE	5  //w,l,c,p,e
+#define ENV_W				3 
+#define ENV_L				4 
+#define ENV_C				5  
+#define ENV_P				6
+#define ENV_E				7
+  
 #define NUM_DEV_FEA         (NUM_DEV_TYPE*NUM_ENVDEV)
 #define NUM_KEY_FEA         (NUM_PTH_VP*NUM_ENV_TH)
 #define NUM_SPK			    (1<<(NUM_PTH_VP+NUM_ENV_TH)) 
@@ -121,8 +128,8 @@
 
 //#define c_nh_nodes1        	(NUM_DEV_KPID_OUT+NUM_ENVDEV+1)
 #define c_nh_nodes1        12
+#define DIM 				NUM_ENVDEV       
 #define c_no_nodes      	(NUM_DEV_KPID_OUT+NUM_ENVDEV)
-#define DIM 				NUM_ENVDEV        
   
 
 #define c_ret_ok            	0
@@ -204,13 +211,13 @@ typedef struct{
     uint8_t ml_run_sta;
     uint8_t dev_type[PORT_CNT];
     uint8_t is_switch[PORT_CNT];
-    int16_t max[PORT_CNT];
-    int16_t min[PORT_CNT];
+    float max[PORT_CNT];
+    float min[PORT_CNT];
 
-    int16_t env_value_cur[ENV_CNT];
-    int16_t env_target[ENV_CNT];
-    int16_t env_min[ENV_CNT];
-    int16_t env_max[ENV_CNT];
+    float env_value_cur[ENV_CNT];
+    float env_target[ENV_CNT];
+    float env_min[ENV_CNT];
+    float env_max[ENV_CNT];
 
     uint32_t env_en_bit;    //控制环境使能位
 }pid_run_input_st;
@@ -294,7 +301,8 @@ struct pso_optimizer
 	//float			h_buf[NUM_PARTICLES];
 	// float			v_buf[60];
 	unsigned int	 buf_cnt, test_req;
-	unsigned int swarm_idx,global_idx , step;
+	unsigned int swarm_idx , step;
+    //unsigned int global_idx;
 	uint8 dev_token;	
 	double   v_wight ;	// w:惯性权重
 	float  global_bestval, global_position[DIM]; 
@@ -330,12 +338,11 @@ struct st_bp_pid_th
     unsigned int   	dropout_oh[c_no_nodes][c_nh_nodes1];  
 	double 			ho_sigmoid_out[c_no_nodes];
 	float           update_rate;
-	double			e[3][NUM_ENV_TYPE],s[NUM_ENV_TYPE],f[2][NUM_ENV_TYPE]; 
+	double			e[3][NUM_ENV_TYPE],s[NUM_ENV_TYPE],f[2][NUM_ENV_TYPE+NUM_ENV_EXT_TYPE]; 
 	double 			pid_o[NUM_ENVDEV] ; 
     unsigned int  tmr; 
     double du_gain[NUM_ENVDEV];  //ugain delta
-    unsigned char dev_token;
-    //double tu ;  //tgain delta
+    unsigned char dev_token; 
     u_int8_t		u_gear_tmr[NUM_ENVDEV]; 
 	//float 			u_gain_tmr[NUM_ENVDEV]; 
 	float t_target, t_feed, t_outside;
@@ -353,7 +360,8 @@ struct st_bp_pid_th
 
 
 extern pid_run_output_st ml_pid_out_speed;
-extern ModeParam m_range_params;
+extern ModeParam plant_range_params;
+extern ModeParam plant_limit_params;
 #ifdef __cplusplus
 }
 #endif

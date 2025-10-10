@@ -254,15 +254,15 @@ extern s16 float_round_up_to_integer(float raw_num);
 //	保留精度 0.1
 s16 ml_get_cur_temp()
 {
-	if (is_temp_unit_f())
-	    return	float_round_up_to_integer(g_sensors.temp_f.real_val_float)/10;
-	else
+	//if (is_temp_unit_f())
+	//    return	float_round_up_to_integer(g_sensors.temp_f.real_val_float)/10;
+	//else
 		return float_round_up_to_integer(g_sensors.temp_c.real_val_float)/10;
 }
 //	保留精度 0.1
 s16 ml_get_target_humid()
 {
-	return ( pid_run_input.env_target[ENV_HUMID]);
+	return ( pid_run_input.env_target[ENV_HUMID]*100);
 }
 //	保留精度 0.1
 s16 ml_get_target_temp()
@@ -274,9 +274,10 @@ s16 ml_get_target_temp()
 
 
 
-s16 ml_get_cur_humid()
+s16  ml_get_cur_humid()
 {
-	return float_round_up_to_integer(g_sensors.humid.real_val_float)/10;
+	 return float_round_up_to_integer(g_sensors.humid.real_val_float)/10;
+	 
 }
 
 //	1PPM
@@ -298,7 +299,8 @@ s16 ml_get_cur_vpd()
 
 s16 ml_get_outside_temp()
 {
-	return (get_real_zonetemp(is_temp_unit_f())/10);
+	//return (get_real_zonetemp(is_temp_unit_f())/10);
+	return (get_real_zonetemp(true)/10);
 }
 
 s16 ml_get_outside_humid()

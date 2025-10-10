@@ -95,11 +95,76 @@ static void relu_derivative_from_net(double *dx, double *net, s16 len) {
     }
 }
 static void tanh_derivative_from_act(double *dx, double *act, s16 len) {
+	static double dvx[c_no_nodes];
     for (s16 i = 0; i < len; i++) {
         dx[i] = 1.0 - act[i] * act[i]; // act = tanh(net)
+		//dx[i]=act[i]>0?act[i]-dvx[i]:0;	
+		//dvx[i] = act[i];
         if (float_chk(dx[i]) == c_ret_nk) dx[i] = 0.0;
     }
 }
+static void sigmoid_o(double *dx,double *net,s16 len) 
+{	
+	for(s16 o = 0; o < len; o++) 
+	{
+		dx[o]=net[o]>0?1:0;
+		//dx[o]=1.0 / (1.0+ pid_exp(-x[o]));
+		//dx[o]=(pid_exp(x[o]) - pid_exp(-x[o])) / (pid_exp(x[o]) + pid_exp(-x[o]));
+		if(float_chk(dx[o]) == c_ret_nk)
+			dx[o]=0.0f;  
+	}
+    return ;//(pid_exp(x) - pid_exp(-x)) / (pid_exp(x) + pid_exp(-x));
+	//return 1.0 / (1.0+pid_exp(-x) );//sigmoid(x);
+
+}
+static void sigmoid_h(double *dx,double *x,s16 len) 
+{	
+	for(s16 o = 0; o < len; o++) 
+	{
+		dx[o]=x[o]>0?1:0;		
+		//dx[o]=1.0 / (1.0+ pid_exp(-x[o]));
+		//dx[o]=(pid_exp(x[o]) - pid_exp(-x[o])) / (pid_exp(x[o]) + pid_exp(-x[o]));
+		if(float_chk(dx[o]) == c_ret_nk)
+			dx[o]=0.0f;  
+	}
+    return ;//(pid_exp(x) - pid_exp(-x)) / (pid_exp(x) + pid_exp(-x));
+	//return 1.0 / (1.0+pid_exp(-x) );//sigmoid(x);
+
+} 
+// 激活函数求导  
+static void  derivative_o(double *dx,double *x,s16 len) 
+{
+	static double dvx[c_no_nodes];
+
+	for(s16 o = 0; o < len; o++)
+	{ 
+		dx[o]=x[o]>0?x[o]-dvx[o]:0;	
+		dvx[o]=x[o];					
+		//dx[o] = 2.0 / ((pid_exp(x[o]) + pid_exp(-x[o])) * (pid_exp(x[o]) + pid_exp(-x[o])));
+		//dx[o] =  x[o] * (1.0-x[o] );
+		//dx[o]=1.0-x[o]*x[o];
+		if(float_chk(dx[o]) == c_ret_nk)
+			dx[o]=0.0f;    	 
+	}
+    //return x / (1.0-x );
+	return;
+}
+static void  derivative_tanh(double *dx,double *x,s16 len) 
+{
+	static double dvx[c_no_nodes];
+	for(s16 o = 0; o < len; o++)
+	{
+		dx[o]=x[o]>0?x[o]-dvx[o]:0;	
+		dvx[o]=x[o];			
+		//dx[o] = 4.0 / ((pid_exp(x[o]) + pid_exp(-x[o])) * (pid_exp(x[o]) + pid_exp(-x[o]))); 
+		//dx[o] =  x[o] * (1.0-x[o] );
+		//dx[o]=1.0-x[o]*x[o];
+		if(float_chk(dx[o]) == c_ret_nk)
+			dx[o]=0.0f;    	 
+	}
+    return  ;
+} 
+
 
 static unsigned int tick_cmp(int tmr, int tmo)
 {  
@@ -112,7 +177,7 @@ void bp_pid_th_init(void)
 
 	memset(&bp_pid_th, 0, sizeof(struct st_bp_pid_th));
 	 
-	bp_pid_th.tmr = 4000;//60000;
+	bp_pid_th.tmr =  60000;
 	bp_pid_th.dev_token = 0;
 	 
 	for(h= 0; h< NUM_ENV_TYPE; h++)
@@ -165,79 +230,21 @@ static double pid_exp(double x)
 	else if(x < -708) x = -708;
 	return exp(x);	
 }
-static void sigmoid_o(double *dx,double *x,s16 len) 
-{	
-	for(s16 o = 0; o < len; o++) 
-	{
-		dx[o]=x[o]>0?x[o]:0;
-		//dx[o]=1.0 / (1.0+ pid_exp(-x[o]));
-		//dx[o]=(pid_exp(x[o]) - pid_exp(-x[o])) / (pid_exp(x[o]) + pid_exp(-x[o]));
-		if(float_chk(dx[o]) == c_ret_nk)
-			dx[o]=0.0f;  
-	}
-    return ;//(pid_exp(x) - pid_exp(-x)) / (pid_exp(x) + pid_exp(-x));
-	//return 1.0 / (1.0+pid_exp(-x) );//sigmoid(x);
-
-}
-static void sigmoid_h(double *dx,double *x,s16 len) 
-{	
-	for(s16 o = 0; o < len; o++) 
-	{
-		dx[o]=x[o]>0?x[o]:0;		
-		//dx[o]=1.0 / (1.0+ pid_exp(-x[o]));
-		//dx[o]=(pid_exp(x[o]) - pid_exp(-x[o])) / (pid_exp(x[o]) + pid_exp(-x[o]));
-		if(float_chk(dx[o]) == c_ret_nk)
-			dx[o]=0.0f;  
-	}
-    return ;//(pid_exp(x) - pid_exp(-x)) / (pid_exp(x) + pid_exp(-x));
-	//return 1.0 / (1.0+pid_exp(-x) );//sigmoid(x);
-
-} 
-// 激活函数求导  
-static void  derivative_o(double *dx,double *x,s16 len) 
-{
-	static double dvx[c_no_nodes];
-
-	for(s16 o = 0; o < len; o++)
-	{ 
-		dx[o]=x[o]>0?x[o]-dvx[o]:0;	
-		dvx[o]=x[o];					
-		//dx[o] = 2.0 / ((pid_exp(x[o]) + pid_exp(-x[o])) * (pid_exp(x[o]) + pid_exp(-x[o])));
-		//dx[o] =  x[o] * (1.0-x[o] );
-		//dx[o]=1.0-x[o]*x[o];
-		if(float_chk(dx[o]) == c_ret_nk)
-			dx[o]=0.0f;    	 
-	}
-    //return x / (1.0-x );
-	return;
-}
-static void  derivative_tanh(double *dx,double *x,s16 len) 
-{
-	static double dvx[c_no_nodes];
-	for(s16 o = 0; o < len; o++)
-	{
-		dx[o]=x[o]>0?x[o]-dvx[o]:0;	
-		dvx[o]=x[o];			
-		//dx[o] = 4.0 / ((pid_exp(x[o]) + pid_exp(-x[o])) * (pid_exp(x[o]) + pid_exp(-x[o]))); 
-		//dx[o] =  x[o] * (1.0-x[o] );
-		//dx[o]=1.0-x[o]*x[o];
-		if(float_chk(dx[o]) == c_ret_nk)
-			dx[o]=0.0f;    	 
-	}
-    return  ;
-} 
-static unsigned int bp_pid_th_exec(void)//float set0, float feed0, float set1, float feed1, float set2, float feed2 ) 
+static unsigned int bp_pid_train(void)//float set0, float feed0, float set1, float feed1, float set2, float feed2 ) 
 {
 	double			dx=0; 
 	unsigned int	i=0,  h=0, o=0;
     double          i_pid[NUM_ENV_IN];  
-	bp_pid_th.s[ENV_T]    = pid_map(bp_pid_th.t_target,  m_range_params.temp_range.first, m_range_params.temp_range.second, 0, 1);
-	bp_pid_th.f[0][ENV_T] = pid_map(bp_pid_th.t_feed,    m_range_params.temp_range.first, m_range_params.temp_range.second, 0, 1);
-	bp_pid_th.s[ENV_H]    = pid_map(bp_pid_th.h_target,  m_range_params.humid_range.first, m_range_params.humid_range.second, 0, 1);
-	bp_pid_th.f[0][ENV_H] = pid_map(bp_pid_th.h_feed,    m_range_params.humid_range.first, m_range_params.humid_range.second, 0, 1);    
-	bp_pid_th.s[ENV_V]    = pid_map(bp_pid_th.v_target,  m_range_params.vpd_range.first, m_range_params.vpd_range.second , 0, 1);
-	bp_pid_th.f[0][ENV_V] = pid_map(bp_pid_th.v_feed,    m_range_params.vpd_range.first, m_range_params.vpd_range.second , 0, 1); 
-	//bp_pid_dbg(" set_value_2=%f, feed_value_2=%f  \r\n",set_value_2,feed_value_2);  
+	bp_pid_th.s[ENV_T]    = pid_map(bp_pid_th.t_target,  plant_limit_params.temp_range.first, plant_limit_params.temp_range.second, 0, 1);
+	bp_pid_th.f[0][ENV_T] = pid_map(bp_pid_th.t_feed,    plant_limit_params.temp_range.first, plant_limit_params.temp_range.second, 0, 1);
+	bp_pid_th.s[ENV_H]    = pid_map(bp_pid_th.h_target,  plant_limit_params.humid_range.first, plant_limit_params.humid_range.second, 0, 1);
+	bp_pid_th.f[0][ENV_H] = pid_map(bp_pid_th.h_feed,    plant_limit_params.humid_range.first, plant_limit_params.humid_range.second, 0, 1);    
+	bp_pid_th.s[ENV_V]    = pid_map(bp_pid_th.v_target,  plant_limit_params.vpd_range.first, plant_limit_params.vpd_range.second , 0, 1);
+	bp_pid_th.f[0][ENV_V] = pid_map(bp_pid_th.v_feed,    plant_limit_params.vpd_range.first, plant_limit_params.vpd_range.second , 0, 1); 
+	
+	//bp_pid_dbg(" bp_pid_th.t_target =%f bp_pid_th.h_target=%f, bp_pid_th.v_target=%f  \r\n",bp_pid_th.t_target,bp_pid_th.h_target,bp_pid_th.v_target);  
+	//bp_pid_dbg(" bp_pid_th.t_feed =%f bp_pid_th.h_feed=%f, bp_pid_th.v_feed=%f  \r\n",bp_pid_th.t_feed,bp_pid_th.h_feed,bp_pid_th.v_feed);  
+	//bp_pid_dbg(" plant_limit_params.first =%f plant_limit_params.second=%f \r\n",plant_limit_params.temp_range.first,plant_limit_params.temp_range.second);  
 	for(h = 0; h <c_ni_nodes; h++)
 	{
 		ni_dat[h] =0.0f;
@@ -247,7 +254,8 @@ static unsigned int bp_pid_th_exec(void)//float set0, float feed0, float set1, f
 		bp_pid_th.e[0][h] = bp_pid_th.s[h] - bp_pid_th.f[0][h];		 
 		ni_dat[h*NUM_ENV_TYPEIN+PAR_SET_IN]   = bp_pid_th.s[h];
 		ni_dat[h*NUM_ENV_TYPEIN+PAR_FED_IN]   = bp_pid_th.f[0][h];
-		ni_dat[h*NUM_ENV_TYPEIN+PAR_DEL_IN]   = bp_pid_th.e[0][h];	 
+		ni_dat[h*NUM_ENV_TYPEIN+PAR_DEL_IN]   = bp_pid_th.e[0][h];	
+		//bp_pid_dbg(" ni_dat[%d]= %.2f \r\n",h*NUM_ENV_TYPEIN+PAR_SET_IN,ni_dat[h*NUM_ENV_TYPEIN+PAR_SET_IN]); 
 	} 
 	double prev_global_best = pso.global_bestval; 
  	current_mae=update_particles();  
@@ -255,7 +263,9 @@ static unsigned int bp_pid_th_exec(void)//float set0, float feed0, float set1, f
 	{ 
 		ni_dat[NUM_ENV_IN+h] =pid_map(pso.swarm[pso.swarm_idx].velocity[h]  + 100.0*(1.0- (0.5* (float)rand() / RAND_MAX)),  c_pid_ptch_min, c_pid_ptch_max, 0, 1);
 		ni_dat[NUM_ENV_IN+NUM_ENVDEV+h]=(float)bp_pid_th.u_gear_tmr[h]/10.0f  + 0.1*(1.0- (0.5* (float)rand() / RAND_MAX)); 
- 	} 	 
+ 	 	 
+		//bp_pid_dbg(" ni_dat[%d]= %.2f \r\n",NUM_ENVDEV+h,ni_dat[h]);
+	}
 	for(h = 0; h <( NUM_ENV_TYPE); h++)
 	{	i_pid  [h*NUM_ENV_KPID+ENV_KP]   = bp_pid_th.e[0][h] -   bp_pid_th.e[1][h];
 		i_pid  [h*NUM_ENV_KPID+ENV_KI]   = bp_pid_th.e[0][h];
@@ -266,37 +276,101 @@ static unsigned int bp_pid_th_exec(void)//float set0, float feed0, float set1, f
 		bp_pid_th.e [2][h]  =  bp_pid_th.e [1][h];
 		bp_pid_th.e [1][h]  =  bp_pid_th.e [0][h]; 
 	} 
-	sigmoid_o(bp_pid_th.ho_sigmoid_out,net_oh_dat,c_no_nodes); 
+	
+  
+	for(h = 0; h < c_nh_nodes0; h++)
+	{
+		net_ih_dat[h] = 0.0f;
+		for(i = 0; i < c_ni_nodes; i++)
+		{
+			net_ih_dat[h] += ni_dat[i] * bp_pid_th.wt_nh_ni[h][i];
+		}  
+		//bp_pid_dbg(" net_ih_dat= %.2f \r\n",net_ih_dat[h]);
+	}
+    sigmoid_h(ih_sigmoid_out,net_ih_dat,c_nh_nodes0);
+	for(h = 0; h < c_nh_nodes1; h++)
+	{
+		net_hh_dat[h] = 0.0f;
+		for(i = 0; i <  c_nh_nodes0; i++)
+		{
+			if(bp_pid_th.dropout_hh[h][i] == false)
+				net_hh_dat[h] +=  ih_sigmoid_out[i] * bp_pid_th.wt_nh_nh[h][i];	
+			else
+				bp_pid_th.wt_nh_nh[h][i]=0; 
+		}
+	}
+	sigmoid_h(hh_sigmoid_out,net_hh_dat,c_nh_nodes1);
+	for(h = 0; h < c_no_nodes; h++)
+	{
+		net_oh_dat[h] = 0.0f;
+		for(i = 0; i <  c_nh_nodes1; i++)
+		{
+			//if(bp_pid_th.dropout_hh[h][i] == false)
+				net_oh_dat[h] +=  hh_sigmoid_out[i] * bp_pid_th.wt_no_nh[h][i];	
+			//else
+			//	bp_pid_th.wt_no_nh[h][i]=0;
+
+		}
+	 	//bp_pid_dbg(" net_oh_dat= %.2f \r\n",net_oh_dat[h]);
+	} 
+    sigmoid_o(bp_pid_th.ho_sigmoid_out,net_oh_dat,c_no_nodes); 
 	for(h = 0; h < NUM_ENV_TYPE; h++)
 	{
-		bp_pid_th.du_gain[h*NUM_UPDOWN+ENV_UP]    =bp_pid_th.ho_sigmoid_out[h*NUM_ENV_KPID+ENV_KP] *i_pid[h*NUM_ENV_KPID+ENV_KP]//*pso.swarm[pso.swarm_idx].position[h] //+pso.swarm[pso.swarm_idx].velocity[h]
-		                					  +bp_pid_th.ho_sigmoid_out[h*NUM_ENV_KPID+ENV_KI]*i_pid[h*NUM_ENV_KPID+ENV_KI]
-						  					  +bp_pid_th.ho_sigmoid_out[h*NUM_ENV_KPID+ENV_KD]*i_pid[h*NUM_ENV_KPID+ENV_KD];
+		//*pso.swarm[pso.swarm_idx].position[h] //+pso.swarm[pso.swarm_idx].velocity[h]
+		bp_pid_th.du_gain[h*NUM_UPDOWN+ENV_UP]=bp_pid_th.ho_sigmoid_out[h*NUM_ENV_KPID+ENV_KP] *i_pid[h*NUM_ENV_KPID+ENV_KP]
+		                					  +bp_pid_th.ho_sigmoid_out[h*NUM_ENV_KPID+ENV_KI] *i_pid[h*NUM_ENV_KPID+ENV_KI]
+						  					  +bp_pid_th.ho_sigmoid_out[h*NUM_ENV_KPID+ENV_KD] *i_pid[h*NUM_ENV_KPID+ENV_KD];
 		bp_pid_th.du_gain[h*NUM_UPDOWN+ENV_DOWN]= - bp_pid_th.du_gain[h*NUM_UPDOWN+ENV_UP];
+		
 	}
-#if 1
-	if (pso.global_bestval < prev_global_best) {
+	bp_pid_dbg(" du_gain= (%.2f,%.2f,%.2f)\r\n",bp_pid_th.du_gain[0],bp_pid_th.du_gain[2],bp_pid_th.du_gain[4]);
+	derivative_o(d_hide_o,bp_pid_th.ho_sigmoid_out,c_no_nodes ); 
+	derivative_tanh(d_hide1,hh_sigmoid_out,c_nh_nodes1 );
+	derivative_tanh(d_hide0,ih_sigmoid_out,c_nh_nodes0 );
+	
+	bp_pid_th.update_rate=0.001;
+	static double desired_out_static[c_no_nodes];
+	double *desired_out = desired_out_static;
+	double Etotal=0.0f;//pso.mae_buf[pso.swarm_idx][ENV_T]+pso.mae_buf[pso.swarm_idx][ENV_H];
+	for(h=0;h<NUM_ENV_TYPE;h++)
+    {
+		Etotal +=bp_pid_th.e[0][h];
+	}	 
+	for(o = 0; o < c_nh_nodes1  ; o++)
+    {
+		nh_delta1[o] = 0;
+		for(h = 0; h < c_no_nodes; h++)
+        {
+          //nh_delta1[o] += no_delta[h] *bp_pid_th.wt_no_nh[h][o] * d_hide1[o];
+          nh_delta1[o] += (Etotal *bp_pid_th.wt_no_nh[h][o] * d_hide1[o]);
+        }
+		//bp_pid_dbg(" nhh =(%.6f,%.3f,%.3f,%.3f)\r\n", nh_delta1[o], d_hide_o[o] ,net_oh_dat[o],bp_pid_th.wt_no_nh[0][o] );
+    } 
+#if 1	
+	if (true){//pso.global_bestval < prev_global_best) {
 		// 1) 準備 desired_out（監督目標）——把 pso.global_position 映射到網路輸出長度
 		//    假定 c_no_nodes 為網路輸出的大小；pso.global_position 長度為 DIM
 		//    若 DIM >= c_no_nodes，採用前 c_no_nodes 元素；若 DIM < c_no_nodes，重複/填 0
-		static double desired_out_static[c_no_nodes];
-		double *desired_out = desired_out_static;
+		 	
 		int i_map;
 		for (i_map = 0; i_map < c_no_nodes; i_map++) {
-			if (i_map < DIM) {
+			if (i_map < NUM_DEV_KPID_OUT) {
+				desired_out[i_map] = Etotal;
+			}
+			else{
 				// pso.global_position 可能範圍很大，需正規化到網路輸出 activation 範圍(例如 0..1)
 				// 假設 pso.global_position 已是可用的尺度，否則用 pid_map 做 min-max mapping
-				desired_out[i_map] = (double)pso.global_position[i_map]; // 若需要，可再 normalize
-			} else {
-				desired_out[i_map] = 0.0;
+				desired_out[i_map] =  pso.global_position[i_map-NUM_DEV_KPID_OUT]; // 若需要，可再 normalize
 			}
 		}
+		bp_pid_dbg(" Etotal,desired_out[NUM_DEV_KPID_OUT] =(%.3f,%.6f)\r\n",Etotal, desired_out[NUM_DEV_KPID_OUT]);
 
+		//pso.swarm[pso.swarm_idx].position[d]
 		// OPTIONAL: 如果 desired_out 需要映射到 activation 範圍（0..1），請啟用下面的範例 normalizer
 		for (i_map = 0; i_map < DIM; i_map++) {
-		    desired_out[i_map] = pid_map((float)desired_out[i_map],pso_pos_min_tab[i_map],pso_pos_max_tab[i_map], 0.0f, 1.0f);
+		    desired_out[i_map+NUM_DEV_KPID_OUT] = pid_map((float)desired_out[i_map+NUM_DEV_KPID_OUT],pso_pos_min_tab[i_map],pso_pos_max_tab[i_map], 0.0f, 1.0f);
 		}
-		
+
 		// 2) 正確計算導數（使用 pre-activation net_oh_dat、net_hh_dat、net_ih_dat）
 		//    假設輸出層使用 ReLU（你的 sigmoid_o 其實是 ReLU）
 		relu_derivative_from_net(d_hide_o, net_oh_dat, c_no_nodes);
@@ -308,13 +382,12 @@ static unsigned int bp_pid_th_exec(void)//float set0, float feed0, float set1, f
 		//    no_delta[h] = (target - output) * derivative(output_net)
 		static double no_delta_static[c_no_nodes];
 		double *no_delta = no_delta_static;
+		sigmoid_o(desired_out,desired_out,c_no_nodes);
 		for (unsigned int h = 0; h < (unsigned int)c_no_nodes; h++) {
 			double y_pred   = bp_pid_th.ho_sigmoid_out[h];
-			double y_target = sigmoid(desired_out[h]);  // 若 target 未归一化
-			double err_h = y_target - y_pred;
-			no_delta[h] = err_h * d_hide_o[h];  // d_hide_o 为 ReLU/Sigmoid 导数
-
-
+			 
+			double err_h = desired_out[h] - y_pred;
+			no_delta[h] = err_h * d_hide_o[h];  // d_hide_o 为 ReLU/Sigmoid 导数  
 			//double err_h = desired_out[h] - bp_pid_th.ho_sigmoid_out[h];
 			//no_delta[h] = err_h * d_hide_o[h];
 			if (float_chk(no_delta[h]) == c_ret_nk) no_delta[h] = 0.0;
@@ -371,66 +444,13 @@ static unsigned int bp_pid_th_exec(void)//float set0, float feed0, float set1, f
 				bp_pid_th.wt_nh_ni[h][i] += delta_w;
 			}
 		}
-
+			
 		// （可選）把部分更新寫入 log，或限制權重大小避免發散
 		// for safety: clip weights to reasonable range
 		// for (h...) for(i...) bp_pid_th.wt... = clamp(bp_pid_th.wt..., -WMAX, WMAX);
 	}
-#else	 
+#else	
 	
-	for(h = 0; h < c_nh_nodes0; h++)
-	{
-		net_ih_dat[h] = 0.0f;
-		for(i = 0; i < c_ni_nodes; i++)
-		{
-			net_ih_dat[h] += ni_dat[i] * bp_pid_th.wt_nh_ni[h][i];
-		}  
-	}
-    sigmoid_h(ih_sigmoid_out,net_ih_dat,c_nh_nodes0);
-	for(h = 0; h < c_nh_nodes1; h++)
-	{
-		net_hh_dat[h] = 0.0f;
-		for(i = 0; i <  c_nh_nodes0; i++)
-		{
-			if(bp_pid_th.dropout_hh[h][i] == false)
-				net_hh_dat[h] +=  ih_sigmoid_out[i] * bp_pid_th.wt_nh_nh[h][i];	
-			else
-				bp_pid_th.wt_nh_nh[h][i]=0; 
-		}
-	}
-	sigmoid_h(hh_sigmoid_out,net_hh_dat,c_nh_nodes1);
-	for(h = 0; h < c_no_nodes; h++)
-	{
-		net_oh_dat[h] = 0.0f;
-		for(i = 0; i <  c_nh_nodes1; i++)
-		{
-			//if(bp_pid_th.dropout_hh[h][i] == false)
-				net_oh_dat[h] +=  hh_sigmoid_out[i] * bp_pid_th.wt_no_nh[h][i];	
-			//else
-			//	bp_pid_th.wt_no_nh[h][i]=0;
-
-		}
-	// 	bp_pid_dbg(" nh_dat= %.2f \r\n",net_hh_dat[i]);
-	} 
-   
-	derivative_o(d_hide_o,bp_pid_th.ho_sigmoid_out,c_no_nodes ); 
-	derivative_tanh(d_hide1,hh_sigmoid_out,c_nh_nodes1 );
-	derivative_tanh(d_hide0,ih_sigmoid_out,c_nh_nodes0 );
-	double Etotal=0.0f;//pso.mae_buf[pso.swarm_idx][ENV_T]+pso.mae_buf[pso.swarm_idx][ENV_H];
-	for(h=0;h<NUM_ENV_TYPE;h++)
-    {
-		Etotal +=bp_pid_th.e[0][h];
-	}	 
-	for(o = 0; o < c_nh_nodes1  ; o++)
-    {
-		nh_delta1[o] = 0;
-		for(h = 0; h < c_no_nodes; h++)
-        {
-          //nh_delta1[o] += no_delta[h] *bp_pid_th.wt_no_nh[h][o] * d_hide1[o];
-          nh_delta1[o] += (Etotal *bp_pid_th.wt_no_nh[h][o] * d_hide1[o]);
-        }
-		//bp_pid_dbg(" nhh =(%.6f,%.3f,%.3f,%.3f)\r\n", nh_delta1[o], d_hide_o[o] ,net_oh_dat[o],bp_pid_th.wt_no_nh[0][o] );
-    } 
 	for(o = 0; o < c_nh_nodes0 ; o++)
 	{
 		nh_delta0[o] = 0;
@@ -440,7 +460,6 @@ static unsigned int bp_pid_th_exec(void)//float set0, float feed0, float set1, f
 		}
 		//bp_pid_dbg("nhi =(%.6f,%.6f,%.6f,%.6f)\r\n", nh_delta0[o], d_hide1[o] ,net_hh_dat[o],bp_pid_th.wt_nh_nh[0][o] );
 	}   
-	bp_pid_th.update_rate=0.001;
     //权值更新
     for(h = 0; h < c_no_nodes; h++) 
 	{ 
@@ -462,8 +481,9 @@ static unsigned int bp_pid_th_exec(void)//float set0, float feed0, float set1, f
 		{  
             bp_pid_th.wt_nh_ni[h][i] +=  bp_pid_th.update_rate * nh_delta0[h]  * d_hide0[h]* ni_dat[i]; 
         }
-    } 
-#endif    
+    }  
+#endif	
+	
 	return c_ret_ok;
 }  
 unsigned int * pso_latin_permutation(void)
@@ -496,10 +516,10 @@ void pso_init(void)
 	pso.v_wight = 1e3; 
 	unsigned int 	p, *perm ;
 	float			interval, v_max; 
-perm=pso_latin_permutation();
-//bp_pid_dbg("perm[%d][%d][%d] \r\n",perm[0],perm[10],perm[20] );
-//i=0x03&0x5&(1<<1);
-//bp_pid_dbg("^(?!.*svd).+(\n|$)\r\n");
+	perm=pso_latin_permutation();
+	//bp_pid_dbg("perm[%d][%d][%d] \r\n",perm[0],perm[10],perm[20] );
+	//i=0x03&0x5&(1<<1);
+	//bp_pid_dbg("^(?!.*svd).+(\n|$)\r\n");
 	//svd_init();
 	// for(i = 0; i < 10; i++)
 	// {
@@ -540,13 +560,10 @@ perm=pso_latin_permutation();
 
 	for(i = 0; i < NUM_PARTICLES; i++)
 	{
-         
 		for(d = 0; d < DIM; d++){
 			pso.swarm[i].v_idx[d]=0;
-			//pso.swarm[i].position[d] = pso_pos_min_tab[d] + (i-1)*(pso_pos_max_tab[d]-pso_pos_min_tab[d])/NUM_PARTICLES;//pso.swarm[0].position[d];			
 			pso.swarm[i].velocity[d] = 0.0f;// bp_pid_th.u_gain[d]/10.0;			
 		}  
-		
 		//pso.buf_idx[0][i] = 0;
         pso.swarm[i].best_mae = 100.0f;
         memcpy(pso.swarm[i].best_pos, pso.swarm[i].position, sizeof(float) * DIM); 
@@ -640,33 +657,34 @@ void pso_check(double new_mae)  //^(?!.*global_fit).+(\n|$)
 	if(new_mae <  pso.swarm[pso.swarm_idx].best_mae)
 	{  
 		bp_pid_dbg("swarm_fit=(%.3ft,%.3fh,%.3fn\r\n", pso.mae_buf[0][ENV_T], pso.mae_buf[0][ENV_H],pso.swarm[pso.swarm_idx].best_mae );
-		pso.swarm[pso.swarm_idx].best_mae = new_mae;
+		pso.swarm[pso.swarm_idx].best_mae = new_mae + rand() / (float) RAND_MAX * 0.01;
 		memcpy(pso.swarm[pso.swarm_idx].best_pos, pso.swarm[pso.swarm_idx].position, sizeof(float) * DIM);     
-	}	
-	if(new_mae <  pso.global_bestval)
-	{
-		bp_pid_dbg("global_fit=(%.3ft,%.3fh,%.3fg \r\n", pso.mae_buf[0][ENV_T], pso.mae_buf[0][ENV_H],pso.global_bestval );
-		pso.global_bestval = new_mae;
-		pso.global[0].swarm_idx = pso.swarm_idx;
-		for(d = NUM_GLOBAL - 1; d > 0; d--){
-				pso.global[d] = pso.global[d - 1];							
-		}
-		memcpy(pso.global[0].pos, pso.swarm[pso.swarm_idx].position, sizeof(float) * DIM);		
-		for(i = 0; i <DIM; i++)
+	 	
+		if(pso.swarm[pso.swarm_idx].best_mae <  pso.global_bestval)
 		{
-			pso.global_position[i] =0.0f;										 
-			for(d =0; d<NUM_GLOBAL; d++){
-				pso.global_position[i] += (pso.global[d].pos[i]);
+			bp_pid_dbg("global_fit=(%.3ft,%.3fh,%.3fg \r\n", pso.mae_buf[0][ENV_T], pso.mae_buf[0][ENV_H],pso.global_bestval );
+			pso.global_bestval = pso.swarm[pso.swarm_idx].best_mae + rand() / (float) RAND_MAX * 0.01;
+			pso.global[0].swarm_idx = pso.swarm_idx;
+			for(d = NUM_GLOBAL - 1; d > 0; d--){
+					pso.global[d] = pso.global[d - 1];							
 			}
-		}
-		pso.global_idx++;
-		  
-		if(pso.global_idx >=NUM_GLOBAL) {
-			bp_pid_dbg("globlal reset [%d][%d]\r\n",pso.swarm_idx,pso.dev_token );
-			pso.global_idx = 0;
-			pso.dev_token=0;
-			pso.global_bestval=100;
-			pso.test_req = 1;
+			memcpy(pso.global[0].pos, pso.swarm[pso.swarm_idx].position, sizeof(float) * DIM);		
+			for(i = 0; i <DIM; i++)
+			{
+				pso.global_position[i] =0.0f;										 
+				for(d =0; d<NUM_GLOBAL; d++){
+					pso.global_position[i] += (pso.global[d].pos[i]);
+				}
+				pso.global_position[i]/=NUM_GLOBAL;
+			}
+			// pso.global_idx++;			
+			// if(pso.global_idx >=NUM_GLOBAL) {
+			// 	bp_pid_dbg("globlal reset [%d][%d]\r\n",pso.swarm_idx,pso.dev_token );
+			// 	pso.global_idx = 0;
+			// 	pso.dev_token=0;
+			// 	pso.global_bestval=100;
+			// 	pso.test_req = 1;
+			// }
 		}
 	}	
 	#if 1
@@ -685,7 +703,7 @@ void pso_check(double new_mae)  //^(?!.*global_fit).+(\n|$)
 				cur_pos=cur_pos*bp_pid_th.ho_sigmoid_out[NUM_DEV_KPID_OUT+d];
 				fine_velocity =pid_map(cur_pos, c_pid_ptch_min,c_pid_ptch_max,c_pid_ptch_min,c_pid_ptch_max);							 
 				pso.swarm[pso.swarm_idx].position[d]=pid_map(pso.swarm[pso.swarm_idx].position[d]+fine_velocity,  pso_pos_min_tab[d], pso_pos_max_tab[d],pso_pos_min_tab[d], pso_pos_max_tab[d]);
-				bp_pid_dbg("chex [%d][%d](%fp, %.1fv,%.6fg glidx=%d\r\n",pso.swarm_idx,d,pso.swarm[pso.swarm_idx].position[d], fine_velocity ,pso.global_bestval,pso.global_idx  );
+				bp_pid_dbg("chex [%d][%d](%fp, %.1fv,%.6fglobal \r\n",pso.swarm_idx,d,pso.swarm[pso.swarm_idx].position[d], fine_velocity ,pso.global_bestval);
 				 
 			}
 			else
@@ -707,11 +725,11 @@ unsigned char   pso_get_val(void)
 	unsigned int idx=0; 
     float tmp_hvac=0;
 	pso.v_wight = 0.1;
-	target_diff[0][DEV_TU]  = bp_pid_th.t_target-bp_pid_th.t_feed ;
+	target_diff[0][DEV_TU]  =  bp_pid_th.s[ENV_T]-bp_pid_th.f[0][ENV_T] ; //bp_pid_th.t_target-bp_pid_th.t_feed ;
 	target_diff[0][DEV_TD]  = -target_diff[0][DEV_TU];
-	target_diff[0][DEV_HU]  = (bp_pid_th.h_target-bp_pid_th.h_feed);
+	target_diff[0][DEV_HU]  = (bp_pid_th.s[ENV_H]-bp_pid_th.f[0][ENV_H]); //(bp_pid_th.h_target-bp_pid_th.h_feed);
 	target_diff[0][DEV_HD]  = -target_diff[0][DEV_HU];
-	target_diff[0][DEV_VU]  = (bp_pid_th.v_target-bp_pid_th.v_feed)*10.0;
+	target_diff[0][DEV_VU]  =  (bp_pid_th.s[ENV_V]-bp_pid_th.f[0][ENV_V]) ;//(bp_pid_th.v_target-bp_pid_th.v_feed)*10.0;
 	target_diff[0][DEV_VD]  = -target_diff[0][DEV_VU];
 	 
 	for(idx=0;idx<DIM;idx++)
@@ -772,13 +790,13 @@ unsigned char   pso_get_val(void)
 	 	bp_pid_dbg("searching [%d][%d] [0x%x][0x%x]  \r\n", idx,ck,check_time,bp_pid_th.dev_token );
 	 	check_time= ck  ?0:check_time;
 	 }
-	//bp_pid_dbg(" get feed=(%.2f,%.2f) tgt=(%.2f,%.2f) mae=(%.2f,%.2f,%.2f) \r\n" ,bp_pid_th.t_feed,bp_pid_th.h_feed,bp_pid_th.t_target,bp_pid_th.h_target, bp_pid_th.hvac_mae[0], bp_pid_th.hvac_mae[2] ,fitness);
+	bp_pid_dbg("pso_get_val feed=(%.2f,%.2f) tgt=(%.2f,%.2f) \r\n",bp_pid_th.t_feed,bp_pid_th.h_feed,bp_pid_th.t_target,bp_pid_th.h_target);
 	return ck;
 }  
 static double update_particles (void)//float t_target, float t_feed, float h_target, float h_feed, float v_target, float v_feed) //^bp_pid_run.*$\r?\n
 {
 	static double  new_mae= 0;
-	  float fine_velocity ; 
+	float fine_velocity ; 
 	unsigned char	check_idx=0;
 	unsigned int d=0, i=0;
 	float		 r1, r2; 
@@ -819,11 +837,12 @@ static double update_particles (void)//float t_target, float t_feed, float h_tar
 			if(check_idx==c_ret_ok)
 			{ 
 				pso.step = c_pso_step_wait;
-			  	 // bp_pid_dbg("stay update %d check_idx %d new_mae=%f\r\n",pso.swarm_idx, check_idx ,new_mae);
+			  	bp_pid_dbg("stay update %d check_idx %d new_mae=%f\r\n",pso.swarm_idx, check_idx ,new_mae);
+				pso_check(new_mae);
 				return new_mae;  
 			}
 			else{
-				//bp_pid_dbg("finish update %d check_idx %d new_mae=%f\r\n",pso.swarm_idx, check_idx ,new_mae);				
+				bp_pid_dbg("finish update %d check_idx %d new_mae=%f\r\n",pso.swarm_idx, check_idx ,new_mae);				
 				pso.step = c_pso_step_check; 
 			} 
 		break;
@@ -832,7 +851,7 @@ static double update_particles (void)//float t_target, float t_feed, float h_tar
 				//calculate_svd(new_mae); 
 				//bp_pid_dbg("p00=%.4f,p01=%.4f,p02=%.4f,p20=%.4f,p21=%.4f,p22=%.4f,p40=%.4f,p41=%.4f,p42=%.4f;\r\n",svd.pitchs[0][0],svd.pitchs[0][1],svd.pitchs[0][2], svd.pitchs[2][0],svd.pitchs[2][1],svd.pitchs[2][2], svd.pitchs[4][0],svd.pitchs[4][1],svd.pitchs[4][2]);
 			    pso_check(new_mae);   
-				//bp_pid_dbg("particle update[%.2f]: fit=%.2f,%.2f \r\n", new_mae, pso.swarm[pso.swarm_idx].best_mae,pso.global_bestval);
+				bp_pid_dbg("particle update[%.2f]: fit=%.2f,%.2f \r\n", new_mae, pso.swarm[pso.swarm_idx].best_mae,pso.global_bestval);
 				//double chk_mae=fabs(pso.mae_buf[pso.swarm_idx][0]) + fabs(pso.mae_buf[pso.swarm_idx][1]);
 		break; 
 		default:   break;
@@ -930,7 +949,7 @@ static pid_run_output_st bp_pid_th_proc(short dev_type,uint8_t *input_dev_type  
     static pid_run_output_st  output;
 	extern void get_devs_type_info(dev_type_t *devs_type_list);
 	get_devs_type_info(devs_type_list);
-	ESP_LOGI(TAG, "pid_run_output_st  dev_type=%d",dev_type);
+	//ESP_LOGI(TAG, "pid_run_output_st  dev_type=%d",dev_type);
     if(mode != bp_pid_th.mode)	
     {    
 		mode = bp_pid_th.mode;    
@@ -957,14 +976,14 @@ static pid_run_output_st bp_pid_th_proc(short dev_type,uint8_t *input_dev_type  
     	if(tick_cmp(tmr, bp_pid_th.tmr  ) == c_ret_ok)
 		{	 
 			tmr += (bp_pid_th.tmr );
-			bp_pid_th_exec(); 
+			bp_pid_train(); 
 			on_tmr=get_eco_update();  
  		 #if c_bp_pid_dbg_en == 1
-			bp_pid_wave("t_feed=%.2f,h_feed=%.2f,vpd=%.2f\r\n",bp_pid_th.t_feed,bp_pid_th.h_feed,bp_pid_th.v_feed);	
+			bp_pid_wave("t_feed=%.2f,h_feed=%.2f,vpd=%.2f\r\n",bp_pid_th.t_feed,bp_pid_th.h_feed*100,bp_pid_th.v_feed);	
 			//bp_pid_dbg("p00=%.4f,p01=%.4f,p02=%.4f,p20=%.4f,p21=%.4f,p22=%.4f,p40=%.4f,p41=%.4f,p42=%.4f;\r\n",svd.pitchs[0][0],svd.pitchs[0][1],svd.pitchs[0][2], svd.pitchs[2][0],svd.pitchs[2][1],svd.pitchs[2][2], svd.pitchs[4][0],svd.pitchs[4][1],svd.pitchs[4][2]);
 			// bp_pid_dbg("sigmoid_dat=(%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.6f) \r\n",ni_dat[0],net_ih_dat[0],ih_sigmoid_dat[0],hh_sigmoid_dat[0],net_oh_dat[0],bp_pid_th.t_kp,nh_delta1[0],nh_delta[0],no_delta[0]);
  		#endif	
-			if(pso.step==1)
+			if(pso.step==c_pso_step_wait)
 			{
 				char tmpstr='u';
 				float tmp_v_val=pso.swarm[pso.swarm_idx].position[DEV_VU];
@@ -977,7 +996,7 @@ static pid_run_output_st bp_pid_th_proc(short dev_type,uint8_t *input_dev_type  
 					tmp_pid_o=bp_pid_th.pid_o[DEV_VD];
 					tmp_du_gain=bp_pid_th.du_gain[DEV_VD];
 				}
-				bp_pid_dbg("[%d][0x%x](%.0ftu %.0fhu %.0fv%c)tu(%.0f,%.3f)hu(%.0f,%.3f)v%c(%.0f,%.3f)kT(%.3f,%.3f,%.3f)mae(%.3f,%.3f,%.3f,%.3f)wave\r\n",pso.swarm_idx,bp_pid_th.dev_token
+				bp_pid_dbg("[%d][0x%x](%.0ftu %.0fhu %.0fv%c)tu(%.0f,%.3f)hu(%.0f,%.3f)v%c(%.0f,%.3f)kT(%.3f,%.3f,%.3f)mae(%.3f,%.3f,%.3f,%.3f) \r\n",pso.swarm_idx,bp_pid_th.dev_token
 				,pso.swarm[pso.swarm_idx].position[DEV_TU], pso.swarm[pso.swarm_idx].position[DEV_HU],tmp_v_val,tmpstr   
 				,bp_pid_th.pid_o[DEV_TU],bp_pid_th.du_gain[DEV_TU],bp_pid_th.pid_o[DEV_HU],bp_pid_th.du_gain[DEV_HU],tmpstr,tmp_pid_o,tmp_du_gain
 				,bp_pid_th.ho_sigmoid_out[NUM_ENV_KPID*ENV_V+ENV_KP],bp_pid_th.ho_sigmoid_out[NUM_ENV_KPID*ENV_V+ENV_KI],bp_pid_th.ho_sigmoid_out[NUM_ENV_KPID*ENV_V+ENV_KD]
@@ -991,58 +1010,23 @@ static pid_run_output_st bp_pid_th_proc(short dev_type,uint8_t *input_dev_type  
 			for(uint8_t port=1; port < PORT_CNT; port++ )
 			{   
 				output.speed[port] =find_gear_level(devs_type_list[port].real_type, input_dev_type[port],on_tmr ); 
-			}  
-			bp_pid_dbg("speed t_feed(%.0f)\r\n",bp_pid_th.t_feed); 
+			    bp_pid_dbg("  output.speed(%d)\r\n",output.speed[port]); 
+			}
 			geer_spk_tmr += (bp_pid_th.tmr*2); 
 		} 	
 		 
 	}
 	return output;
 }  
-float pid_cal_vpd(float t, float rh)
-{
-	float dx;
-	dx = (17.27f * t) / (t + 237.3f);
-	dx = pid_exp(dx);
-	dx = dx * 0.61078 * (1.0f - rh / 100.0f);
-	return dx;
-}
-
-extern s16 ml_get_cur_temp();
-extern s16 ml_get_cur_humid();
-extern s16 ml_get_outside_temp();
-extern s16 ml_get_outside_humid();
-extern s16 ml_get_outside_vpd();
-extern s16 ml_get_cur_vpd();  
-void read_all_sensor_soft(pid_run_input_st* input )
-{
-	bp_pid_th.t_target  = input->env_target[ENV_TEMP]/10.0f;
-	bp_pid_th.t_feed    = ml_get_cur_temp()/10;//input->env_value_cur[ENV_TEMP]/10.0f;
-	bp_pid_th.t_outside = ml_get_outside_temp()/10;//input->env_value_cur[ENV_TEMP]/10.0f;
-	if(is_temp_unit_f())
-	{	//C = (F - 32) × 5/9
-		bp_pid_th.t_target = (bp_pid_th.t_target - 32) * 5 / 9;
-		bp_pid_th.t_feed   = (bp_pid_th.t_feed   - 32) * 5 / 9;
-		bp_pid_th.t_outside= (bp_pid_th.t_outside- 32) * 5 / 9;
-	}
-	bp_pid_th.h_target = input->env_target[ENV_HUMID]/10.0f;
-	bp_pid_th.h_feed   = ml_get_cur_humid()/10;//nput->env_value_cur[ENV_HUMID]/10.0f;
-	bp_pid_th.h_outside =   ml_get_outside_humid()/10;//nput->env_value_cur[ENV_HUMID]/10.0f;
-	if(input->env_en_bit & (1 << ENV_VPD))
-	{
-		bp_pid_th.v_target = input->env_target[ENV_VPD]/100.0;
-		//bp_pid_dbg(" env v_target=%.2f,v_feed= %.2f, v_inside= %.2f  \r\n", pid_arg.v_target, pid_arg.v_feed,pid_arg.v_inside  );
-	}
-	else
-	{
-		bp_pid_th.v_target =  pid_cal_vpd(bp_pid_th.t_target, bp_pid_th.h_target) ; 
-		//bp_pid_dbg(" cal v_target=%.2f,t_target= %.2f, h_target= %.2f  \r\n", pid_arg.v_target, pid_arg.t_target,pid_arg.h_target  );
-		//bp_pid_dbg(" cal v_target=%.2f,v_feed= %.2f, v_inside= %.2f  \r\n", pid_arg.v_target, pid_arg.v_feed,pid_arg.v_inside  );
-	}			
-	bp_pid_th.v_feed    = ml_get_cur_vpd()/100.0;//input->env_value_cur[ENV_VPD]/10.0f;
-	bp_pid_th.v_outside = ml_get_outside_vpd()/100.0;//in_side_vpd;
-}
  
+
+// extern s16 ml_get_cur_temp();
+// extern s16 ml_get_cur_humid();
+// extern s16 ml_get_outside_temp();
+// extern s16 ml_get_outside_humid();
+// extern s16 ml_get_outside_vpd();
+// extern s16 ml_get_cur_vpd();  
+  
 pid_run_output_st pid_run_rule(pid_run_input_st* input)
 {
 	extern pid_run_output_st nn_ppo_infer();	
@@ -1066,11 +1050,11 @@ pid_run_output_st pid_run_rule(pid_run_input_st* input)
 		bp_pid_dbg("bp_pid init done! version:%u\r\n", bp_pid_th.version);  
 		#endif
 	}
-//ESP_LOGI(TAG," pso.step %d ", pso.step);
+    //ESP_LOGI(TAG," pso.step %d ", pso.step);
     for( uint8_t env=0; env < ENV_CNT; env++  )
 	{				
         if( input->env_en_bit &(1<<env) ){
-            ESP_LOGD("ai pid","env[%d] cur_value[%d] min_value[%d] max_value[%d] target[%d]",
+            ESP_LOGD("ai pid","env[%d] cur_value[%f] min_value[%f] max_value[%f] target[%f]",
                 env,input->env_value_cur[env],input->env_min[env],input->env_max[env], input->env_target[env] );
         }
     }
@@ -1098,8 +1082,8 @@ pid_run_output_st pid_run_rule(pid_run_input_st* input)
 		bp_pid_dbg("dev_type=0x%x\r\n", dev_type);
 	} 
    	bp_pid_th.mode = input->ml_run_sta;    
-	ESP_LOGI(TAG,"input->env_en_bit %d ",(int) input->env_en_bit); 
-	ESP_LOGI(TAG,"t_feed %f ", bp_pid_th.t_feed); 
+	//ESP_LOGI(TAG,"input->env_en_bit %d ",(int) input->env_en_bit); 
+	//ESP_LOGI(TAG,"t_feed %f ", bp_pid_th.t_feed); 
 	pid_run_output_st output1=	bp_pid_th_proc( dev_type,input->dev_type);  
 	for(int i=1;i<PORT_CNT;i++)
 		output.speed[i]=  output1.speed[i];  

@@ -7,7 +7,8 @@
 
 #include "ml_pid.h"
 
-ModeParam m_range_params;
+ModeParam plant_range_params;
+ModeParam plant_limit_params;
 // 构建编码器
 HVACEncoder* build_hvac_encoder(int seq_len, int n_features, int latent_dim) {
     return new HVACEncoder(seq_len, n_features, latent_dim);
@@ -22,6 +23,9 @@ PlantHVACEnv::PlantHVACEnv(int seq_len_, int n_features_, float temp_init_,
 {
     encoder = build_hvac_encoder(seq_len, n_features, latent_dim);
     proto_cls = new PrototypeClassifierSimple(3, latent_dim, 0.1f);
+    plant_limit_params = mode_params["limit"]; 
+
+    
 }
 
 // ==== 析构函数 ====
@@ -83,7 +87,7 @@ PlantHVACEnv::StepResult PlantHVACEnv::step(const std::array<int,ACTION_CNT>& ac
     float dev_light     = action[5]>0?0.1f : 0.0f;
     float dev_co2       = action[6]>0?0.1f : 0.0f;
     float dev_pump      = action[7]>0?0.1f : 0.0f;
-    m_range_params = mode_params[plant_mode]; 
+    plant_range_params = mode_params[plant_mode]; 
     if(true_env){
         v_env_th   = bp_pid_th;
     }
@@ -116,14 +120,14 @@ PlantHVACEnv::StepResult PlantHVACEnv::step(const std::array<int,ACTION_CNT>& ac
     std::vector<float> soft_label = (*proto_cls)(z);
     float flower_prob = soft_label.size()>2 ? soft_label[2] : 0.0f; 
     int optimal = 0;
-    if(v_env_th.t_feed >=m_range_params.temp_range.first  && temp  <=m_range_params.temp_range.second) optimal++;
-    if(v_env_th.h_feed >=m_range_params.humid_range.first && humid <=m_range_params.humid_range.second) optimal++;
-    if(v_env_th.v_feed >=m_range_params.vpd_range.first   && vpd   <=m_range_params.vpd_range.second) optimal++;
-    if(v_env_th.l_feed >=m_range_params.light_range.first && light <=m_range_params.light_range.second) optimal++;
-    if(v_env_th.c_feed >=m_range_params.co2_range.first   && co2   <=m_range_params.co2_range.second) optimal++;
-    float vpd_target   =(m_range_params.vpd_range.first  +m_range_params.vpd_range.second)/2.0;
-    float light_target =(m_range_params.light_range.first+m_range_params.light_range.second)/2.0;
-    float co2_target   =(m_range_params.co2_range.first  +m_range_params.co2_range.second)/2.0;
+    if(v_env_th.t_feed >=plant_range_params.temp_range.first  && temp  <=plant_range_params.temp_range.second) optimal++;
+    if(v_env_th.h_feed >=plant_range_params.humid_range.first && humid <=plant_range_params.humid_range.second) optimal++;
+    if(v_env_th.v_feed >=plant_range_params.vpd_range.first   && vpd   <=plant_range_params.vpd_range.second) optimal++;
+    if(v_env_th.l_feed >=plant_range_params.light_range.first && light <=plant_range_params.light_range.second) optimal++;
+    if(v_env_th.c_feed >=plant_range_params.co2_range.first   && co2   <=plant_range_params.co2_range.second) optimal++;
+    float vpd_target   =(plant_range_params.vpd_range.first  +plant_range_params.vpd_range.second)/2.0;
+    float light_target =(plant_range_params.light_range.first+plant_range_params.light_range.second)/2.0;
+    float co2_target   =(plant_range_params.co2_range.first  +plant_range_params.co2_range.second)/2.0;
     health = (optimal>=4?0:(optimal>=2?1:2)); 
 
     // --- Reward ---
@@ -140,9 +144,9 @@ PlantHVACEnv::StepResult PlantHVACEnv::step(const std::array<int,ACTION_CNT>& ac
 
     float flower_env_penalty = 0.0f;
     if(flower_prob>0.5f && plant_mode=="flowering") {
-        if(!(humid>=m_range_params.humid_range.first && humid<=m_range_params.humid_range.second)) 
+        if(!(humid>=plant_range_params.humid_range.first && humid<=plant_range_params.humid_range.second)) 
             flower_env_penalty -= (params.count("flower_humi_penalty")?params.at("flower_humi_penalty"):0.1f);
-        if(!(temp>=m_range_params.temp_range.first && temp<=m_range_params.humid_range.second))    
+        if(!(temp>=plant_range_params.temp_range.first && temp<=plant_range_params.humid_range.second))    
             flower_env_penalty -= (params.count("flower_temp_penalty")?params.at("flower_temp_penalty"):0.1f);
     }
 
@@ -192,12 +196,19 @@ PlantHVACEnv::StepResult PlantHVACEnv::step(const std::array<int,ACTION_CNT>& ac
     }
     
     
-    vpd   = pid_map(v_env_th.v_feed,  m_range_params.vpd_range.first,   m_range_params.vpd_range.second,   0, 1);
-    temp  = pid_map(v_env_th.t_feed,  m_range_params.temp_range.first,  m_range_params.temp_range.second,  0, 1);
-    humid = pid_map(v_env_th.h_feed,  m_range_params.humid_range.first, m_range_params.humid_range.second, 0, 1);
-    light = pid_map(v_env_th.l_feed,  m_range_params.light_range.first, m_range_params.light_range.second, 0, 1);
-    co2   = pid_map(v_env_th.c_feed,  m_range_params.co2_range.first,   m_range_params.co2_range.second,   0, 1);
+    // vpd   = pid_map(v_env_th.v_feed,  m_range_params.vpd_range.first,   m_range_params.vpd_range.second,   0, 1);
+    // temp  = pid_map(v_env_th.t_feed,  m_range_params.temp_range.first,  m_range_params.temp_range.second,  0, 1);
+    // humid = pid_map(v_env_th.h_feed,  m_range_params.humid_range.first, m_range_params.humid_range.second, 0, 1);
+    v_env_th.f[0][ENV_L]   = pid_map(v_env_th.l_feed,  plant_limit_params.light_range.first, plant_limit_params.light_range.second, 0, 1);
+    v_env_th.f[0][ENV_C]   = pid_map(v_env_th.c_feed,  plant_limit_params.co2_range.first,   plant_limit_params.co2_range.second,   0, 1);
+    v_env_th.f[0][ENV_W]   = pid_map(v_env_th.w_feed,  plant_limit_params.water_range.first,   plant_limit_params.water_range.second,   0, 1);
     
+	temp  =v_env_th.f[0][ENV_T] ;	
+	humid =v_env_th.f[0][ENV_H] ;	
+	vpd   =v_env_th.f[0][ENV_V] ;
+	light =v_env_th.f[0][ENV_L];
+    co2   =v_env_th.f[0][ENV_C];
+    soil  =v_env_th.f[0][ENV_W];
     
     float reward = health_reward 
                  - energy_cost 

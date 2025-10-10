@@ -591,7 +591,7 @@ extern "C" {
 #include "ml_pid.h"
 
 
-pid_run_input_st pid_input = {0};  
+//pid_run_input_st pid_input = {0};  
 //extern pid_run_output_st lstm_pid_out_speed;
 
 CLASSIFIER_Prams classifier_params;
@@ -599,24 +599,19 @@ extern float pid_map(float x, float in_min, float in_max, float out_min, float o
 int load_up_input_seq(int type,int seq_len)
 {
     int cnt=0;
-    float t_feed  = pid_map(bp_pid_th.t_feed,   m_range_params.temp_range.first, m_range_params.temp_range.second, 0, 1);
-    float h_feed  = pid_map(bp_pid_th.h_feed,   m_range_params.humid_range.first, m_range_params.humid_range.second, 0, 1);
-    float w_feed  = pid_map(bp_pid_th.w_feed,   m_range_params.water_range.first, m_range_params.water_range.second, 0, 1);
-    float l_feed  = pid_map(bp_pid_th.l_feed,   m_range_params.light_range.first, m_range_params.light_range.second, 0, 1);
-    float c_feed  = pid_map(bp_pid_th.c_feed,   m_range_params.co2_range.first, m_range_params.co2_range.second, 0, 1);
-    float p_feed  = pid_map(bp_pid_th.p_feed,   m_range_params.ph_range.first, m_range_params.ph_range.second, 0, 1);
-    float v_feed  = pid_map(bp_pid_th.v_feed,   m_range_params.vpd_range.first, m_range_params.vpd_range.second, 0, 1);
+    // float t_feed  = pid_map(bp_pid_th.t_feed,   m_range_params.temp_range.first, m_range_params.temp_range.second, 0, 1);
+    // float h_feed  = pid_map(bp_pid_th.h_feed,   m_range_params.humid_range.first, m_range_params.humid_range.second, 0, 1);
+    // float w_feed  = pid_map(bp_pid_th.w_feed,   m_range_params.water_range.first, m_range_params.water_range.second, 0, 1);
+    // float l_feed  = pid_map(bp_pid_th.l_feed,   m_range_params.light_range.first, m_range_params.light_range.second, 0, 1);
+    // float c_feed  = pid_map(bp_pid_th.c_feed,   m_range_params.co2_range.first, m_range_params.co2_range.second, 0, 1);
+    // float p_feed  = pid_map(bp_pid_th.p_feed,   m_range_params.ph_range.first, m_range_params.ph_range.second, 0, 1);
+    // float v_feed  = pid_map(bp_pid_th.v_feed,   m_range_params.vpd_range.first, m_range_params.vpd_range.second, 0, 1);
     
     if(type == PPO_CASE)
-    {
-        
-        
-        input_seq[cnt*FEATURE_DIM + 0] = (float) v_feed;
-        input_seq[cnt*FEATURE_DIM + 1] = (float) t_feed ;
-        input_seq[cnt*FEATURE_DIM + 2] = (float) h_feed ;
-        input_seq[cnt*FEATURE_DIM + 3] = (float) l_feed;
-        input_seq[cnt*FEATURE_DIM + 4] = (float) c_feed; 
-       
+    { 
+        for(int i=0;i<classifier_params.feature_dim;i++){
+            input_seq[cnt*classifier_params.feature_dim + i] = (float) bp_pid_th.f[0][i]; 
+        }
     }     
     if(type == META_CASE)
     {
@@ -638,13 +633,9 @@ int load_up_input_seq(int type,int seq_len)
             if(h_idx>=0)
                 geer[h_idx] = ml_pid_out_speed.speed[port];
         }
-        input_seq[cnt*FEATURE_DIM + 0] = (float) t_feed;
-        input_seq[cnt*FEATURE_DIM + 1] = (float) h_feed;
-        input_seq[cnt*FEATURE_DIM + 2] = (float) l_feed;
-        input_seq[cnt*FEATURE_DIM + 3] = (float)geer[0];
-        input_seq[cnt*FEATURE_DIM + 4] = (float)geer[1];
-        input_seq[cnt*FEATURE_DIM + 5] = (float)geer[2];
-        input_seq[cnt*FEATURE_DIM + 6] = (float)geer[3];//+rand() % 10;
+        for(int i=0;i<classifier_params.feature_dim;i++){
+            input_seq[cnt*classifier_params.feature_dim + i] = (float) bp_pid_th.f[0][i]; 
+        }
     }
     cnt++;
     cnt=cnt%seq_len;
@@ -1072,35 +1063,42 @@ void set_plant_action(const std::array<int, ACTION_CNT>& action) {
 
 void pid_run(void) 
 {   
-    read_all_sensor_trigger();
+    extern pid_run_input_st pid_run_input;
+    pid_run_input.env_target[ENV_TEMP]  =(plant_range_params.temp_range.first  + plant_range_params.temp_range.second)/2.0;
+    pid_run_input.env_target[ENV_HUMID] =(plant_range_params.humid_range.first + plant_range_params.humid_range.second)/2.0;
+    pid_run_input.env_target[ENV_LIGHT] =(plant_range_params.light_range.first + plant_range_params.light_range.second)/2.0;
+    pid_run_input.env_target[ENV_CO2]   =(plant_range_params.co2_range.first   + plant_range_params.co2_range.second)/2.0; 
+    pid_run_input.env_target[ENV_SOIL]  =(plant_range_params.water_range.first + plant_range_params.water_range.second)/2.0; 
+    if(pid_run_input.env_target[ENV_TEMP]==0.0||pid_run_input.env_target[ENV_HUMID]==0.0||pid_run_input.env_target[ENV_LIGHT]==0.0||pid_run_input.env_target[ENV_CO2]==0.0)
+    {
+        return ;
+    }
+    
     // pid_param_get(&g_ai_setting, NULL, NULL, NULL, &pid_run_input );
-    float temp_target  =(m_range_params.temp_range.first  + m_range_params.temp_range.second)/2.0;
-    float humid_target =(m_range_params.humid_range.first + m_range_params.humid_range.second)/2.0;
-    float light_target =(m_range_params.light_range.first + m_range_params.light_range.second)/2.0;
-    float co2_target   =(m_range_params.co2_range.first   + m_range_params.co2_range.second)/2.0; 
-    pid_input.env_en_bit  = (1 << ENV_TEMP) | (1 << ENV_HUMID)| (1 << ENV_VPD);
-    pid_input.ml_run_sta  = 1;
-    pid_input.env_target[ENV_TEMP] =temp_target;
-    pid_input.env_target[ENV_HUMID]=humid_target;
-    pid_input.env_target[ENV_LIGHT]=light_target;
-    pid_input.env_target[ENV_CO2]  =co2_target;
-    devs_type_list[1].real_type = pid_input.dev_type[1] =loadType_heater ;
-    devs_type_list[2].real_type = pid_input.dev_type[2]= loadType_A_C;
-    devs_type_list[3].real_type = pid_input.dev_type[3]= loadType_humi ;
-    devs_type_list[4].real_type = pid_input.dev_type[4]= loadType_dehumi;
-    devs_type_list[5].real_type = pid_input.dev_type[5]= loadType_water_pump;
-    devs_type_list[6].real_type = pid_input.dev_type[6]= loadType_growLight;
-    devs_type_list[7].real_type = pid_input.dev_type[7]= loadType_co2_generator;
-    devs_type_list[8].real_type = pid_input.dev_type[8]= loadType_pump;
+    
+    pid_run_input.env_en_bit  = (1 << ENV_TEMP) | (1 << ENV_HUMID)| (1 << ENV_VPD);
+    pid_run_input.ml_run_sta  = 1;
+     
+    devs_type_list[1].real_type = pid_run_input.dev_type[1] =loadType_heater ;
+    devs_type_list[2].real_type = pid_run_input.dev_type[2]= loadType_A_C;
+    devs_type_list[3].real_type = pid_run_input.dev_type[3]= loadType_humi ;
+    devs_type_list[4].real_type = pid_run_input.dev_type[4]= loadType_dehumi;
+    devs_type_list[5].real_type = pid_run_input.dev_type[5]= loadType_water_pump;
+    devs_type_list[6].real_type = pid_run_input.dev_type[6]= loadType_growLight;
+    devs_type_list[7].real_type = pid_run_input.dev_type[7]= loadType_co2_generator;
+    devs_type_list[8].real_type = pid_run_input.dev_type[8]= loadType_pump;
     for(int port=1;port<PORT_CNT;port++)
     {    
-        pid_input.is_switch[port] = 1;
+        pid_run_input.is_switch[port] = 1;
     } 
-	 
-    pid_run_output_st out_speed = pid_run_rule( &pid_input );
+	if(read_all_sensor_trigger()==false)
+    {
+        return ;
+    } 
+    pid_run_output_st out_speed = pid_run_rule( &pid_run_input );
     for(int port=1;port<= ACTION_CNT;port++)
     {    
-        ml_pid_out_speed.speed[port] += out_speed.speed[port];
+        ml_pid_out_speed.speed[port]  = out_speed.speed[port];
         action[port-1]=ml_pid_out_speed.speed[port];
         set_plant_action(action);
     }
