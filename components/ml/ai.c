@@ -89,6 +89,7 @@ uint8_t DropTroop[NumCities] = {0, 0, 0, 0, 0, 0, 0, 0, 0};  // power save
 
 
 extern u8 _getTargetDummyLoadType_port(u8 port_num);
+pid_run_input_st pid_run_input;
 
 //--------------------- usr struct start ------------------------------
 
@@ -1502,7 +1503,6 @@ void pid_get_env_target_data_param(uint8_t env,ai_setting_t* ai_setting,int16_t*
 	*target = (target_min+target_max)/2;
 }
 
-pid_run_input_st pid_run_input;
 void pid_param_get(ai_setting_t *ai_setting, uint8_t* load_type_list, uint8_t* dev_origin_list, int16_t* env_value_list, pid_run_input_st* param)
 {
 // Before line 1520, add null checks
@@ -1749,8 +1749,8 @@ void ai_running_process(ai_setting_t *ai_setting, ai_running_data_t* p_ai_runnig
 
 	pid_run_output_st pid_run_output;
 	pid_param_get(ai_setting, cur_load_type, port_dev_origin, sensor_val_list, &pid_run_input );
-	pid_run_output = pid_run_rule( &pid_run_input );
-	pid_rule_output_set_speed(pid_run_output, cur_load_type, output_port_list );
+	//pid_run_output = pid_run_rule( &pid_run_input );
+	//pid_rule_output_set_speed(pid_run_output, cur_load_type, output_port_list );
 #else
 	int16_t env_val_list[ENV_CNT];
 	int16_t outside_env_val_list[ENV_CNT];

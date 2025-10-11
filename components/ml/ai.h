@@ -144,4 +144,5 @@ enum ai_mode_control_change_type
 	HIGH_CO2_WITH_REGULATOR,  //message
 	AI_MODE_LOG_MAX,
 };
+
 #endif

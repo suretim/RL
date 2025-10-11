@@ -30,7 +30,7 @@ unsigned int gain_adj_ctrl = 2;
 pid_run_output_st lstm_pid_out_speed;
 extern const float pso_pos_max_tab[DIM]  ;
 extern const float pso_pos_min_tab[DIM] ;
-
+extern curLoad_t curLoad[PORT_CNT] ;
 //float pitch_limit[2][NUM_PTH_TYPE]={{20,80,300},{40,160,600}};
 //float tmp_pitch[NUM_UPDOWN][NUM_PTH_TYPE]= {{0.99,0.99,0.99 },{1.01,1.01,1.01 }};
 unsigned int tmp_pdx[DIM]={0};
@@ -171,9 +171,12 @@ static unsigned int tick_cmp(int tmr, int tmo)
 {  
 	return (tick_get()  >= (tmo+tmr)) ? c_ret_ok : c_ret_nk; 
 } 
+
+
+
 void bp_pid_th_init(void) 
 {
-    unsigned int i, h, o; 
+    unsigned int i=0, h=0, o=0; 
 	memset(&bp_pid_th, 0, sizeof(struct st_bp_pid_th)); 
 	bp_pid_th.tmr =  10000;
 	bp_pid_th.dev_token = 0; 
@@ -508,15 +511,15 @@ pid_run_output_st pid_run_rule(pid_run_input_st* input)
 {
 	//extern pid_run_output_st nn_ppo_infer();	
     short	 dev_type= 0;
-	static int init_flag = 0; 
+	static bool init_flag = false; 
     static pid_run_output_st  output ;
 	//struct st_bp_pid_th_arg	pid_arg;
 	//static unsigned int 	en_bit = 0; 
     bp_pid_tick_tmr += 100;
 
-	if(init_flag == 0)
-	{
-		init_flag = 1;
+	if(init_flag == false)
+	{ 
+        init_flag=true;
 		bp_pid_th_init();
 		tick_reset();
 		bp_pid_th.version = 2503061528;  
@@ -562,26 +565,12 @@ pid_run_output_st pid_run_rule(pid_run_input_st* input)
 	//ESP_LOGI(TAG,"input->env_en_bit %d ",(int) input->env_en_bit); 
 	//ESP_LOGI(TAG,"t_feed %f ", bp_pid_th.t_feed); 
 	//pid_run_output_st output1=	bp_pid_th_proc( dev_type,input );  
-
-
-
+ 
 
 	static unsigned int tmr = 0 ,geer_spk_tmr = 0;
 	static unsigned int mode = 0, sec = 0;//, sn = 0;
 	static unsigned int on_tmr=0;
-	//unsigned int	 idx=0;
-	//float				out=0;
-	//double				dx=0;
-    //static pid_run_output_st  output;
-	
-	//extern void get_devs_type_info(dev_type_t *devs_type_list);
-	//get_devs_type_info(devs_type_list);
-	// u8 port_i; 
-    // for(port_i=1; port_i<PORT_CNT; port_i++)
-    // {
-	// 	devs_type_list[port_i].real_type = curLoad[port_i].load_type;
-	// }
-	//ESP_LOGI(TAG, "pid_run_output_st  dev_type=%d",dev_type);
+	 
     if(mode != bp_pid_th.mode)	
     {    
 		mode = bp_pid_th.mode;    

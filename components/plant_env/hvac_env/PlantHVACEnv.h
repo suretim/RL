@@ -52,10 +52,11 @@ public:
             {"seeding",  ModeParam{{24,30},{0.50f,0.70f},{0.20f, 0.30f},{200,400} ,{400,600} ,{5.5f,6.2f},{0.4f,0.8f}, 0.1f, -0.05f}},
             {"growing",  ModeParam{{22,28},{0.40f,0.70f},{0.25f, 0.35f},{300,600} ,{400,800} ,{5.8f,6.5f},{0.8f,1.2f}, 0.2f, -0.1f}},
             {"flowering",ModeParam{{20,26},{0.40f,0.60f},{0.30f, 0.40f},{500,800} ,{600,1000},{5.8f,6.3f},{1.0f,1.5f}, 0.3f, -0.15f}},
+            {"testing"  ,ModeParam{{28,32},{0.50f,0.70f},{0.30f, 0.40f},{500,800} ,{600,1000},{5.8f,6.3f},{1.0f,1.5f}, 0.3f, -0.15f}},
             {"limit",    ModeParam{{18,37},{0.10f,0.80f},{0.10f, 0.70f},{100,1000},{200,1200},{5.0f,6.8f},{0.1f,2.8f}, 0.1f, -0.05f}}
         }; 
     uint32_t rng_seed = 12345;
-    std::string plant_mode = "seeding";
+    std::string plant_mode = "testing";
     int true_label= -1; 
     bool true_env= false;
     float rand_uniform() {

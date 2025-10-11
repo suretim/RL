@@ -889,7 +889,7 @@ bool ppo_inference(int type) {
     }
     
     
-    infer_loop(OPTIMIZED_MODEL);
+    infer_loop(type);
 #if 0
     TfLiteStatus invoke_status = interpreter->Invoke();
     if (invoke_status != kTfLiteOk) {
@@ -954,7 +954,7 @@ bool sarsa_inference(int type) {
         
         
     } 
-    infer_loop(META_MODEL);   
+    infer_loop(type);   
     vTaskDelay(1); // to avoid watchdog trigger 
    //   interpreter->ResetTempAllocations();
 
@@ -1061,24 +1061,18 @@ void set_plant_action(const std::array<int, ACTION_CNT>& action) {
 //u_int8_t get_tensor_state(void);
  
 extern curLoad_t curLoad[PORT_CNT] ;
-void pid_run(void) 
-{   
-    extern pid_run_input_st pid_run_input;
+extern pid_run_input_st pid_run_input;
+bool pid_env_init(void) 
+{ 
+    //pid_param_get(&g_ai_setting, NULL, NULL, NULL, &pid_run_input );
+    
     pid_run_input.env_target[ENV_TEMP]  =(plant_range_params.temp_range.first  + plant_range_params.temp_range.second)/2.0;
     pid_run_input.env_target[ENV_HUMID] =(plant_range_params.humid_range.first + plant_range_params.humid_range.second)/2.0;
     pid_run_input.env_target[ENV_LIGHT] =(plant_range_params.light_range.first + plant_range_params.light_range.second)/2.0;
     pid_run_input.env_target[ENV_CO2]   =(plant_range_params.co2_range.first   + plant_range_params.co2_range.second)/2.0; 
     pid_run_input.env_target[ENV_SOIL]  =(plant_range_params.water_range.first + plant_range_params.water_range.second)/2.0; 
-    if(pid_run_input.env_target[ENV_TEMP]==0.0||pid_run_input.env_target[ENV_HUMID]==0.0||pid_run_input.env_target[ENV_LIGHT]==0.0||pid_run_input.env_target[ENV_CO2]==0.0)
-    {
-        return ;
-    }
-    
-    // pid_param_get(&g_ai_setting, NULL, NULL, NULL, &pid_run_input );
-    
-    pid_run_input.env_en_bit  = (1 << ENV_TEMP) | (1 << ENV_HUMID)| (1 << ENV_VPD);
-    pid_run_input.ml_run_sta  = 1;
-     
+    if(pid_run_input.env_target[ENV_TEMP]==0||pid_run_input.env_target[ENV_HUMID]==0||pid_run_input.env_target[ENV_LIGHT]==0||pid_run_input.env_target[ENV_CO2]==0||pid_run_input.env_target[ENV_SOIL]==0)
+        return false;
     pid_run_input.dev_type[1] =loadType_heater ;
     pid_run_input.dev_type[2]= loadType_A_C;
     pid_run_input.dev_type[3]= loadType_humi ;
@@ -1095,10 +1089,25 @@ void pid_run(void)
     curLoad[6].load_type=loadType_growLight ;
     curLoad[7].load_type=loadType_co2_generator ;
     curLoad[8].load_type=loadType_pump ;
+     
+    pid_run_input.env_en_bit  = (1 << ENV_TEMP) | (1 << ENV_HUMID)| (1 << ENV_VPD);
+    pid_run_input.ml_run_sta  = 1;
+      
     for(int port=1;port<PORT_CNT;port++)
     {    
         pid_run_input.is_switch[port] = 1;
     } 
+    return true;
+}
+
+void pid_run(void) 
+{   
+     
+    if( pid_env_init() ==false)
+    {
+        return  ;
+    } 
+    
 	if(read_all_sensor_trigger()==false)
     {
         return ;
