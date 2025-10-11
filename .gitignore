@@ -13,10 +13,8 @@ components/*
 !components/RL/**
 !components/plant_env/
 !components/plant_env/**
-!components/ml/ml_pid.c
-!components/ml/ml_pid.h
-!components/ml/ml_rule.c
-!components/ml/ml_rule.h
+!components/ml/
+!components/ml/**
 
 managed_components/
 sdkconfig
