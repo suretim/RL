@@ -151,7 +151,7 @@
 
 #define c_pid_ptch_min			-400
 #define c_pid_ptch_max			400
- 
+#define WMAX 1e3 
 
 #define FREE_ARG char*
 #define SIGN(a,b) ((b) >= 0.0 ? fabs(a) : -fabs(a))
@@ -228,7 +228,7 @@ typedef struct{
 
 extern pid_run_output_st pid_run_rule(pid_run_input_st* input);
 extern struct st_bp_pid_th    bp_pid_th ;
-extern dev_type_t devs_type_list[PORT_CNT]; 
+//extern dev_type_t devs_type_list[PORT_CNT]; 
 extern pid_run_output_st lstm_pid_out_speed;
 
 extern float pid_map(float param1, float param2, float param3, float param4, float param5); 
@@ -269,46 +269,6 @@ extern float pid_map(float param1, float param2, float param3, float param4, flo
 // 	unsigned short dv_min_gear;
 // }; 
 
-struct pso_particle
-{
-	//float 				pos[DIM];    				// 当前增益值
-   // float 				vel[DIM];    				// 速度向量
-    //float 			best_val;    				// 速度向量
-   
-    float 			position[DIM];    		// 当前增益值
-    float 			velocity[DIM];    		// 速度向量
-    float 			best_pos[DIM];    		// 个体历史最优增益
-    float 			best_mae;//[NUM_ENV_TYPE];     		// 个体最优适应度
-	unsigned int    v_idx[DIM]; 
-	float				val;
-   
-};
-struct pso_global
-{
-    float 			pos[DIM];    		
-    uint8           swarm_idx;     	
-	 float 			best_val;     		// 个体最优适应度	
-	 float best_pos[DIM];
-};
-struct pso_optimizer
-{
-	double			mae_buf[2][NUM_ENV_TYPE];
-
-    //struct pso_particle	particle[NUM_PARTICLES];	// 分群粒子
-    struct pso_particle 	swarm[NUM_PARTICLES];	// 群
-	struct pso_global 		global[NUM_GLOBAL];
-	 
-	//float			h_buf[NUM_PARTICLES];
-	// float			v_buf[60];
-	unsigned int	 buf_cnt, test_req;
-	unsigned int swarm_idx , step;
-    //unsigned int global_idx;
-	uint8 dev_token;	
-	double   v_wight ;	// w:惯性权重
-	float  global_bestval, global_position[DIM]; 
-};
-
- 
 
 struct svd_optimizer
 {
@@ -358,7 +318,9 @@ struct st_bp_pid_th
 
 };
 
-
+extern unsigned int tick_get(void);
+extern unsigned int tick_reset(void);
+extern float hvac_margin[NUM_ENV_TYPE];
 extern pid_run_output_st ml_pid_out_speed;
 extern ModeParam plant_range_params;
 extern ModeParam plant_limit_params;

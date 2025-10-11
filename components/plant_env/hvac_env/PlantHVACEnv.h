@@ -49,10 +49,10 @@ public:
                        temp(0.0f), humid(0.0f),soil(0.0f), light(0.0f), co2(0.0f), ph(7.0f), vpd(0.0f)  {}
     };
     std::map<std::string, ModeParam> mode_params= {
-            {"seeding",  ModeParam{{24,30},{0.50f,0.70f},{0.20f, 0.30f},{200,400},{400,600} ,  {5.5f,6.2f},{0.4f,0.8f}, 0.1f, -0.05f}},
-            {"growing",  ModeParam{{22,28},{0.40f,0.70f},{0.25f, 0.35f},{300,600},{400,800} ,  {5.8f,6.5f},{0.8f,1.2f}, 0.2f, -0.1f}},
-            {"flowering",ModeParam{{20,26},{0.40f,0.60f},{0.30f, 0.40f},{500,800},{600,1000},  {5.8f,6.3f},{1.0f,1.5f}, 0.3f, -0.15f}},
-            {"limit",    ModeParam{{18,37},{0.10f,0.80f},{0.10f, 0.70f},{100,1000},{200,1200} ,{5.0f,6.8f},{0.1f,2.8f}, 0.1f, -0.05f}}
+            {"seeding",  ModeParam{{24,30},{0.50f,0.70f},{0.20f, 0.30f},{200,400} ,{400,600} ,{5.5f,6.2f},{0.4f,0.8f}, 0.1f, -0.05f}},
+            {"growing",  ModeParam{{22,28},{0.40f,0.70f},{0.25f, 0.35f},{300,600} ,{400,800} ,{5.8f,6.5f},{0.8f,1.2f}, 0.2f, -0.1f}},
+            {"flowering",ModeParam{{20,26},{0.40f,0.60f},{0.30f, 0.40f},{500,800} ,{600,1000},{5.8f,6.3f},{1.0f,1.5f}, 0.3f, -0.15f}},
+            {"limit",    ModeParam{{18,37},{0.10f,0.80f},{0.10f, 0.70f},{100,1000},{200,1200},{5.0f,6.8f},{0.1f,2.8f}, 0.1f, -0.05f}}
         }; 
     uint32_t rng_seed = 12345;
     std::string plant_mode = "seeding";
@@ -70,17 +70,10 @@ public:
         float u2 = rand_uniform();
         float z0 = sqrt(-2.0f * log(u1)) * cos(2*M_PI*u2);
         return z0 * stddev + mean;
-    }
-    //  mode_params = {
-    //         {"growing",  ModeParam{{22,28},{0.40f,0.70f},{0.25f, 0.35f},{300,600},{400,800} ,{5.8f,6.5f},{0.8f,1.2f}, 0.2f, -0.1f}},
-    //         {"flowering",ModeParam{{20,26},{0.40f,0.60f},{0.30f, 0.40f},{500,800},{600,1000},{5.8f,6.3f},{1.0f,1.5f}, 0.3f, -0.15f}},
-    //         {"seeding",  ModeParam{{24,30},{0.50f,0.70f},{0.20f, 0.30f},{200,400},{400,600} ,{5.5f,6.2f},{0.4f,0.8f},0.1f, -0.05f}}
-    //     };
-
+    } 
      
     PlantHVACEnv() {
-       plant_limit_params = mode_params["limit"]; 
-         
+       plant_limit_params = mode_params["limit"];  
     }
 private:
     HVACEncoder* encoder;
@@ -101,10 +94,8 @@ private:
     bool done;
     int health;
     int t;
-    std::array<int,ACTION_CNT> prev_action;
-
-    SeqFetcher seq_fetcher;
-    
+    std::array<int,ACTION_CNT> prev_action; 
+    SeqFetcher seq_fetcher; 
 
 public:
     std::map<std::string,float> default_params = {
@@ -139,12 +130,12 @@ public:
                            const std::vector<int>& labels);
     void reset() {
             // 将环境状态重置为初始值
-            temp = 22.0f;  // 设定初始温度为22.0度
-            humid = 50.0f;     // 设定初始湿度为50%
-            soil  = 40.0f;     
-            light=300.0f; // 设定初始光照为300lux
-            co2=400.0f; // 设定初始CO2浓度为400ppm
-            vpd=1.0f;  
+            temp = (mode_params["seeding"].temp_range.first  +mode_params["seeding"].temp_range.second )/ 2.0f ;   //22.0f;  // 设定初始温度为22.0度
+            humid =(mode_params["seeding"].humid_range.first +mode_params["seeding"].humid_range.second )/ 2.0f ;   //;     // 设定初始湿度为50%
+            soil  =(mode_params["seeding"].water_range.first +mode_params["seeding"].water_range.second )/ 2.0f ;   //;     
+            light =(mode_params["seeding"].light_range.first +mode_params["seeding"].light_range.second )/ 2.0f ;   //; // 设定初始光照为300lux
+            co2   =(mode_params["seeding"].co2_range.first   +mode_params["seeding"].co2_range.second )/ 2.0f ;   //; // 设定初始CO2浓度为400ppm
+            vpd   =(mode_params["seeding"].vpd_range.first   +mode_params["seeding"].vpd_range.second )/ 2.0f ;   //;  
             done = false;         // 重置任务结束标志
             
           

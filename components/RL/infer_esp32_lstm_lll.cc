@@ -98,7 +98,8 @@ struct ModelContext {
     tflite::MicroInterpreter* interpreter = nullptr;
     TfLiteTensor* input_tensor = nullptr;
     TfLiteTensor* output_tensor = nullptr;
-
+    // 公用的 Op resolver（根据模型需求配置）
+    tflite::MicroMutableOpResolver<24> micro_op_resolver;
     // tensor arena
     uint8_t* tensor_arena = nullptr;
     size_t tensor_arena_size = 0;
@@ -113,8 +114,7 @@ namespace {
 
     std::array<ModelContext, kNumModels> model_contexts;
 
-    // 公用的 Op resolver（根据模型需求配置）
-    tflite::MicroMutableOpResolver<24> micro_op_resolver;
+    
 }
 #else
 // Globals, used for compatibility with Arduino-style sketches.
@@ -387,7 +387,7 @@ unsigned char*  load_from_spiffs(int type, const char* filename,size_t &file_siz
 
     ctx.interpreter = new tflite::MicroInterpreter(
         ctx.model,
-        micro_op_resolver,
+        ctx.micro_op_resolver,
         ctx.tensor_arena,
         ctx.tensor_arena_size
     );
@@ -618,21 +618,21 @@ int load_up_input_seq(int type,int seq_len)
  
         int h_idx=-1;
         uint8_t geer[6];
-        for(int port=1;port<9;port++)
-        {     
-            switch(  devs_type_list[port].real_type  ) 
-            {
-                case loadType_heater:	h_idx=DEV_TU;  break;
-                case loadType_A_C:		h_idx=DEV_TD;  break;
-                case loadType_humi:		h_idx=DEV_HU;  break;
-                case loadType_dehumi:	h_idx=DEV_HD;  break;
-                case loadType_inlinefan:h_idx=(bp_pid_th.v_outside- bp_pid_th.v_feed)>=0?DEV_VU:DEV_VD; break;
-                case loadType_fan:      h_idx=(bp_pid_th.v_outside- bp_pid_th.v_feed)>=0?DEV_VU:DEV_VD;   break;
-                default:               break;
-            }
-            if(h_idx>=0)
-                geer[h_idx] = ml_pid_out_speed.speed[port];
-        }
+        // for(int port=1;port<9;port++)
+        // {     
+        //     switch(  devs_type_list[port].real_type  ) 
+        //     {
+        //         case loadType_heater:	h_idx=DEV_TU;  break;
+        //         case loadType_A_C:		h_idx=DEV_TD;  break;
+        //         case loadType_humi:		h_idx=DEV_HU;  break;
+        //         case loadType_dehumi:	h_idx=DEV_HD;  break;
+        //         case loadType_inlinefan:h_idx=(bp_pid_th.v_outside- bp_pid_th.v_feed)>=0?DEV_VU:DEV_VD; break;
+        //         case loadType_fan:      h_idx=(bp_pid_th.v_outside- bp_pid_th.v_feed)>=0?DEV_VU:DEV_VD;   break;
+        //         default:               break;
+        //     }
+        //     if(h_idx>=0)
+        //         geer[h_idx] = ml_pid_out_speed.speed[port];
+        // }
         for(int i=0;i<classifier_params.feature_dim;i++){
             input_seq[cnt*classifier_params.feature_dim + i] = (float) bp_pid_th.f[0][i]; 
         }
@@ -811,13 +811,13 @@ bool actor_critic_infer(int type )
 { 
     auto&ctx=model_contexts[type];
     if(ctx.model==nullptr){
-        micro_op_resolver.AddFullyConnected();
-        micro_op_resolver.AddSoftmax();
-        micro_op_resolver.AddReshape();
-        micro_op_resolver.AddRelu();
-        micro_op_resolver.AddQuantize();
-        micro_op_resolver.AddDequantize();
-        micro_op_resolver.AddTanh();
+        ctx.micro_op_resolver.AddFullyConnected();
+        ctx.micro_op_resolver.AddSoftmax();
+        ctx.micro_op_resolver.AddReshape();
+        ctx.micro_op_resolver.AddRelu();
+        ctx.micro_op_resolver.AddQuantize();
+        ctx.micro_op_resolver.AddDequantize();
+        ctx.micro_op_resolver.AddTanh();
         
         if(    init_model(type)==false){
             ESP_LOGE(TAG,"Init actor_critic_inference Model Failed");
@@ -851,29 +851,29 @@ bool ppo_inference(int type) {
      // 假设模型只用 10 种算子
      //tflite::MicroMutableOpResolver<10> micro_op_resolver;
      if(ctx.model==nullptr){
-        micro_op_resolver.AddUnidirectionalSequenceLSTM();
-        micro_op_resolver.AddShape();            // SHAPE操作符 - 之前缺失的
-        micro_op_resolver.AddStridedSlice();     // STRIDED_SLICE操作符 - 现在缺失的 ← 添加这一行
-        micro_op_resolver.AddFullyConnected();   // 全连接层
-        micro_op_resolver.AddReshape();          // 重塑层
-        micro_op_resolver.AddSoftmax();          // Softmax
-        micro_op_resolver.AddRelu();             // ReLU激活
-        micro_op_resolver.AddMul();              // 乘法
-        micro_op_resolver.AddAdd();              // 加法
-        micro_op_resolver.AddSub();              // 减法
+        ctx.micro_op_resolver.AddUnidirectionalSequenceLSTM();
+        ctx.micro_op_resolver.AddShape();            // SHAPE操作符 - 之前缺失的
+        ctx.micro_op_resolver.AddStridedSlice();     // STRIDED_SLICE操作符 - 现在缺失的 ← 添加这一行
+        ctx.micro_op_resolver.AddFullyConnected();   // 全连接层
+        ctx.micro_op_resolver.AddReshape();          // 重塑层
+        ctx.micro_op_resolver.AddSoftmax();          // Softmax
+        ctx.micro_op_resolver.AddRelu();             // ReLU激活
+        ctx.micro_op_resolver.AddMul();              // 乘法
+        ctx.micro_op_resolver.AddAdd();              // 加法
+        ctx.micro_op_resolver.AddSub();              // 减法
 
-        micro_op_resolver.AddConcatenation();    // 连接操作     
-        micro_op_resolver.AddSplit();            // 分割操作
-        micro_op_resolver.AddTanh();             // Tanh激活（LSTM常用）
-        micro_op_resolver.AddMean();              
-        micro_op_resolver.AddAbs();              
-        micro_op_resolver.AddFill();              
-        micro_op_resolver.AddLogistic();              
-        micro_op_resolver.AddLessEqual();
-        micro_op_resolver.AddPack();             // Pack操作
-        micro_op_resolver.AddUnpack();           // Unpack操作
+        ctx.micro_op_resolver.AddConcatenation();    // 连接操作     
+        ctx.micro_op_resolver.AddSplit();            // 分割操作
+        ctx.micro_op_resolver.AddTanh();             // Tanh激活（LSTM常用）
+        ctx.micro_op_resolver.AddMean();              
+        ctx.micro_op_resolver.AddAbs();              
+        ctx.micro_op_resolver.AddFill();              
+        ctx.micro_op_resolver.AddLogistic();              
+        ctx.micro_op_resolver.AddLessEqual();
+        ctx.micro_op_resolver.AddPack();             // Pack操作
+        ctx.micro_op_resolver.AddUnpack();           // Unpack操作
 
-        micro_op_resolver.AddTranspose();        // 转置操作
+        ctx.micro_op_resolver.AddTranspose();        // 转置操作
         if(    init_model(type)==false){
             ESP_LOGE(TAG,"Init ppo_inference Model Failed");
             return false;
@@ -911,31 +911,31 @@ bool ppo_inference(int type) {
 bool sarsa_inference(int type) {
    auto &ctx=model_contexts[type];
    if(ctx.model==nullptr){
-        micro_op_resolver.AddStridedSlice();
-        micro_op_resolver.AddPack();
-        micro_op_resolver.AddConv2D();
-        micro_op_resolver.AddRelu(); 
-        micro_op_resolver.AddAveragePool2D();
-        micro_op_resolver.AddReshape();  // 🔧 添加这个
-        micro_op_resolver.AddFullyConnected();  // 如果你有 dense 层也要加
-        micro_op_resolver.AddQuantize();
-        micro_op_resolver.AddDequantize();
-        micro_op_resolver.AddSoftmax();
+        ctx.micro_op_resolver.AddStridedSlice();
+        ctx.micro_op_resolver.AddPack();
+        ctx.micro_op_resolver.AddConv2D();
+        ctx.micro_op_resolver.AddRelu(); 
+        ctx.micro_op_resolver.AddAveragePool2D();
+        ctx.micro_op_resolver.AddReshape();  // 🔧 添加这个
+        ctx.micro_op_resolver.AddFullyConnected();  // 如果你有 dense 层也要加
+        ctx.micro_op_resolver.AddQuantize();
+        ctx.micro_op_resolver.AddDequantize();
+        ctx.micro_op_resolver.AddSoftmax();
 
-        micro_op_resolver.AddAdd(); 
-        micro_op_resolver.AddSub();
-        micro_op_resolver.AddMul();
-        micro_op_resolver.AddShape();
-        micro_op_resolver.AddTranspose();
-        micro_op_resolver.AddUnpack();  
-        micro_op_resolver.AddFill();
-        micro_op_resolver.AddSplit(); 
-        micro_op_resolver.AddLogistic();  // This handles sigmoid activation CONCATENATION
-        micro_op_resolver.AddTanh();
+        ctx.micro_op_resolver.AddAdd(); 
+        ctx.micro_op_resolver.AddSub();
+        ctx.micro_op_resolver.AddMul();
+        ctx.micro_op_resolver.AddShape();
+        ctx.micro_op_resolver.AddTranspose();
+        ctx.micro_op_resolver.AddUnpack();  
+        ctx.micro_op_resolver.AddFill();
+        ctx.micro_op_resolver.AddSplit(); 
+        ctx.micro_op_resolver.AddLogistic();  // This handles sigmoid activation CONCATENATION
+        ctx.micro_op_resolver.AddTanh();
 
-        micro_op_resolver.AddMean();
-        micro_op_resolver.AddAbs();
-        micro_op_resolver.AddConcatenation();  
+        ctx.micro_op_resolver.AddMean();
+        ctx.micro_op_resolver.AddAbs();
+        ctx.micro_op_resolver.AddConcatenation();  
         
         if( init_model(type)==false){
                 ESP_LOGE(TAG,"Init  inference Model Failed");
@@ -970,31 +970,31 @@ bool img_inference(int type) {
     //tflite::MicroMutableOpResolver<24> micro_op_resolver;
     if(ctx.model==nullptr)
     {
-        micro_op_resolver.AddStridedSlice();
-        micro_op_resolver.AddPack();
-        micro_op_resolver.AddConv2D();
-        micro_op_resolver.AddRelu(); 
-        micro_op_resolver.AddAveragePool2D();
-        micro_op_resolver.AddReshape();  // 🔧 添加这个
-        micro_op_resolver.AddFullyConnected();  // 如果你有 dense 层也要加
-        micro_op_resolver.AddQuantize();
-        micro_op_resolver.AddDequantize();
-        micro_op_resolver.AddSoftmax();
+        ctx.micro_op_resolver.AddStridedSlice();
+        ctx.micro_op_resolver.AddPack();
+        ctx.micro_op_resolver.AddConv2D();
+        ctx.micro_op_resolver.AddRelu(); 
+        ctx.micro_op_resolver.AddAveragePool2D();
+        ctx.micro_op_resolver.AddReshape();  
+        ctx.micro_op_resolver.AddFullyConnected();   
+        ctx.micro_op_resolver.AddQuantize();
+        ctx.micro_op_resolver.AddDequantize();
+        ctx.micro_op_resolver.AddSoftmax();
 
-        micro_op_resolver.AddAdd(); 
-        micro_op_resolver.AddSub();
-        micro_op_resolver.AddMul();
-        micro_op_resolver.AddShape();
-        micro_op_resolver.AddTranspose();
-        micro_op_resolver.AddUnpack();  
-        micro_op_resolver.AddFill();
-        micro_op_resolver.AddSplit(); 
-        micro_op_resolver.AddLogistic();  // This handles sigmoid activation CONCATENATION
-        micro_op_resolver.AddTanh();
+        ctx.micro_op_resolver.AddAdd(); 
+        ctx.micro_op_resolver.AddSub();
+        ctx.micro_op_resolver.AddMul();
+        ctx.micro_op_resolver.AddShape();
+        ctx.micro_op_resolver.AddTranspose();
+        ctx.micro_op_resolver.AddUnpack();  
+        ctx.micro_op_resolver.AddFill();
+        ctx.micro_op_resolver.AddSplit(); 
+        ctx.micro_op_resolver.AddLogistic();   
+        ctx.micro_op_resolver.AddTanh();
 
-        micro_op_resolver.AddMean();
-        micro_op_resolver.AddAbs();
-        micro_op_resolver.AddConcatenation();  
+        ctx.micro_op_resolver.AddMean();
+        ctx.micro_op_resolver.AddAbs();
+        ctx.micro_op_resolver.AddConcatenation();  
         
         
         if(    init_model(type)==false){
@@ -1060,7 +1060,7 @@ void set_plant_action(const std::array<int, ACTION_CNT>& action) {
 }
 //u_int8_t get_tensor_state(void);
  
-
+extern curLoad_t curLoad[PORT_CNT] ;
 void pid_run(void) 
 {   
     extern pid_run_input_st pid_run_input;
@@ -1079,14 +1079,22 @@ void pid_run(void)
     pid_run_input.env_en_bit  = (1 << ENV_TEMP) | (1 << ENV_HUMID)| (1 << ENV_VPD);
     pid_run_input.ml_run_sta  = 1;
      
-    devs_type_list[1].real_type = pid_run_input.dev_type[1] =loadType_heater ;
-    devs_type_list[2].real_type = pid_run_input.dev_type[2]= loadType_A_C;
-    devs_type_list[3].real_type = pid_run_input.dev_type[3]= loadType_humi ;
-    devs_type_list[4].real_type = pid_run_input.dev_type[4]= loadType_dehumi;
-    devs_type_list[5].real_type = pid_run_input.dev_type[5]= loadType_water_pump;
-    devs_type_list[6].real_type = pid_run_input.dev_type[6]= loadType_growLight;
-    devs_type_list[7].real_type = pid_run_input.dev_type[7]= loadType_co2_generator;
-    devs_type_list[8].real_type = pid_run_input.dev_type[8]= loadType_pump;
+    pid_run_input.dev_type[1] =loadType_heater ;
+    pid_run_input.dev_type[2]= loadType_A_C;
+    pid_run_input.dev_type[3]= loadType_humi ;
+    pid_run_input.dev_type[4]= loadType_dehumi;
+    pid_run_input.dev_type[5]= loadType_water_pump;
+    pid_run_input.dev_type[6]= loadType_growLight;
+    pid_run_input.dev_type[7]= loadType_co2_generator;
+    pid_run_input.dev_type[8]= loadType_pump;
+    curLoad[1].load_type=loadType_heater ;
+    curLoad[2].load_type=loadType_A_C ;
+    curLoad[3].load_type=loadType_humi ;
+    curLoad[4].load_type=loadType_dehumi ;
+    curLoad[5].load_type=loadType_water_pump ;
+    curLoad[6].load_type=loadType_growLight ;
+    curLoad[7].load_type=loadType_co2_generator ;
+    curLoad[8].load_type=loadType_pump ;
     for(int port=1;port<PORT_CNT;port++)
     {    
         pid_run_input.is_switch[port] = 1;
