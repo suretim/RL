@@ -89,10 +89,10 @@ const struct st_name_addr_type debug_name_addr_type[] = {
 
 	//{"pso_global_idx",			(unsigned int)&pso.global_idx,				32},
 	{"global_fitness",			(unsigned int)&pso.global_bestval,	            1},
-	{"global_best_t",			(unsigned int)&pso.global[0].pos[0],		1},
-	{"global_best_dt",			(unsigned int)&pso.global[0].pos[1],		1},
-	{"global_best_h",			(unsigned int)&pso.global[0].pos[2],		1},
-	{"global_best_dh",			(unsigned int)&pso.global[0].pos[3],		1},
+	{"global_best_t",			(unsigned int)&pso.global.pos[0],		1},
+	{"global_best_dt",			(unsigned int)&pso.global.pos[1],		1},
+	{"global_best_h",			(unsigned int)&pso.global.pos[2],		1},
+	{"global_best_dh",			(unsigned int)&pso.global.pos[3],		1},
 
 	//{"pso_test_req",			(unsigned int)&pso.test_req,				32},
 	//{"pso_buf_cnt",				(unsigned int)&pso.buf_cnt,					32},

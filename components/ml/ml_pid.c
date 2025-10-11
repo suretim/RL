@@ -349,7 +349,7 @@ static unsigned int bp_pid_train(void)
                 // only copy if PSO has that position entry
                 if (pos_idx >= 0 && pos_idx < DIM) {
                     // Normalize PSO positions into activation range if necessary
-                    double mapped = pid_map((float)pso.global_position[pos_idx], pso_pos_min_tab[pos_idx], pso_pos_max_tab[pos_idx], 0.0f, 1.0f);
+                    double mapped = pid_map((float)pso.global.pos[pos_idx], pso_pos_min_tab[pos_idx], pso_pos_max_tab[pos_idx], 0.0f, 1.0f);
                     desired_out[i] = mapped;
                 } else {
                     desired_out[i] = 0.0;

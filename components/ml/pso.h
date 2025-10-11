@@ -23,7 +23,7 @@ struct pso_particle
 struct pso_global
 {
     float 			pos[DIM];    		
-    uint8           swarm_idx;     	
+    uint8           idx;     	
 	 float 			best_val;     		// 个体最优适应度	
 	 float best_pos[DIM];
 };
@@ -33,7 +33,7 @@ struct pso_optimizer
 
     //struct pso_particle	particle[NUM_PARTICLES];	// 分群粒子
     struct pso_particle 	swarm[NUM_PARTICLES];	// 群
-	struct pso_global 		global[NUM_GLOBAL];
+	struct pso_global 		global ;
 	 
 	//float			h_buf[NUM_PARTICLES];
 	// float			v_buf[60];
@@ -42,7 +42,8 @@ struct pso_optimizer
     //unsigned int global_idx;
 	uint8 dev_token;	
 	double   v_wight ;	// w:惯性权重
-	float  global_bestval, global_position[DIM]; 
+	float  global_bestval;
+	//float global_position[DIM]; 
 };
 
 extern void pso_check(double new_mae); 
