@@ -46,7 +46,7 @@ struct pso_optimizer
 	//float global_position[DIM]; 
 };
 
-extern void pso_check(double new_mae); 
-extern double update_particles (void);
+extern void pso_path_search(double new_mae); 
+extern double particles_state_machine (void);
 extern void pso_init(void) ;
 #endif

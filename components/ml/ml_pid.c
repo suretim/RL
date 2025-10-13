@@ -251,7 +251,7 @@ static unsigned int bp_pid_train(void)
     }
 
     double prev_global_best = pso.global_bestval;
-    current_mae = update_particles();
+    current_mae = particles_state_machine();
 
     // fill control-related inputs (clamping to [0,1] via pid_map)
     for (h = 0; h < NUM_ENVDEV; ++h) {
@@ -502,7 +502,7 @@ u_int8_t find_gear_level( uint8_t  is_switch ,int16 load_type,unsigned int on_tm
 	}
 	 
 	 *pgearout= out_gear ;
-	 //bp_pid_dbg("gear_level dev_type=(0x%x,%d),pid_o=%.2f,tmr(%d,%d,%d),out_gear=(%d,%d) ,max_mix=(%d,%d) \r\n", real_type,load_type,p_out,acctmr,on_tmo,bp_pid_th.tmr,  out_gear,idx,  max_gear,min_gear );
+	 //bp_pid_dbg("gear_level dev_type=(0x%x,%d),pid_o=%.2f,tmr(%d,%d,%d),out_gear=(%d,%d) ,max_mix=(%d,%d) \r\n", is_switch,load_type,p_out,acctmr,on_tmo,bp_pid_th.tmr,  out_gear,idx,  max_gear,min_gear );
 	 
 	return out_gear ;
 }  
@@ -632,7 +632,7 @@ pid_run_output_st pid_run_rule(pid_run_input_st* input)
 			{   
 				output.speed[port] =find_gear_level(input->is_switch[port], input->dev_type[port],on_tmr ); 			     
 			}
-			bp_pid_dbg("target(%f,%f) output.speed(%d,%d,%d,%d)\r\n",bp_pid_th.t_target,bp_pid_th.h_target,output.speed[1],output.speed[2],output.speed[3],output.speed[4]);
+			bp_pid_dbg("bp_pid_th.dev_token =%x target(%f,%f) output.speed(%d,%d,%d,%d)\r\n",bp_pid_th.dev_token,bp_pid_th.t_target,bp_pid_th.h_target,output.speed[1],output.speed[2],output.speed[3],output.speed[4]);
 			geer_spk_tmr += (bp_pid_th.tmr*2); 
 		} 	
 		 

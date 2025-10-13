@@ -6,7 +6,6 @@ import tensorflow_probability as tfp
 #from pygments.console import light
 import random
 
-
 # 現在有5個特徵: health,temp, humid,light, co2
 # "growing", "flowering", "seeding"
 class PlantLLLHVACEnv:
