@@ -14,7 +14,7 @@ struct pso_optimizer pso = {0};
 				//       t     dt   h     dh
 const float pso_pos_max_tab[DIM]  = {30000,30000,20000,20000,10000,10000};
 const float pso_pos_min_tab[DIM]  = {10000,10000,8000,8000,4000,4000};
-
+//float new_mae=100.0;
 unsigned int * pso_latin_permutation(void)
 {
 	int			 	i;
@@ -40,10 +40,15 @@ unsigned int * pso_latin_permutation(void)
 	return perm;
 }
 
-unsigned int chex_swarm(double new_mae) 
+unsigned int chex_swarm(void) 
 {
 	float r1=(float) rand() / RAND_MAX;	
-	float r2=0.5+  fabs(new_mae); 
+	float mae=0.0f;
+	for(int d=0;d<NUM_ENV_TYPE;d++)
+	{
+		mae +=fabs(pso.mae_buf[d]);
+	}
+	float r2=0.5+  fabs(mae); 
 	static float max_mae=1; 
 	unsigned int pre_idx=pso.swarm_idx;
 	if(r2 > max_mae) max_mae=r2; 
@@ -64,14 +69,13 @@ unsigned int chex_swarm(double new_mae)
 	return NUM_PARTICLES;
 }  
  
-void pso_swarm_update(double new_mae)
+void pso_swarm_update(void)
 {
-	unsigned int pre_idx=chex_swarm(new_mae);
+	unsigned int pre_idx=chex_swarm();
 	float cur_pos=0;
 	float fine_velocity=0;
 	if(pre_idx<NUM_PARTICLES)
-	{
-		
+	{ 
 		bp_pid_dbg("chex_swarm 0x%x,pso 0x%x,bp 0x%x\r\n",pso.dev_token&bp_pid_th.dev_token, pso.dev_token,bp_pid_th.dev_token);
 		for(int d = 0; d <DIM; d++)
 		{
@@ -89,51 +93,55 @@ void pso_swarm_update(double new_mae)
 			//else
 			//{ 
 			//	pso.swarm[pso.swarm_idx].position[d]=pso.swarm[pre_idx].position[d];
-			//}
-			
+			//} 
 		}  	
 		pso.dev_token=0;
 	}	
 }
 
-void pso_path_search(double new_mae)  //^(?!.*global_fit).+(\n|$)  
+void pso_path_search()  //^(?!.*global_fit).+(\n|$)  
 { 
     uint8 i=0,d=0;
 	// 
-	bp_pid_dbg("pso_path_search %.3f,%.3f,%.3f \r\n",new_mae,pso.swarm[pso.swarm_idx].best_mae  , pso.global_bestval);
 		
-	if(new_mae < pso.swarm[pso.swarm_idx].best_mae)
-	{  
-		bp_pid_dbg("swarm_tune=(%.3f t,%.3f h,%.3f best_mae \r\n", pso.mae_buf[0][ENV_T], pso.mae_buf[0][ENV_H],pso.swarm[pso.swarm_idx].best_mae );
-		pso.swarm[pso.swarm_idx].best_mae = new_mae + rand() / (float) RAND_MAX * 0.1;
-		memcpy(pso.swarm[pso.swarm_idx].best_pos, pso.swarm[pso.swarm_idx].position, sizeof(float) * DIM);     
-	}
-	if(new_mae <  pso.global_bestval)
+	for(  d=0;d<NUM_ENV_TYPE;d++)
 	{
-			bp_pid_dbg("global_tune=(%.3f t,%.3f h,%.3f g_best_mae \r\n", pso.mae_buf[0][ENV_T], pso.mae_buf[0][ENV_H],pso.global_bestval );
-			pso.global_bestval = new_mae + rand() / (float) RAND_MAX * 0.1;
-			//pso.global[0].idx = pso.swarm_idx;
-			// for(d = NUM_GLOBAL - 1; d > 0; d--){
-			// 		pso.global[d] = pso.global[d - 1];							
-			// }
-					
-			if(pso.global.idx== 0)
-			{
-				pso.global.idx = 0;
-				memcpy(pso.global.pos, pso.swarm[pso.swarm_idx].position, sizeof(float) * DIM);
-			}
-			pso.global.idx ++;
-			for(i = 0; i <DIM; i++)
-			{ 
-				//pso.global_position[i] =0.0f;										 				
-				pso.global.pos[i] *= NUM_GLOBAL;
-				pso.global.pos[i] += (pso.swarm[pso.swarm_idx].position[i]);				
-				pso.global.pos[i]/=(NUM_GLOBAL+1);
-			} 	
-
-	}	
-	 
+		bp_pid_dbg("pso_path_search dim=%d [pso.swarm_idx].best_mae %.3f,global_bestval %.3f \r\n"
+		,d, pso.swarm[pso.swarm_idx].best_mae[d]  , pso.global_bestval[d]);
 	
+		if(pso.mae_buf[d] < pso.swarm[pso.swarm_idx].best_mae[d])
+		{  
+			pso.swarm[pso.swarm_idx].best_mae[d] = pso.mae_buf[d]  +(float) rand() / (float)  RAND_MAX * 0.01 ;
+			bp_pid_dbg("swarm_tune=(%.3f ,%.3f best_mae \r\n", pso.mae_buf[d],pso.swarm[pso.swarm_idx].best_mae[d] );
+			memcpy(pso.swarm[pso.swarm_idx].best_pos, pso.swarm[pso.swarm_idx].position, sizeof(float) * DIM);     
+		}
+		if(pso.mae_buf[d] <  pso.global_bestval[d])
+		{
+				pso.global_bestval[d] = pso.mae_buf[d]  +(float) rand() / (float)  RAND_MAX * 0.01;
+				bp_pid_dbg("global_tune=(%.3f mae_buf, %.3f g_best_mae) \r\n", pso.mae_buf[d],pso.global_bestval[d] );
+
+				//pso.global[0].idx = pso.swarm_idx;
+				// for(d = NUM_GLOBAL - 1; d > 0; d--){
+				// 		pso.global[d] = pso.global[d - 1];							
+				// }
+						
+				if(pso.global.idx== 0)
+				{
+					pso.global.idx = 0;
+					memcpy(pso.global.pos, pso.swarm[pso.swarm_idx].position, sizeof(float) * DIM);
+				}
+				pso.global.idx ++;
+				for(i = 0; i <DIM; i++)
+				{ 
+					//pso.global_position[i] =0.0f;										 				
+					pso.global.pos[i] *= NUM_GLOBAL;
+					pso.global.pos[i] += (pso.swarm[pso.swarm_idx].position[i]);				
+					pso.global.pos[i]/=(NUM_GLOBAL+1);
+				} 	
+
+		}	
+	}
+		
 	 
 	return;
 }  
@@ -152,8 +160,7 @@ void pso_init(void)
     perm=pso_latin_permutation();			
     for(d = 0; d < DIM; d++)
     {
-        pso.mae_buf[0][d] =0.0f;
-        pso.mae_buf[1][d] =0.0f;
+        pso.mae_buf[d] =0.0f; 
         interval = (pso_pos_max_tab[d] - pso_pos_min_tab[d]) / NUM_PARTICLES;
         //v_max = (pso_pos_max_tab[d] - pso_pos_min_tab[d]) * 0.2f;
         for(p = 0; p < NUM_PARTICLES; p++)
@@ -170,64 +177,72 @@ void pso_init(void)
 			pso.swarm[i].velocity[d] = 0.0f;// bp_pid_th.u_gain[d]/10.0;			
 		}  
 		//pso.buf_idx[0][i] = 0;
-        pso.swarm[i].best_mae = 100.0f;
+		for(d = 0; d < NUM_ENV_TYPE; d++){
+        	pso.swarm[i].best_mae [d]= 100.0f;
+		}
         memcpy(pso.swarm[i].best_pos, pso.swarm[i].position, sizeof(float) * DIM); 
     }
 	pso.swarm_idx=perm[0];
-	for(i = 0; i < NUM_GLOBAL; i++)	
-    {
-		pso.global_bestval = 100.0f;
-		//for(d = 0; d < DIM; d++){
-			pso.global.pos[d] = pso.swarm[0].position[d];	
-		//}
+	//for(i = 0; i < NUM_GLOBAL; i++)	
+    //{
+	for(d = 0; d < NUM_ENV_TYPE; d++){
+		pso.global_bestval[d] = 100.0f;
 	}
+	for(d = 0; d < DIM; d++){
+		pso.global.pos[d] = pso.swarm[0].position[d];	
+	}
+	 
 }
 
-unsigned int pso_mae_val(double *mae)
+unsigned int pso_mae_val(void)
 {
     unsigned int d;
     static unsigned char du_status[DIM] = {0};
-    static unsigned int buf_idx = 0;            // current sample index (0..MAE_BUF_MAX_SAMPLES-1)
+    //static unsigned int buf_idx = 0;            // current sample index (0..MAE_BUF_MAX_SAMPLES-1)
     static unsigned int sample_count = 0;       // how many samples accumulated (capped to MAE_BUF_MAX_SAMPLES)
     double err = 0.0;
 
-    if (mae == NULL) return c_ret_nk;
-    *mae = 0.0;
+    //new_mae = 0.0;
 
     for (d = 0; d < NUM_ENV_TYPE; d++)
     {
         // compute per-d error (preserve original formula but ensure types correct)
         double e = bp_pid_th.e[0][d];
-        double du = (double)bp_pid_th.du_gain[d];
-        err = e + 0.01 * e * e + 0.01 * du;   // consider clamping if needed
+        double du = 0.01 * bp_pid_th.du_gain[d] ;//(double)bp_pid_th.du_gain[d];
+        //err = e + 0.01 * e * e + 0.01 * du;   // consider clamping if needed
+		double e2  = 0.01 * e * e; 
+		// clamp each contribution
+		if (e2  > 5.0)  e2  = 5.0;
+		if (du  > 2.0)  du = 2.0; 
+		err = fabs(e  + e2) + fabs(du) ;
 
         // maintain running average in pso.mae_buf[0][d]
         // we'll store moving average using sample_count up to MAE_BUF_MAX_SAMPLES
         if (sample_count == 0) {
-            pso.mae_buf[0][d] = err;
-            pso.mae_buf[1][d] = fabs(err); // maybe the "min observed" metric
+            pso.mae_buf[d] = err;
+            //pso.mae_buf[1][d] = fabs(err); // maybe the "min observed" metric
         } else {
             // previous_average * sample_count + new_value, then divide by (sample_count+1)
-            double prev = pso.mae_buf[0][d];
+            double prev = pso.mae_buf[d];
             double new_avg = (prev * (double)sample_count + err) / (double)(sample_count + 1);
-            pso.mae_buf[0][d] = new_avg;
+            pso.mae_buf[d] = new_avg;
             // pso.mae_buf[1][d] keep minimum absolute average seen (original intent seemed min)
-            double abs_avg = fabs(new_avg);
-            if (pso.mae_buf[1][d] == 0.0 || pso.mae_buf[1][d] > abs_avg) {
-                pso.mae_buf[1][d] = abs_avg;
-            }
+            //double abs_avg = fabs(new_avg);
+            //if (pso.mae_buf[1][d] == 0.0 || pso.mae_buf[1][d] > abs_avg) {
+            //    pso.mae_buf[1][d] = abs_avg;
+            //}
         }
 
-        *mae += fabs(pso.mae_buf[0][d]);
+        //new_mae += fabs(pso.mae_buf[d]);
     }
 
     // update indices safely
     if (sample_count < MAE_BUF_MAX_SAMPLES) sample_count++;
-    buf_idx = (buf_idx + 1) % MAE_BUF_MAX_SAMPLES;
+    //buf_idx = (buf_idx + 1) % MAE_BUF_MAX_SAMPLES;
 
     // sanity check
-    if (*mae > 50.0) {
-        bp_pid_dbg("mae too large (%.3f) — resetting.\r\n", *mae);
+    if (pso.mae_buf[d] > 50.0) {
+        bp_pid_dbg("mae too large (%.3f) — resetting.\r\n",pso.mae_buf[d]);
         return c_ret_nk;
     }
 
@@ -334,40 +349,38 @@ unsigned char pso_capture_start_token(void)
 
 
 
-double particles_state_machine (void)//float t_target, float t_feed, float h_target, float h_feed, float v_target, float v_feed) //^bp_pid_run.*$\r?\n
+void particles_state_machine (void)//float t_target, float t_feed, float h_target, float h_feed, float v_target, float v_feed) //^bp_pid_run.*$\r?\n
 {
-	static double  new_mae= 0;
+	//static float  new_mae= 0;
 	float fine_velocity ; 
-	unsigned char	check_pitch_idx=0;
+	unsigned char check_pitch_idx=0;
 	unsigned int d=0, i=0;
 	float		 r1, r2; 
 	switch(pso.step)
 	{
 		case c_pso_step_init:	 
-			
 			srand((unsigned int)time(NULL)); 
-			pso.test_req = 1;  
-			//pso_init() ;
-			for(d = 0; d < DIM; d++) 
-			{		
-				pso.swarm[pso.swarm_idx].position[d] =pso.swarm[pso.swarm_idx].best_pos[d] ;							 
-			}
+			pso_init() ;
+			//pso.test_req = 1;  
 			
-			bp_pid_dbg("new START:  fit=%.2f \r\n",   new_mae );  
-			pso.global_bestval =100;
-			pso.buf_cnt = 4;
-			pso.swarm[pso.swarm_idx].best_mae=100;
+			// for(d = 0; d < DIM; d++) 
+			// {		
+			// 	pso.swarm[pso.swarm_idx].position[d] =pso.swarm[pso.swarm_idx].best_pos[d] ;							 
+			// } 
+			bp_pid_dbg("new START:   \r\n" );  
+			  
+			//pso.swarm[pso.swarm_idx].best_mae=100;
 			pso.step = c_pso_step_wait;   
 			pso.dev_token=0;  
 		break;
 		
 		case c_pso_step_wait:
-			if(	pso_mae_val( &new_mae )==c_ret_ok)
+			if(	pso_mae_val()==c_ret_ok)
 			{
 				pso.step = c_pso_step_update;	
 			}
 			else{
-				bp_pid_dbg("reset START:  fit=%.2f \r\n",   new_mae ); 
+				bp_pid_dbg("reset START:   \r\n"  ); 
 				pso.step = c_pso_step_init;							
 			}
 		break; 
@@ -378,18 +391,18 @@ double particles_state_machine (void)//float t_target, float t_feed, float h_tar
 			if(check_pitch_idx==0)
 			{ 
 				pso.step = c_pso_step_wait;
-				pso_path_search(new_mae);  
-			  	bp_pid_dbg("c_pso_step_update pso.swarm_idx %d check_pitch_idx %d new_mae=%f\r\n",pso.swarm_idx, check_pitch_idx ,new_mae);
-				return new_mae;  
+				pso_path_search();  
+			  	bp_pid_dbg("c_pso_step_update pso.swarm_idx %d check_pitch_idx %d\r\n",pso.swarm_idx, check_pitch_idx );
+				return ;  
 			}
 			else{
-				bp_pid_dbg("c_pso_step_update pso.swarm_idx %d check_pitch_idx %d new_mae=%f\r\n",pso.swarm_idx, check_pitch_idx ,new_mae);				
+				bp_pid_dbg("c_pso_step_update pso.swarm_idx %d check_pitch_idx %d\r\n",pso.swarm_idx, check_pitch_idx );				
 				pso.step = c_pso_step_check; 
 			} 
 		break;
 		case c_pso_step_check : 
 				pso.step = c_pso_step_wait;	
-				pso_swarm_update(  new_mae);
+				pso_swarm_update();
 				//pso.dev_token=0;
 				//calculate_svd(new_mae); 
 				//bp_pid_dbg("p00=%.4f,p01=%.4f,p02=%.4f,p20=%.4f,p21=%.4f,p22=%.4f,p40=%.4f,p41=%.4f,p42=%.4f;\r\n",svd.pitchs[0][0],svd.pitchs[0][1],svd.pitchs[0][2], svd.pitchs[2][0],svd.pitchs[2][1],svd.pitchs[2][2], svd.pitchs[4][0],svd.pitchs[4][1],svd.pitchs[4][2]);
@@ -399,6 +412,6 @@ double particles_state_machine (void)//float t_target, float t_feed, float h_tar
 		break; 
 		default:   break;
 	}	
-	return  new_mae;
+	return  ;
 }  
  

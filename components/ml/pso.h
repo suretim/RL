@@ -15,7 +15,7 @@ struct pso_particle
     float 			position[DIM];    		// 当前增益值
     float 			velocity[DIM];    		// 速度向量
     float 			best_pos[DIM];    		// 个体历史最优增益
-    float 			best_mae;//[NUM_ENV_TYPE];     		// 个体最优适应度
+    float 			best_mae[NUM_ENV_TYPE];     		// 个体最优适应度
 	unsigned int    v_idx[DIM]; 
 	float				val;
    
@@ -29,7 +29,7 @@ struct pso_global
 };
 struct pso_optimizer
 {
-	double			mae_buf[2][NUM_ENV_TYPE];
+	float mae_buf[NUM_ENV_TYPE];
 
     //struct pso_particle	particle[NUM_PARTICLES];	// 分群粒子
     struct pso_particle 	swarm[NUM_PARTICLES];	// 群
@@ -37,16 +37,16 @@ struct pso_optimizer
 	 
 	//float			h_buf[NUM_PARTICLES];
 	// float			v_buf[60];
-	unsigned int	 buf_cnt, test_req;
+	//unsigned int	 buf_cnt, test_req;
 	unsigned int swarm_idx , step;
     //unsigned int global_idx;
 	uint8 dev_token;	
 	double   v_wight ;	// w:惯性权重
-	float  global_bestval;
+	float  global_bestval[NUM_ENV_TYPE];
 	//float global_position[DIM]; 
 };
 
-extern void pso_path_search(double new_mae); 
-extern double particles_state_machine (void);
+extern void pso_path_search(void); 
+extern void particles_state_machine (void);
 extern void pso_init(void) ;
 #endif

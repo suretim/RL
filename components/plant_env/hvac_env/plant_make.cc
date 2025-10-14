@@ -131,21 +131,15 @@ extern "C" void plant_env_step(void) {
         std::cout << "Reward: " << reward << std::endl;
         
         std::vector<float> health_result={
-            result.temp,
-            result.humid ,
-            result.soil ,
-            result.light ,
-            result.co2 ,
-            result.vpd,
-            result.reward ,
-            result.flower_prob            
+            result.reward, 
+            result.flower_prob           
         };
         return  ;
 }
  
 
 // ======= PPO 模型 =======
-PPOEWCModel ewcppoModel;
+PPOEWCModel ewcppoModel; 
 extern struct st_bp_pid_th bp_pid_th ;
 extern float* load_float_bin(const char* path, size_t &length) ; 
 extern "C" bool hvac_ewc(void) {
@@ -160,19 +154,16 @@ extern "C" bool hvac_ewc(void) {
     // }
 
     // 初始化环境
-    bool done =false;
-    env.reset();
-
-    // PPO 模型
-    PPOEWCModel ewcppoModel;
+    bool done = false;
+    
+    env.reset(); 
+    // PPO 模型 
     ewcppoModel.initModel();  // 如果有 initModel()
-
+    
     static std::vector<float> old_action_probs = {0.0f, 0.0f, 0.0f};
-
-    while (done == false) {
  
-
-#if 1
+    bp_pid_dbg("init hvac_ewc \r\n");  
+    while(done==false){
         // ====== 环境状态 ======
         std::vector<float> observation = env.get_state();
 
@@ -188,7 +179,7 @@ extern "C" bool hvac_ewc(void) {
         std::vector<float> new_state = result.state;
         float reward = result.reward;
         done = result.done;
-#endif
+ 
         // ====== 优势计算 ======
         std::vector<float> advantages(action_probs.size(), 0.0f);
         for (size_t i = 0; i < action_probs.size(); ++i) {
@@ -198,13 +189,7 @@ extern "C" bool hvac_ewc(void) {
 
         // // ====== health_result ======
         std::vector<float> health_result = {
-            result.temp,
-            result.humid,
-            result.soil,
-            result.light,
-            result.co2,
-            result.vpd,
-            result.reward,
+            result.reward, 
             result.flower_prob
         };
 
@@ -230,9 +215,9 @@ extern "C" bool hvac_ewc(void) {
         printf("\n");
 
         // 如果环境结束，重置
-        if (done) {
-            env.reset();
-        }
+        // if (done) {
+        //     env.reset(); 
+        // }
 
         vTaskDelay(pdMS_TO_TICKS(5000)); // 每 5 秒交互一次
     }

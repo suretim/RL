@@ -48,57 +48,54 @@ pid_run_output_st ml_pid_out_speed;
 
 bool read_all_sensor_trigger(void )
 {
+	
+		ml_read_sensor();  
+		r_env_th.t_feed    = ml_get_cur_temp() /10.0;//input->env_value_cur[ENV_TEMP]/10.0f;
+		r_env_th.t_outside = ml_get_outside_temp()/10.0 ;//input->env_value_cur[ENV_TEMP]/10.0f;
 	 
-    ml_read_sensor();
-	for (uint8_t i = 1; i < PORT_CNT; i++)
-	{
-	 	ml_set_sw( i,ml_pid_out_speed.speed[i] ); 
+		//if(is_temp_unit_f())
+		//{	//C = (F - 32) × 5/9
+		//	bp_pid_th.t_target = (bp_pid_th.t_target - 32) * 5 / 9;
+		//	bp_pid_th.t_feed   = (bp_pid_th.t_feed   - 32) * 5 / 9;
+			r_env_th.t_outside= (bp_pid_th.t_outside- 32) * 5 / 9;
+		//}
+		r_env_th.h_feed    = (float)ml_get_cur_humid()/10.0 ;//nput->env_value_cur[ENV_HUMID]/10.0f;
+		r_env_th.h_feed    /=100.0;
+		
+		r_env_th.h_outside = (float)ml_get_outside_humid()/10.0;
+		r_env_th.h_outside /=100.0 ;//nput->env_value_cur[ENV_HUMID]/10.0f;
+		
+		r_env_th.l_feed   =ml_get_cur_light();
+		r_env_th.c_feed   =ml_get_cur_co2(); 
+	 
+	r_env_th.t_target  = ml_get_target_temp()  ;
+	r_env_th.h_target  = (float)ml_get_target_humid()  ;
+	r_env_th.h_target  /=100.0;
+
+	
+	if(true_env==false){
+     	bp_pid_th=v_env_th; 
+    }
+	else{
+	 	bp_pid_th=r_env_th;  
 	}
-	   
-	  
-	bp_pid_th.t_feed    = ml_get_cur_temp() /10.0;//input->env_value_cur[ENV_TEMP]/10.0f;
-	bp_pid_th.t_target  = ml_get_target_temp()  ;
-	bp_pid_th.t_outside = ml_get_outside_temp()/10.0 ;//input->env_value_cur[ENV_TEMP]/10.0f;
-	 
-	//if(is_temp_unit_f())
-	//{	//C = (F - 32) × 5/9
-	//	bp_pid_th.t_target = (bp_pid_th.t_target - 32) * 5 / 9;
-	//	bp_pid_th.t_feed   = (bp_pid_th.t_feed   - 32) * 5 / 9;
-		bp_pid_th.t_outside= (bp_pid_th.t_outside- 32) * 5 / 9;
-	//}
-	bp_pid_th.h_feed    = (float)ml_get_cur_humid()/10.0 ;//nput->env_value_cur[ENV_HUMID]/10.0f;
-	bp_pid_th.h_feed    /=100.0;
-	bp_pid_th.h_target  = (float)ml_get_target_humid()  ;
-	bp_pid_th.h_target  /=100.0;
-	bp_pid_th.h_outside = (float)ml_get_outside_humid()/10.0;
-	bp_pid_th.h_outside /=100.0 ;//nput->env_value_cur[ENV_HUMID]/10.0f;
-	 
-	bp_pid_th.l_feed   =ml_get_cur_light();
-	bp_pid_th.c_feed   =ml_get_cur_co2(); 
 	if(bp_pid_th.t_feed == 0 && bp_pid_th.h_feed == 0) 
 		return false;	
-	//if(input->env_en_bit & (1 << ENV_VPD))
-	//{
-	//	bp_pid_th.v_target = input->env_target[ENV_VPD]/100.0;
-	//}
-	//else
-	//{
-		//bp_pid_th.v_target =  pid_cal_vpd(bp_pid_th.t_target, bp_pid_th.h_target) ; 
-		//bp_pid_dbg(" cal v_target=%.2f,t_target= %.2f, h_target= %.2f  \r\n", pid_arg.v_target, pid_arg.t_target,pid_arg.h_target  );
-		//bp_pid_dbg(" cal v_target=%.2f,v_feed= %.2f, v_inside= %.2f  \r\n", pid_arg.v_target, pid_arg.v_feed,pid_arg.v_inside  );
-	//}			
-	//bp_pid_th.v_feed = ml_get_cur_vpd()/100.0;//input->env_value_cur[ENV_VPD]/10.0f;
-	bp_pid_th.v_feed =  pid_cal_vpd(bp_pid_th.t_feed, bp_pid_th.h_feed) ; 
-		
-	//bp_pid_th.v_outside = ml_get_outside_vpd()/100.0;//in_side_vpd;
+	
+	 
+	bp_pid_th.v_feed    =  pid_cal_vpd(bp_pid_th.t_feed,    bp_pid_th.h_feed) ;  
 	bp_pid_th.v_outside =  pid_cal_vpd(bp_pid_th.t_outside, bp_pid_th.h_outside) ; 
-	bp_pid_th.v_target =  pid_cal_vpd(bp_pid_th.t_target, bp_pid_th.h_target) ;
+	bp_pid_th.v_target  =  pid_cal_vpd(bp_pid_th.t_target,  bp_pid_th.h_target) ;
 	//ESP_LOGI(TAG, "inisde  t=%f, h=%f, v=%f", bp_pid_th.t_feed, bp_pid_th.h_feed, bp_pid_th.v_feed);
 	//ESP_LOGI(TAG, "outside t=%f, h=%f, v=%f", bp_pid_th.t_outside, bp_pid_th.h_outside, bp_pid_th.v_outside);
 	//ESP_LOGI(TAG, "target t=%f, h=%f, v=%f", bp_pid_th.t_target, bp_pid_th.h_target, bp_pid_th.v_target);
 	//ESP_LOGW(TAG, "light:%f co2:%f ",bp_pid_th.l_feed,bp_pid_th.c_feed);
 
 	//ESP_LOGI(TAG, "Sensor Working Normal");
+	for (uint8_t i = 1; i < PORT_CNT; i++)
+	{
+		ml_set_sw( i,ml_pid_out_speed.speed[i] ); 
+	} 	
 	return true;
 }
 

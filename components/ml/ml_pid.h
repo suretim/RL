@@ -174,8 +174,8 @@ static int iminarg1,iminarg2;
 
 #define	c_bp_pid_dbg_en			0
 #define bp_dbg(format, ...)			printf(" "format, ##__VA_ARGS__)
-#define bp_pid_dbg(format, ...)			printf("bp_pid_d "format, ##__VA_ARGS__)
-#define bp_pid_wave(format, ...)		printf("bp_pid_w "format, ##__VA_ARGS__)
+#define bp_pid_dbg(format, ...)			printf("bp_pid_d " format, ##__VA_ARGS__)
+#define bp_pid_wave(format, ...)		printf("bp_pid_w " format, ##__VA_ARGS__)
 #define c_diff_wc1c2  1
 
 
@@ -226,10 +226,6 @@ typedef struct{
     uint8_t speed[PORT_CNT];
 }pid_run_output_st;
 
-extern pid_run_output_st pid_run_rule(pid_run_input_st* input);
-extern struct st_bp_pid_th    bp_pid_th ;
-//extern dev_type_t devs_type_list[PORT_CNT]; 
-extern pid_run_output_st lstm_pid_out_speed;
 
 extern float pid_map(float param1, float param2, float param3, float param4, float param5); 
 // struct st_pos_val_arg
@@ -318,6 +314,13 @@ struct st_bp_pid_th
 
 };
 
+extern bool pid_run_rule(pid_run_input_st* input);
+extern struct st_bp_pid_th    bp_pid_th ;
+extern struct st_bp_pid_th    v_env_th ;
+extern struct st_bp_pid_th    r_env_th ;
+extern bool true_env;
+//extern dev_type_t devs_type_list[PORT_CNT]; 
+extern pid_run_output_st lstm_pid_out_speed;
 extern unsigned int tick_get(void);
 extern unsigned int tick_reset(void);
 extern float hvac_margin[NUM_ENV_TYPE];

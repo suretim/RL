@@ -454,11 +454,11 @@ void main_task(void *pvParameters)
 			run_per100ms_2();
 			run_per100ms();	
 			main_flash_heart();  
-			pid_run();//tim modify
 			flag_100ms++;
 		    //if (  flag_100ms>=100 && flask_state_get_flag[FLASK_OPTI_MODEL]==SPIFFS_MODEL_SAVED )
 			if (  flag_100ms>=100   )
 			{
+				pid_run();//tim modify
 				flag_100ms = 1;	
 				if(	lll_tensor_run(PPO_CASE)==ESP_FAIL){ 
 					break; 
@@ -534,24 +534,21 @@ void plant_env_make_task(void *pvParameters)
 {
 
 	vTaskDelay(3000 / portTICK_PERIOD_MS);
-	static uint16_t flag_100ms=0; 
+	//static uint16_t flag_100ms=0; 
+	bool done =false;
 	while(1)
 	{  
-		 
-		if(hvac_ewc() ==0){  //hvac_ewc();  plant_env_step
+		done=hvac_ewc(); 
+		if(done==true){  //hvac_ewc();  plant_env_step
 			vTaskDelay(pdMS_TO_TICKS(1000));
-			break;
-		}
-		flag_100ms++;
-		if(flag_100ms==101)
-		{
+			 
 			if (send_seq_to_server()) {
 				ESP_LOGI(TAG, "送到 server 成功！");
 			} else {
 				ESP_LOGE(TAG, "送到 server 失敗！");
 			}
-		}
-		
+		} 
+		done=false;
 		vTaskDelay(pdMS_TO_TICKS(10000));
 	} 
 }
@@ -601,22 +598,22 @@ void app_main(void)
     //wifi_creat_event();
 	//wifi_init_apsta();  
 	wifi_init_sta();
-//updata_creat_event();
+	//updata_creat_event();
  	main_creat_objs();
-//tcp_client_creat_objs();
+	//tcp_client_creat_objs();
 	//     start_ota();
 
-//comm_creat_objs();
+	//comm_creat_objs();
     //////////////////
 	// xTaskCreate(ble_task, 			TASK_NAME_BLE, 		TASK_STACK_BLE, 	NULL, TASK_PRIO_BLE, 	NULL);
 	//xTaskCreate(wifi_task, 			TASK_NAME_WIFI, 	TASK_STACK_WIFI, 	NULL, TASK_PRIO_WIFI, 	NULL);
-//xTaskCreate(updata_task,		TASK_NAME_UPDATA,	TASK_STACK_UPDATA, 	NULL, TASK_PRIO_UPDATA, NULL);
-xTaskCreate(main_task, 			TASK_NAME_MAIN, 	TASK_STACK_MAIN, 	NULL, TASK_PRIO_MAIN, 	NULL);
+	//xTaskCreate(updata_task,		TASK_NAME_UPDATA,	TASK_STACK_UPDATA, 	NULL, TASK_PRIO_UPDATA, NULL);
+	xTaskCreate(main_task, 			TASK_NAME_MAIN, 	TASK_STACK_MAIN, 	NULL, TASK_PRIO_MAIN, 	NULL);
 	// xTaskCreate(main_monitor_task, 	TASK_NAME_MOMITOR, 	TASK_STACK_MOMITOR, NULL, TASK_PRIO_MOMITOR, NULL);
 
-//tcp_client_creat_task();
-//tcp_client_creat_rcv_task();
-//xTaskCreate(chgup_load_task, 	TASK_NAME_CHGUPLOAD, TASK_STACK_CHGUPLOAD, NULL, TASK_PRIO_CHGUPLOAD, NULL);
+	//tcp_client_creat_task();
+	//tcp_client_creat_rcv_task();
+	//xTaskCreate(chgup_load_task, 	TASK_NAME_CHGUPLOAD, TASK_STACK_CHGUPLOAD, NULL, TASK_PRIO_CHGUPLOAD, NULL);
 
 	 xTaskCreate(plant_env_make_task,TASK_NAME_PLANT_ENV, TASK_STACK_PLANT_ENV, NULL, TASK_PRIO_PLANT_ENV, NULL);	// 通信数据解析
 

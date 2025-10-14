@@ -37,16 +37,25 @@ public:
         bool done;
         std::vector<float> latent_soft_label;
         float flower_prob;
-        float temp;
-        float humid;
-        float soil;
-        float light;
-        float co2;
-        float ph;
-        float vpd; 
+        // float temp;
+        // float humid;
+        // float soil;
+        // float light;
+        // float co2;
+        // float ph;
+        // float vpd; 
+        float itm_heat      =  0.01f;        
+        float itm_ac        = -0.005f;
+        float itm_humid     =  0.0002f;
+        float itm_dehumi    = -0.0005f;
+        float itm_waterpump = 1.0;
+        float itm_light     = 20.f;
+        float itm_co2       = 50.0f;
+        float itm_pump      = 1.1f;
         
         StepResult() : reward(0.0f), done(false), flower_prob(0.0f),
-                       temp(0.0f), humid(0.0f),soil(0.0f), light(0.0f), co2(0.0f), ph(7.0f), vpd(0.0f)  {}
+                       itm_heat(0.01f), itm_ac(-0.005f), itm_humid(0.0002f), itm_dehumi(-0.0005f),
+                       itm_waterpump(1.0f),itm_light(20.0f), itm_co2(50.0f), itm_pump(1.1f)   {}
     };
     std::map<std::string, ModeParam> mode_params= {
             {"seeding",  ModeParam{{24,30},{0.50f,0.70f},{0.20f, 0.30f},{200,400} ,{400,600} ,{5.5f,6.2f},{0.4f,0.8f}, 0.1f, -0.05f}},
@@ -58,13 +67,13 @@ public:
     uint32_t rng_seed = 12345;
     std::string plant_mode = "testing";
     int true_label= -1; 
-    bool true_env= false;
+    
     float rand_uniform() {
         // 简单 LCG 随机数生成器，返回 0~1
         rng_seed = 1664525 * rng_seed + 1013904223;
         return (rng_seed & 0xFFFFFF) / float(0x1000000);
     }
-
+    void update_dynamics(float t_feed,StepResult result,const std::array<int,ACTION_CNT>& action,float measured_temp_next);
     float rand_normal(float mean, float stddev) {
         // 简单 Box-Muller
         float u1 = rand_uniform();
@@ -86,12 +95,12 @@ private:
     float temp_init;
     float humid_init;
 
-    float temp;
-    float humid;
-    float soil;
-    float light;
-    float co2;
-    float vpd; // 蒸汽压差 (kPa)
+    // float temp;
+    // float humid;
+    // float soil;
+    // float light;
+    // float co2;
+    // float vpd; // 蒸汽压差 (kPa)
     bool done;
     int health;
     int t;
@@ -131,12 +140,13 @@ public:
                            const std::vector<int>& labels);
     void reset() {
             // 将环境状态重置为初始值
-            temp = (mode_params["seeding"].temp_range.first  +mode_params["seeding"].temp_range.second )/ 2.0f ;   //22.0f;  // 设定初始温度为22.0度
-            humid =(mode_params["seeding"].humid_range.first +mode_params["seeding"].humid_range.second )/ 2.0f ;   //;     // 设定初始湿度为50%
-            soil  =(mode_params["seeding"].water_range.first +mode_params["seeding"].water_range.second )/ 2.0f ;   //;     
-            light =(mode_params["seeding"].light_range.first +mode_params["seeding"].light_range.second )/ 2.0f ;   //; // 设定初始光照为300lux
-            co2   =(mode_params["seeding"].co2_range.first   +mode_params["seeding"].co2_range.second )/ 2.0f ;   //; // 设定初始CO2浓度为400ppm
-            vpd   =(mode_params["seeding"].vpd_range.first   +mode_params["seeding"].vpd_range.second )/ 2.0f ;   //;  
+            v_env_th.t_feed   = (mode_params["seeding"].temp_range.first  +mode_params["seeding"].temp_range.second )/ 2.0f ;   //22.0f;  // 设定初始温度为22.0度
+            v_env_th.h_feed   =(mode_params["seeding"].humid_range.first +mode_params["seeding"].humid_range.second )/ 2.0f ;   //;     // 设定初始湿度为50%
+            v_env_th.w_feed   =(mode_params["seeding"].water_range.first +mode_params["seeding"].water_range.second )/ 2.0f ;   //;     
+            v_env_th.l_feed   =(mode_params["seeding"].light_range.first +mode_params["seeding"].light_range.second )/ 2.0f ;   //; // 设定初始光照为300lux
+            v_env_th.c_feed   =(mode_params["seeding"].co2_range.first   +mode_params["seeding"].co2_range.second )/ 2.0f ;   //; // 设定初始CO2浓度为400ppm
+            v_env_th.p_feed   =(mode_params["seeding"].ph_range.first   +mode_params["seeding"].ph_range.second )/ 2.0f ;   //; // 设定初始CO2浓度为400ppm
+            v_env_th.v_target =(mode_params["seeding"].vpd_range.first   +mode_params["seeding"].vpd_range.second )/ 2.0f ;   //;  
             done = false;         // 重置任务结束标志
             
           

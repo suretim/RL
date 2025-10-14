@@ -28,6 +28,7 @@ unsigned int gain_adj_ctrl = 2;
 
 //dev_type_t devs_type_list[PORT_CNT];
 pid_run_output_st lstm_pid_out_speed;
+pid_run_output_st pid_out_speed ;
 extern const float pso_pos_max_tab[DIM]  ;
 extern const float pso_pos_min_tab[DIM] ;
 extern curLoad_t curLoad[PORT_CNT] ;
@@ -35,6 +36,9 @@ extern curLoad_t curLoad[PORT_CNT] ;
 //float tmp_pitch[NUM_UPDOWN][NUM_PTH_TYPE]= {{0.99,0.99,0.99 },{1.01,1.01,1.01 }};
 unsigned int tmp_pdx[DIM]={0};
 struct st_bp_pid_th bp_pid_th = {0};
+struct st_bp_pid_th v_env_th = {0};
+struct st_bp_pid_th r_env_th = {0};
+bool true_env= false;
 extern struct pso_optimizer pso ;
 //struct svd_optimizer svd = {0};
 float hvac_margin[NUM_ENV_TYPE]={0.030,0.030,0.050};  
@@ -56,7 +60,7 @@ const float gear_list[NUM_ENVDEV][11]        = {
 
 //const float fit_up_bound=8.0;
 //const float fit_low_bound=3.0;
-double current_mae=0.0; 
+//double current_mae=0.0; 
 
 
 static double pid_exp(double x)
@@ -250,8 +254,8 @@ static unsigned int bp_pid_train(void)
         ni_dat[h * NUM_ENV_TYPEIN + PAR_DEL_IN] = bp_pid_th.e[0][h];
     }
 
-    double prev_global_best = pso.global_bestval;
-    current_mae = particles_state_machine();
+    
+    particles_state_machine();
 
     // fill control-related inputs (clamping to [0,1] via pid_map)
     for (h = 0; h < NUM_ENVDEV; ++h) {
@@ -451,7 +455,7 @@ unsigned int  get_eco_update(void)
     unsigned int on_tmr = tick_get(); 
 	return on_tmr;
 }
-u_int8_t find_gear_level( uint8_t  is_switch ,int16 load_type,unsigned int on_tmr)
+u_int8_t find_gear_level( uint8_t  is_switch ,int16 dev_type,unsigned int on_tmr)
 {
 	u_int8_t idx = 1; 
 	u_int8_t h_idx = 0; 
@@ -462,7 +466,7 @@ u_int8_t find_gear_level( uint8_t  is_switch ,int16 load_type,unsigned int on_tm
 	u_int8_t *pgearout=NULL;
 	unsigned int acctmr=  tick_get() - on_tmr; 
  
-	switch(  load_type  ) 
+	switch(  dev_type  ) 
 	{
 		case loadType_heater:	h_idx=DEV_TU;  break;
 		case loadType_A_C:		h_idx=DEV_TD;  break;
@@ -507,12 +511,12 @@ u_int8_t find_gear_level( uint8_t  is_switch ,int16 load_type,unsigned int on_tm
 	return out_gear ;
 }  
  
-pid_run_output_st pid_run_rule(pid_run_input_st* input)
+bool pid_run_rule(pid_run_input_st* input)
 {
 	//extern pid_run_output_st nn_ppo_infer();	
-    short	 dev_type= 0;
+    unsigned int	 dev_type= 0;
 	static bool init_flag = false; 
-    static pid_run_output_st  output ;
+    //static pid_run_output_st  output ;
 	//struct st_bp_pid_th_arg	pid_arg;
 	//static unsigned int 	en_bit = 0; 
     bp_pid_tick_tmr += 100;
@@ -617,27 +621,28 @@ pid_run_output_st pid_run_rule(pid_run_input_st* input)
 					tmp_pid_o=bp_pid_th.pid_o[DEV_VD];
 					tmp_du_gain=bp_pid_th.du_gain[DEV_VD];
 				}
-				bp_pid_dbg("[%d][0x%x](%.0ftu %.0fhu %.0fv%c)tu(%.0f,%.3f)hu(%.0f,%.3f)v%c(%.0f,%.3f)kT(%.3f,%.3f,%.3f)mae(%.3f,%.3f,%.3f,%.3f) \r\n",pso.swarm_idx,bp_pid_th.dev_token
+				bp_pid_dbg("[%d][0x%x](%.0ftu %.0fhu %.0fv%c)tu(%.0f,%.3f)hu(%.0f,%.3f)v%c(%.0f,%.3f)kT(%.3f,%.3f,%.3f)mae(%.3f,%.3f,%.3f) \r\n",pso.swarm_idx,bp_pid_th.dev_token
 				,pso.swarm[pso.swarm_idx].position[DEV_TU], pso.swarm[pso.swarm_idx].position[DEV_HU],tmp_v_val,tmpstr   
 				,bp_pid_th.pid_o[DEV_TU],bp_pid_th.du_gain[DEV_TU],bp_pid_th.pid_o[DEV_HU],bp_pid_th.du_gain[DEV_HU],tmpstr,tmp_pid_o,tmp_du_gain
 				,bp_pid_th.ho_sigmoid_out[NUM_ENV_KPID*ENV_V+ENV_KP],bp_pid_th.ho_sigmoid_out[NUM_ENV_KPID*ENV_V+ENV_KI],bp_pid_th.ho_sigmoid_out[NUM_ENV_KPID*ENV_V+ENV_KD]
-				,current_mae,pso.mae_buf[0][ENV_T],pso.mae_buf[0][ENV_H],pso.mae_buf[0][ENV_V]);
+				,pso.mae_buf[ENV_T],pso.mae_buf[ENV_H],pso.mae_buf[ENV_V]);
 			}  
-		}   
-		if(tick_cmp(geer_spk_tmr, bp_pid_th.tmr*2) == c_ret_ok)
-		{	
+		//}   
+		//if(tick_cmp(geer_spk_tmr, bp_pid_th.tmr*2) == c_ret_ok)
+		//{	
 			//bp_pid_th.dev_token= (pso.mae_buf[1][idx>>1]>=hvac_margin[idx>>1])? (1<<idx) :bp_pid_th.dev_token;
 			bp_pid_th.dev_token= 0; 
 			for(uint8_t port=1; port < PORT_CNT; port++ )
 			{   
-				output.speed[port] =find_gear_level(input->is_switch[port], input->dev_type[port],on_tmr ); 			     
+				ml_pid_out_speed.speed[port] =find_gear_level(input->is_switch[port], input->dev_type[port],on_tmr ); 			     
 			}
-			bp_pid_dbg("bp_pid_th.dev_token =%x target(%f,%f) output.speed(%d,%d,%d,%d)\r\n",bp_pid_th.dev_token,bp_pid_th.t_target,bp_pid_th.h_target,output.speed[1],output.speed[2],output.speed[3],output.speed[4]);
+			bp_pid_dbg("bp_pid_th.dev_token =%x target(%f,%f) output.speed(%d,%d,%d,%d)\r\n",bp_pid_th.dev_token,bp_pid_th.t_target,bp_pid_th.h_target,ml_pid_out_speed.speed[1],ml_pid_out_speed.speed[2],ml_pid_out_speed.speed[3],ml_pid_out_speed.speed[4]);
 			geer_spk_tmr += (bp_pid_th.tmr*2); 
+            return true;
 		} 	
 		 
 	}
 	 
  
-    return output;
+    return false;
 } 

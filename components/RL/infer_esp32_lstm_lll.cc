@@ -35,7 +35,7 @@ extern "C" {
 #include "esp_partition.h"  
 #include "spi_flash_mmap.h"   // 替代 esp_spi_flash.h
 #include "nn.h"
-   
+#include "ni_debug.h"   
  
 extern const unsigned char _binary_esp32_optimized_model_tflite_start[] asm("_binary_esp32_optimized_model_tflite_start");
 extern const unsigned char _binary_esp32_optimized_model_tflite_end[]   asm("_binary_esp32_optimized_model_tflite_end");
@@ -1052,7 +1052,8 @@ void catch_tensor_dim(int type) {
     }
     
 }
-std::array<int,ACTION_CNT>  action;
+
+
 //extern void set_plant_action(const std::array<int, ACTION_CNT>& action);
 void set_plant_action(const std::array<int, ACTION_CNT>& action) {
     extern std::array<int, ACTION_CNT> plant_action ;
@@ -1062,6 +1063,7 @@ void set_plant_action(const std::array<int, ACTION_CNT>& action) {
  
 extern curLoad_t curLoad[PORT_CNT] ;
 extern pid_run_input_st pid_run_input;
+
 bool pid_env_init(void) 
 { 
     //pid_param_get(&g_ai_setting, NULL, NULL, NULL, &pid_run_input );
@@ -1112,12 +1114,17 @@ void pid_run(void)
     {
         return ;
     } 
-    pid_run_output_st out_speed = pid_run_rule( &pid_run_input );
-    for(int port=1;port<= ACTION_CNT;port++)
-    {    
-        ml_pid_out_speed.speed[port]  = out_speed.speed[port];
-        action[port-1]=ml_pid_out_speed.speed[port];
-        set_plant_action(action);
+    if(pid_run_rule( &pid_run_input )==true)
+    {
+        std::array<int,ACTION_CNT>  action;
+        for(int port=1;port<= ACTION_CNT;port++)
+        {    
+            
+            action[port-1]=ml_pid_out_speed.speed[port];
+            set_plant_action(action);
+
+        }
+        bp_pid_dbg("pid_run_output_st =(%d,%d,%d,%d)\r\n", action[0],action[1], action[2],action[3]);
     }
     return;
 }
