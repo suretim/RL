@@ -1063,6 +1063,7 @@ void set_plant_action(const std::array<int, ACTION_CNT>& action) {
  
 extern curLoad_t curLoad[PORT_CNT] ;
 extern pid_run_input_st pid_run_input;
+//extern st_bp_pid_th  r_pid_th;
 
 bool pid_env_init(void) 
 { 
@@ -1099,6 +1100,9 @@ bool pid_env_init(void)
     {    
         pid_run_input.is_switch[port] = 1;
     } 
+    r_env_th.t_target=pid_run_input.env_target[ENV_TEMP];
+    r_env_th.h_target=pid_run_input.env_target[ENV_HUMID];  
+    bp_pid_dbg("pid_env_init Sucessfully \r\n");
     return true;
 }
 
@@ -1107,11 +1111,13 @@ void pid_run(void)
      
     if( pid_env_init() ==false)
     {
+        bp_pid_dbg("pid_env_init Error \r\n");
         return  ;
     } 
     
 	if(read_all_sensor_trigger()==false)
     {
+        bp_pid_dbg("Sensor Working Error \r\n");
         return ;
     } 
     if(pid_run_rule( &pid_run_input )==true)

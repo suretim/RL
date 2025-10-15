@@ -68,24 +68,31 @@ bool read_all_sensor_trigger(void )
 		r_env_th.l_feed   =ml_get_cur_light();
 		r_env_th.c_feed   =ml_get_cur_co2(); 
 	 
-	r_env_th.t_target  = ml_get_target_temp()  ;
-	r_env_th.h_target  = (float)ml_get_target_humid()  ;
-	r_env_th.h_target  /=100.0;
-
 	
-	if(true_env==false){
+	
+	if(r_env_th.t_feed==0 && r_env_th.h_feed==0){
+		v_env_th.t_target  = ml_get_target_temp()  ;
+		v_env_th.h_target  = (float)ml_get_target_humid()  ;
+		v_env_th.h_target  /=100.0;
      	bp_pid_th=v_env_th; 
+		true_env=false;
     }
 	else{
+		r_env_th.t_target  = ml_get_target_temp()  ;
+		r_env_th.h_target  = (float)ml_get_target_humid()  ;
+		r_env_th.h_target  /=100.0;
 	 	bp_pid_th=r_env_th;  
+		true_env=true;
 	}
-	if(bp_pid_th.t_feed == 0 && bp_pid_th.h_feed == 0) 
-		return false;	
 	
-	 
+	if( bp_pid_th.t_feed == 0 || bp_pid_th.h_feed == 0) {
+		
+		return false;	
+	} 
 	bp_pid_th.v_feed    =  pid_cal_vpd(bp_pid_th.t_feed,    bp_pid_th.h_feed) ;  
 	bp_pid_th.v_outside =  pid_cal_vpd(bp_pid_th.t_outside, bp_pid_th.h_outside) ; 
 	bp_pid_th.v_target  =  pid_cal_vpd(bp_pid_th.t_target,  bp_pid_th.h_target) ;
+	
 	//ESP_LOGI(TAG, "inisde  t=%f, h=%f, v=%f", bp_pid_th.t_feed, bp_pid_th.h_feed, bp_pid_th.v_feed);
 	//ESP_LOGI(TAG, "outside t=%f, h=%f, v=%f", bp_pid_th.t_outside, bp_pid_th.h_outside, bp_pid_th.v_outside);
 	//ESP_LOGI(TAG, "target t=%f, h=%f, v=%f", bp_pid_th.t_target, bp_pid_th.h_target, bp_pid_th.v_target);

@@ -22,28 +22,12 @@
 //     float soft_label_bonus;   
 //     float penalty;   
 // };
-
-// 前向声明
-class HVACEncoder;
-class PrototypeClassifierSimple;
-              // 存储每步的奖励
-class PlantHVACEnv {
-public:
-    using SeqFetcher = std::function<std::vector<std::vector<float>>(int t)>;
-
-    struct StepResult {
+struct StepResult {
         std::vector<float> state;
         float reward;
         bool done;
         std::vector<float> latent_soft_label;
-        float flower_prob;
-        // float temp;
-        // float humid;
-        // float soil;
-        // float light;
-        // float co2;
-        // float ph;
-        // float vpd; 
+        float flower_prob; 
         float itm_heat      =  0.01f;        
         float itm_ac        = -0.005f;
         float itm_humid     =  0.0002f;
@@ -57,6 +41,16 @@ public:
                        itm_heat(0.01f), itm_ac(-0.005f), itm_humid(0.0002f), itm_dehumi(-0.0005f),
                        itm_waterpump(1.0f),itm_light(20.0f), itm_co2(50.0f), itm_pump(1.1f)   {}
     };
+// 前向声明
+class HVACEncoder;
+class PrototypeClassifierSimple;
+              // 存储每步的奖励
+class PlantHVACEnv {
+public:
+    using SeqFetcher = std::function<std::vector<std::vector<float>>(int t)>;
+
+    
+    
     std::map<std::string, ModeParam> mode_params= {
             {"seeding",  ModeParam{{24,30},{0.50f,0.70f},{0.20f, 0.30f},{200,400} ,{400,600} ,{5.5f,6.2f},{0.4f,0.8f}, 0.1f, -0.05f}},
             {"growing",  ModeParam{{22,28},{0.40f,0.70f},{0.25f, 0.35f},{300,600} ,{400,800} ,{5.8f,6.5f},{0.8f,1.2f}, 0.2f, -0.1f}},
@@ -140,13 +134,21 @@ public:
                            const std::vector<int>& labels);
     void reset() {
             // 将环境状态重置为初始值
-            v_env_th.t_feed   = (mode_params["seeding"].temp_range.first  +mode_params["seeding"].temp_range.second )/ 2.0f ;   //22.0f;  // 设定初始温度为22.0度
-            v_env_th.h_feed   =(mode_params["seeding"].humid_range.first +mode_params["seeding"].humid_range.second )/ 2.0f ;   //;     // 设定初始湿度为50%
-            v_env_th.w_feed   =(mode_params["seeding"].water_range.first +mode_params["seeding"].water_range.second )/ 2.0f ;   //;     
-            v_env_th.l_feed   =(mode_params["seeding"].light_range.first +mode_params["seeding"].light_range.second )/ 2.0f ;   //; // 设定初始光照为300lux
-            v_env_th.c_feed   =(mode_params["seeding"].co2_range.first   +mode_params["seeding"].co2_range.second )/ 2.0f ;   //; // 设定初始CO2浓度为400ppm
-            v_env_th.p_feed   =(mode_params["seeding"].ph_range.first   +mode_params["seeding"].ph_range.second )/ 2.0f ;   //; // 设定初始CO2浓度为400ppm
-            v_env_th.v_target =(mode_params["seeding"].vpd_range.first   +mode_params["seeding"].vpd_range.second )/ 2.0f ;   //;  
+            if(true_env)
+            {
+                v_env_th=r_env_th;
+            }
+            else
+            {
+                v_env_th.t_feed   =(mode_params["seeding"].temp_range.first  +mode_params["seeding"].temp_range.second )/ 2.0f ;   //22.0f;  // 设定初始温度为22.0度
+                v_env_th.h_feed   =(mode_params["seeding"].humid_range.first +mode_params["seeding"].humid_range.second )/ 2.0f ;   //;     // 设定初始湿度为50%
+                v_env_th.w_feed   =(mode_params["seeding"].water_range.first +mode_params["seeding"].water_range.second )/ 2.0f ;   //;     
+                v_env_th.l_feed   =(mode_params["seeding"].light_range.first +mode_params["seeding"].light_range.second )/ 2.0f ;   //; // 设定初始光照为300lux
+                v_env_th.c_feed   =(mode_params["seeding"].co2_range.first   +mode_params["seeding"].co2_range.second )/ 2.0f ;   //; // 设定初始CO2浓度为400ppm
+                v_env_th.p_feed   =(mode_params["seeding"].ph_range.first   +mode_params["seeding"].ph_range.second )/ 2.0f ;   //; // 设定初始CO2浓度为400ppm
+                v_env_th.v_target =(mode_params["seeding"].vpd_range.first   +mode_params["seeding"].vpd_range.second )/ 2.0f ;   //;  
+            }
+            
             done = false;         // 重置任务结束标志
             
           

@@ -1748,7 +1748,7 @@ void ai_running_process(ai_setting_t *ai_setting, ai_running_data_t* p_ai_runnig
 	uint8_t port_dev_origin[PORT_CNT];
 
 	pid_run_output_st pid_run_output;
-	pid_param_get(ai_setting, cur_load_type, port_dev_origin, sensor_val_list, &pid_run_input );
+	//pid_param_get(ai_setting, cur_load_type, port_dev_origin, sensor_val_list, &pid_run_input );
 	//pid_run_output = pid_run_rule( &pid_run_input );
 	//pid_rule_output_set_speed(pid_run_output, cur_load_type, output_port_list );
 #else

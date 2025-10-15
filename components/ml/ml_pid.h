@@ -207,6 +207,30 @@ typedef struct {
     float penalty;           // 惩罚值
 } ModeParam;
 
+typedef struct {
+    float *state;
+    size_t state_len;
+
+    float reward;
+    bool done;
+
+    float *latent_soft_label;
+    size_t latent_soft_label_len;
+
+    float flower_prob;
+
+    // 内部参数
+    float itm_heat;
+    float itm_ac;
+    float itm_humid;
+    float itm_dehumi;
+    float itm_waterpump;
+    float itm_light;
+    float itm_co2;
+    float itm_pump;
+
+} tStepResult;
+
 typedef struct{
     uint8_t ml_run_sta;
     uint8_t dev_type[PORT_CNT];
@@ -266,24 +290,6 @@ extern float pid_map(float param1, float param2, float param3, float param4, flo
 // }; 
 
 
-struct svd_optimizer
-{
-    double  w_vec[MN];  //[NUM_LAT+1]
-    double  v_mat[NM][MN]; //[NUM_SPK+1][NUM_SPK+1];
-    double  u_mat[MN][NM];  //[NUM_LAT+1][NUM_KEYN+1];
-    double  uut_mat[MN][NM];  //[NUM_LAT+1][NUM_KEYN+1];
-    double  arisk[MN][NM];  //k[NUM_SPK+1][NUM_KEYN+1]
-    double  uw[NM][NM];	 //[L_GAIN+1]
-    double  wv[NM][NM];	 //[L_GAIN+1]
-    double  latent_mat[NUM_SPK+1][NM];
-    double  latent_vec[NM];
-     
-    unsigned int   v_idx ; //[NUM_SPK+1]
-    float pitchs[NUM_ENVDEV][NUM_PTH_TYPE];
-    float avg_pitchs[NUM_ENVDEV][NUM_PTH_TYPE];
-    unsigned int avg_cnt[NUM_ENVDEV];
-    // unsigned int  flag ;
-};
 struct st_bp_pid_th
 {
 
@@ -327,6 +333,7 @@ extern float hvac_margin[NUM_ENV_TYPE];
 extern pid_run_output_st ml_pid_out_speed;
 extern ModeParam plant_range_params;
 extern ModeParam plant_limit_params;
+
 #ifdef __cplusplus
 }
 #endif

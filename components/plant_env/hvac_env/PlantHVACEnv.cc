@@ -10,6 +10,7 @@
 
 ModeParam plant_range_params;
 ModeParam plant_limit_params;
+StepResult plant_tres;
 // 构建编码器
 HVACEncoder* build_hvac_encoder(int seq_len, int n_features, int latent_dim) {
     return new HVACEncoder(seq_len, n_features, latent_dim);
@@ -83,7 +84,7 @@ void PlantHVACEnv::update_dynamics(float t_feed,StepResult result,const std::arr
     result.itm_ac   += 0.0001f * error * action[1];
 }
 //extern float pid_map(float x, float in_min, float in_max, float out_min, float out_max);
-PlantHVACEnv::StepResult PlantHVACEnv::step(const std::array<int,ACTION_CNT>& action,
+StepResult PlantHVACEnv::step(const std::array<int,ACTION_CNT>& action,
                                             const std::map<std::string,float>& params)
 {
     StepResult result; //    std::cout << "step " << t << std::endl;
@@ -100,10 +101,7 @@ PlantHVACEnv::StepResult PlantHVACEnv::step(const std::array<int,ACTION_CNT>& ac
     float temp_noise = rand_normal(0.0f , 0.10f);
     float humid_noise = rand_normal(0.0f, 0.10f);
     plant_range_params = mode_params[plant_mode]; 
-    if(true_env){
-        v_env_th   = bp_pid_th;
-    }
-    else{
+    
         // --- 环境动力学 ---
         float light_effect = get_param(params, "light_penalty") * dev_light ;
         float co2_effect   = get_param(params, "co2_penalty")   * dev_co2 ;
@@ -116,25 +114,29 @@ PlantHVACEnv::StepResult PlantHVACEnv::step(const std::array<int,ACTION_CNT>& ac
         dev_light     = action[5]*result.itm_light;
         dev_co2       = action[6]*result.itm_co2;
         dev_pump      = action[7]*result.itm_pump;
-        v_env_th.t_outside= 27.0f;//(v_env_th.t_feed- 32) * 5 / 9;
-        v_env_th.h_outside= 0.55f;
-       
-
-        v_env_th.t_feed  += (dev_heat  + dev_ac     + (v_env_th.t_outside-v_env_th.t_feed)*0.05   ) ;
-        v_env_th.h_feed  += (dev_humid + dev_dehumi + (v_env_th.h_outside-v_env_th.h_feed)*0.05);//(dev_heat==1?-0.03f:0.0f) + (dev_dehumi==1?-0.05f:0.0f);
-        
+        if(true_env){
+            v_env_th=r_env_th;
+        }
+        else{ 
+            v_env_th.t_outside= 27.0f;//(v_env_th.t_feed- 32) * 5 / 9;
+            v_env_th.h_outside= 0.55f;  
+            //v_env_th.t_feed  += (dev_heat  + dev_ac     + (v_env_th.t_outside-v_env_th.t_feed)*0.05   ) ;
+            //v_env_th.h_feed  += (dev_humid + dev_dehumi + (v_env_th.h_outside-v_env_th.h_feed)*0.05);//(dev_heat==1?-0.03f:0.0f) + (dev_dehumi==1?-0.05f:0.0f);
+            v_env_th.t_feed  += (dev_heat  + dev_ac       );
+            v_env_th.h_feed  += (dev_humid + dev_dehumi   );//(dev_heat==1?-0.03f:0.0f) + (dev_dehumi==1?-0.05f:0.0f);
+        }
         if(r_env_th.t_feed>0.0 && r_env_th.h_feed>0.0)
         {
             float predicted_temp_next = v_env_th.t_feed + (dev_heat + dev_ac);
             float t_error = r_env_th.t_feed - predicted_temp_next;
 
             // Gradient-like update
-            result.itm_heat   += 0.0001f * t_error * action[0];
-            result.itm_ac     += 0.0001f * t_error * action[1];
+            result.itm_heat   += 0.001f * t_error * action[0];
+            result.itm_ac     += 0.001f * t_error * action[1];
             float predicted_humid_next = v_env_th.h_feed + (dev_humid + dev_dehumi);
             float h_error = r_env_th.h_feed - predicted_humid_next;
-            result.itm_humid  += 0.0001f * h_error * action[0];
-            result.itm_dehumi += 0.0001f * h_error * action[1];
+            result.itm_humid  += 0.001f * h_error * action[0];
+            result.itm_dehumi += 0.001f * h_error * action[1];
         }
         // 使用方法
         float light_noise = rand_normal(0.0f, 20.0f);
@@ -142,7 +144,7 @@ PlantHVACEnv::StepResult PlantHVACEnv::step(const std::array<int,ACTION_CNT>& ac
         v_env_th.l_feed   += (light_effect+light_noise);
         v_env_th.c_feed   += (co2_effect+co2_noise);
         //v_env_th.v_feed = calc_vpd(temp, humid);
-    } 
+     
     bp_pid_dbg(" PlantHVACEnv step =t,h(%.3f,%.3f  %.3f,%.3f  %.3f,%.3f,%.5f,%.5f)\r\n", 
         v_env_th.t_feed, r_env_th.t_feed,
         v_env_th.h_feed,r_env_th.h_feed,
@@ -266,19 +268,19 @@ PlantHVACEnv::StepResult PlantHVACEnv::step(const std::array<int,ACTION_CNT>& ac
                  + learning_reward;
  
      
-    bp_pid_dbg("reward   = %f \r\n",reward);
     // --- 更新状态 ---
     prev_action = action;
     t++;
     bool done =  reward<=-25.0f;
     
-    
+
     // --- 填充结果 ---
     result.state = _get_state();
     result.reward = reward;
     result.done = done;
     result.latent_soft_label = soft_label;
     result.flower_prob = flower_prob;
+    bp_pid_dbg("reward = %f done=%d\r\n",reward,done);
      
 
     return result;

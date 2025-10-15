@@ -461,6 +461,7 @@ void main_task(void *pvParameters)
 				pid_run();//tim modify
 				flag_100ms = 1;	
 				if(	lll_tensor_run(PPO_CASE)==ESP_FAIL){ 
+					
 					break; 
 				} 
 				//ai_check_plug_in(1);   // called per sec

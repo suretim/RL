@@ -15,6 +15,7 @@
 #include "config_wifi.h"
 #include "version.h"
 #include "nn.h"
+
 #include "ml_pid.h"
 std::vector<float> health_result;
 //std::vector<float> data = {0.1f, 25.0f, 0.5f, 500.0f, 600.0f};
@@ -215,9 +216,9 @@ extern "C" bool hvac_ewc(void) {
         printf("\n");
 
         // 如果环境结束，重置
-        // if (done) {
-        //     env.reset(); 
-        // }
+        if (done) {
+            env.reset(); 
+        }
 
         vTaskDelay(pdMS_TO_TICKS(5000)); // 每 5 秒交互一次
     }
