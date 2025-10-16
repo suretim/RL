@@ -107,7 +107,8 @@ def main():
 
     # 获取最大值对应的文件夹名
     max_num = max(numbers)
-    target_folder = f"runs/detect/" + f"train{max_num}" if max_num > 0 else "train"
+    #target_folder = f"runs/detect/" + f"train{max_num}" if max_num > 0 else "train"
+    target_folder = f"runs/detect/" + f"train"
 
     model = YOLO(target_folder + f"/weights/best.pt")    
     model.export(

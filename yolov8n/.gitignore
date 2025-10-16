@@ -1,0 +1,20 @@
+# 忽略 build 文件夹
+build/
+
+# 忽略 .vscode 文件夹
+.vscode/
+
+# Ignore build directory
+datasets/*
+runs/*
+templates/*
+ 
+*.txt
+# Ignore generated model files
+dependencies.lock
+#variables.data-00000-of-00001
+variables.data*
+*.npy
+*.npz
+*.h5
+*.zip

@@ -5,10 +5,10 @@ build/
 .vscode/
 
 # Ignore build directory
+datasets/*
 best_mode/
 saved_model_best/
 components/*
-
 !components/RL/
 !components/RL/**
 !components/plant_env/
@@ -28,8 +28,9 @@ partitions.csv
 components/bsp/version.h.rej
 # Ignore generated model files
 dependencies.lock
-variables.data-00000-of-00001
+#variables.data-00000-of-00001
 variables.data*
 *.npy
 *.npz
 *.h5
+*.zip
