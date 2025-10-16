@@ -1,10 +1,6 @@
 #ifndef _ML_PID_H_
 #define _ML_PID_H_
 
-#include "types.h"
-#include "define.h"
-#include "ai.h"
-#include "ai_out.h"
 
 #define NUM_PARTICLES 				24   //9		//20		//20 粒子数量
 #define NUM_GLOBAL					8    //5
@@ -43,6 +39,13 @@
 #define ENV_V				2  
 #define NUM_ENV_TH		    2 //t,h  
 
+#define NUM_ENV_EXT_TYPE	5  //w,l,c,p,e
+#define ENV_W				3 
+#define ENV_L				4 
+#define ENV_C				5  
+#define ENV_P				6
+#define ENV_E				7
+  
 #define NUM_DEV_FEA         (NUM_DEV_TYPE*NUM_ENVDEV)
 #define NUM_KEY_FEA         (NUM_PTH_VP*NUM_ENV_TH)
 #define NUM_SPK			    (1<<(NUM_PTH_VP+NUM_ENV_TH)) 
@@ -125,26 +128,30 @@
 
 //#define c_nh_nodes1        	(NUM_DEV_KPID_OUT+NUM_ENVDEV+1)
 #define c_nh_nodes1        12
+#define DIM 				NUM_ENVDEV       
 #define c_no_nodes      	(NUM_DEV_KPID_OUT+NUM_ENVDEV)
-#define DIM 				NUM_ENVDEV        
   
 
 #define c_ret_ok            	0
 #define c_ret_nk            	1
 
 
-#define c_pid_temp_min			1
-#define c_pid_temp_max			40
-#define c_pid_humi_min			10
-#define c_pid_humi_max			100
-#define c_pid_vpd_min			0
-#define c_pid_vpd_max			4
+// #define c_pid_temp_min			1
+// #define c_pid_temp_max			40
+// #define c_pid_humi_min			0.1
+// #define c_pid_humi_max			0.8
+// #define c_pid_water_min			0.1
+// #define c_pid_water_max			0.8
+// #define c_pid_light_min			100
+// #define c_pid_light_max			800
+// #define c_pid_co2_min			100
+// #define c_pid_co2_max			1000
+// #define c_pid_vpd_min			0
+// #define c_pid_vpd_max			4
+
 #define c_pid_ptch_min			-400
 #define c_pid_ptch_max			400
-// #define c_pid_gain_min			 2000
-// #define c_pid_gain_max			 20000
-
-
+#define WMAX 1e3 
 
 #define FREE_ARG char*
 #define SIGN(a,b) ((b) >= 0.0 ? fabs(a) : -fabs(a))
@@ -165,22 +172,76 @@ static int iminarg1,iminarg2;
 #define NM MN
 #define NU (MN-1)
 
-#define	c_bp_pid_dbg_en			1
+#define	c_bp_pid_dbg_en			0
 #define bp_dbg(format, ...)			printf(" "format, ##__VA_ARGS__)
-#define bp_pid_dbg(format, ...)			printf("bp_pid_d "format, ##__VA_ARGS__)
-#define bp_pid_wave(format, ...)		printf("bp_pid_w "format, ##__VA_ARGS__)
+#define bp_pid_dbg(format, ...)			printf("bp_pid_d " format, ##__VA_ARGS__)
+#define bp_pid_wave(format, ...)		printf("bp_pid_w " format, ##__VA_ARGS__)
 #define c_diff_wc1c2  1
+
+
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include "types.h"
+#include "define.h"
+#include "ai.h"
+#include "ai_out.h"
+
+typedef struct {
+    float first;
+    float second;
+} Range;
+
+typedef struct {
+    Range temp_range;      // 温度范围
+    Range humid_range;     // 湿度范围
+    Range water_range;      // 土壤湿度范围
+    Range light_range;     // 光照范围
+    Range co2_range;       // CO2 范围
+    Range ph_range;        // pH 范围
+    Range vpd_range;       // VPD 范围
+
+    float soft_label_bonus;  // 软标签奖励
+    float penalty;           // 惩罚值
+} ModeParam;
+
+typedef struct {
+    float *state;
+    size_t state_len;
+
+    float reward;
+    bool done;
+
+    float *latent_soft_label;
+    size_t latent_soft_label_len;
+
+    float flower_prob;
+
+    // 内部参数
+    float itm_heat;
+    float itm_ac;
+    float itm_humid;
+    float itm_dehumi;
+    float itm_waterpump;
+    float itm_light;
+    float itm_co2;
+    float itm_pump;
+
+} tStepResult;
+
 typedef struct{
     uint8_t ml_run_sta;
     uint8_t dev_type[PORT_CNT];
     uint8_t is_switch[PORT_CNT];
-    int16_t max[PORT_CNT];
-    int16_t min[PORT_CNT];
+    float max[PORT_CNT];
+    float min[PORT_CNT];
 
-    int16_t env_value_cur[ENV_CNT];
-    int16_t env_target[ENV_CNT];
-    int16_t env_min[ENV_CNT];
-    int16_t env_max[ENV_CNT];
+    float env_value_cur[ENV_CNT];
+    float env_target[ENV_CNT];
+    float env_min[ENV_CNT];
+    float env_max[ENV_CNT];
 
     uint32_t env_en_bit;    //控制环境使能位
 }pid_run_input_st;
@@ -189,10 +250,8 @@ typedef struct{
     uint8_t speed[PORT_CNT];
 }pid_run_output_st;
 
-extern pid_run_output_st pid_run_rule(pid_run_input_st* input);
-extern struct st_bp_pid_th    bp_pid_th ;
-extern dev_type_t devs_type_list[PORT_CNT]; 
- 
+
+extern float pid_map(float param1, float param2, float param3, float param4, float param5); 
 // struct st_pos_val_arg
 // {
 // 	float	t_target;
@@ -230,64 +289,7 @@ extern dev_type_t devs_type_list[PORT_CNT];
 // 	unsigned short dv_min_gear;
 // }; 
 
-struct pso_particle
-{
-	//float 				pos[DIM];    				// 当前增益值
-   // float 				vel[DIM];    				// 速度向量
-    //float 			best_val;    				// 速度向量
-   
-    float 			position[DIM];    		// 当前增益值
-    float 			velocity[DIM];    		// 速度向量
-    float 			best_pos[DIM];    		// 个体历史最优增益
-    float 			best_mae;//[NUM_ENV_TYPE];     		// 个体最优适应度
-	unsigned int    v_idx[DIM]; 
-	float				val;
-   
-};
-struct pso_global
-{
-    float 			pos[DIM];    		
-    uint8           swarm_idx;     	
-	 float 			best_val;     		// 个体最优适应度	
-	 float best_pos[DIM];
-};
-struct pso_optimizer
-{
-	double			mae_buf[2][NUM_ENV_TYPE];
 
-    //struct pso_particle	particle[NUM_PARTICLES];	// 分群粒子
-    struct pso_particle 	swarm[NUM_PARTICLES];	// 群
-	struct pso_global 		global[NUM_GLOBAL];
-	 
-	//float			h_buf[NUM_PARTICLES];
-	// float			v_buf[60];
-	unsigned int	 buf_cnt, test_req;
-	unsigned int swarm_idx,global_idx , step;
-	uint8 dev_token;	
-	double   v_wight ;	// w:惯性权重
-	float  global_bestval, global_position[DIM]; 
-};
-
- 
-
-struct svd_optimizer
-{
-    double  w_vec[MN];  //[NUM_LAT+1]
-    double  v_mat[NM][MN]; //[NUM_SPK+1][NUM_SPK+1];
-    double  u_mat[MN][NM];  //[NUM_LAT+1][NUM_KEYN+1];
-    double  uut_mat[MN][NM];  //[NUM_LAT+1][NUM_KEYN+1];
-    double  arisk[MN][NM];  //k[NUM_SPK+1][NUM_KEYN+1]
-    double  uw[NM][NM];	 //[L_GAIN+1]
-    double  wv[NM][NM];	 //[L_GAIN+1]
-    double  latent_mat[NUM_SPK+1][NM];
-    double  latent_vec[NM];
-     
-    unsigned int   v_idx ; //[NUM_SPK+1]
-    float pitchs[NUM_ENVDEV][NUM_PTH_TYPE];
-    float avg_pitchs[NUM_ENVDEV][NUM_PTH_TYPE];
-    unsigned int avg_cnt[NUM_ENVDEV];
-    // unsigned int  flag ;
-};
 struct st_bp_pid_th
 {
 
@@ -298,16 +300,18 @@ struct st_bp_pid_th
     unsigned int   	dropout_oh[c_no_nodes][c_nh_nodes1];  
 	double 			ho_sigmoid_out[c_no_nodes];
 	float           update_rate;
-	double			e[3][NUM_ENV_TYPE],s[NUM_ENV_TYPE],f[2][NUM_ENV_TYPE]; 
+	double			e[3][NUM_ENV_TYPE],s[NUM_ENV_TYPE],f[2][NUM_ENV_TYPE+NUM_ENV_EXT_TYPE]; 
 	double 			pid_o[NUM_ENVDEV] ; 
     unsigned int  tmr; 
     double du_gain[NUM_ENVDEV];  //ugain delta
-    unsigned char dev_token;
-    //double tu ;  //tgain delta
+    unsigned char dev_token; 
     u_int8_t		u_gear_tmr[NUM_ENVDEV]; 
 	//float 			u_gain_tmr[NUM_ENVDEV]; 
-	float			t_target, t_feed, t_outside,h_target, h_feed,h_outside, v_target, v_feed,v_outside; 
-    float l_feed,c_feed;
+	float t_target, t_feed, t_outside;
+    float h_target, h_feed, h_outside;
+    float v_target, v_feed, v_outside; 
+
+    float l_feed,c_feed,w_feed,p_feed,e_feed;
 	unsigned char	mode; 
 	unsigned int	dev_type,   version ; 
 	unsigned short port_setgear[2][NUM_ENVDEV];
@@ -315,5 +319,25 @@ struct st_bp_pid_th
     //double ienerge[NUM_ENVDEV];
 
 };
+
+extern bool pid_run_rule(pid_run_input_st* input);
+extern struct st_bp_pid_th    bp_pid_th ;
+extern struct st_bp_pid_th    v_env_th ;
+extern struct st_bp_pid_th    r_env_th ;
+extern bool true_env;
+//extern dev_type_t devs_type_list[PORT_CNT]; 
+extern pid_run_output_st lstm_pid_out_speed;
+extern unsigned int tick_get(void);
+extern unsigned int tick_reset(void);
+extern float hvac_margin[NUM_ENV_TYPE];
+extern pid_run_output_st ml_pid_out_speed;
+extern ModeParam plant_range_params;
+extern ModeParam plant_limit_params;
+
+#ifdef __cplusplus
+}
+#endif
+
+
 
 #endif

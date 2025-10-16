@@ -5,21 +5,19 @@ build/
 .vscode/
 
 # Ignore build directory
+datasets/*
 best_mode/
 saved_model_best/
 components/*
-
 !components/RL/
 !components/RL/**
 !components/plant_env/
 !components/plant_env/**
-!components/ml/ml_pid.c
-!components/ml/ml_pid.h
-!components/ml/ml_rule.c
-!components/ml/ml_rule.h
+!components/ml/
+!components/ml/**
 
 managed_components/
-
+sdkconfig
 sdkconfig.old
 sdkconfig.bak
 sdkconfig.bk
@@ -30,8 +28,9 @@ partitions.csv
 components/bsp/version.h.rej
 # Ignore generated model files
 dependencies.lock
-variables.data-00000-of-00001
+#variables.data-00000-of-00001
 variables.data*
 *.npy
 *.npz
 *.h5
+*.zip

@@ -23,15 +23,8 @@
  
  
 const char *TAG = "NN_OTA_AUTO";
+extern uint8_t flask_state_flag[NUM_FLASK_GET_TASK];
 
-//#define TENSOR_ARENA_SIZE 10*1024
-//#define OTA_INTERVAL_MS 3600000   // 1 小时
-
-//uint8_t tensor_arena[TENSOR_ARENA_SIZE];
-//tflite::MicroInterpreter *interpreter = NULL;
-//TfLiteTensor *input_tensor = NULL;
-//TfLiteTensor *output_tensor = NULL;
-//extern const char *model_path ;
 #if 0
 // OTA 任务
 void ota_task(void *param) {
@@ -76,7 +69,6 @@ void model_init() {
 //extern void wifi_ota_ppo_package(void);
 //extern const int num_flask_task;
 
-extern bool flask_state_flag[NUM_FLASK_TASK];
 
 void plant_env_make_task(void *pvParameters)
 { 

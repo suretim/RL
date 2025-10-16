@@ -8,7 +8,7 @@ from collections import deque
 import threading
 import time
 import random
-from util_hvac_agent import TensorFlowESP32BaseExporter
+from util_exporter import TensorFlowESP32Exporter
 import tensorflow as tf
 
 import  queue
@@ -39,7 +39,7 @@ def init_exporter():
         return jsonify({"error": "model_path required"}), 400
 
     policy_model = tf.keras.models.load_model(model_path)
-    exporter = TensorFlowESP32BaseExporter(policy_model)
+    exporter = TensorFlowESP32Exporter(policy_model)
     return jsonify({"status": "exporter initialized"})
 # 模擬環境數據生成
 def simulate_env_data():
@@ -113,8 +113,8 @@ def serve_ota_package():
 
 
 # 模型存放路徑
-MODEL_DIR = "esp32_model"
-ACTOR_MODEL = "actor.tflite"
+MODEL_DIR    = "ppo_model"
+ACTOR_MODEL  = "actor.tflite"
 CRITIC_MODEL = "critic.tflite"
 
 # 計算文件 hash，方便 ESP32 檢查版本

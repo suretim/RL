@@ -3,56 +3,65 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "esp_err.h"
+#include "version.h"
+enum CaseType { PPO_CASE,NN_PPO_CASE, META_CASE ,IMG_CASE,NUM_CASE};
 
+ 
 
-
-#define PPO_CASE 0
-#define NN_PPO_CASE 1
-#define SARSA_CASE 2
-#define IMG_CASE 3
 #define INFER_CASE PPO_CASE
 
+#define MAX_FEATURE_DIM 64
+#define MAX_NUM_CLASSES  ACTION_CNT
+#define MAX_SEQ_LEN 64
 
 // 全局参数 (需在你的工程中定义实际大小)
  
-#define PPO_FEATURE_DIM 5
-#define NN_PPO_FEATURE_DIM 5
-#define SARSA_FEATURE_DIM 7
+#define PPO_FEATURE_DIM STATE_CNT 
+#define NN_PPO_FEATURE_DIM STATE_CNT
+#define META_FEATURE_DIM STATE_CNT
 #define IMG_FEATURE_DIM 64 
  
-#define PPO_CLASSES 4
-#define NN_PPO_CLASSES 4
-#define SARSA_CLASSES 3
+#define PPO_CLASSES ACTION_CNT
+#define NN_PPO_CLASSES ACTION_CNT
+#define META_CLASSES 3
 #define IMG_CLASSES 3
 
 #define PPO_SEQ_LEN 1 
 #define NN_PPO_SEQ_LEN 10 
-#define SARSA_SEQ_LEN 10
+#define META_SEQ_LEN 10
 #define IMG_SEQ_LEN 64
- 
-#if INFER_CASE == PPO_CASE
+
+ #ifndef INFER_CASE
+  #error "INFER_CASE is not defined"
+#elif INFER_CASE == PPO_CASE
   #define FEATURE_DIM (PPO_FEATURE_DIM)
   #define NUM_CLASSES (PPO_CLASSES)
-  #define SEQ_LEN     (PPO_SEQ_LEN)
+  #define SEQ_LEN (PPO_SEQ_LEN)
 #elif INFER_CASE == NN_PPO_CASE
   #define FEATURE_DIM (NN_PPO_FEATURE_DIM)
   #define NUM_CLASSES (NN_PPO_CLASSES)
-  #define SEQ_LEN     (NN_PPO_SEQ_LEN)
-#elif INFER_CASE == SARSA_CASE
-  #define FEATURE_DIM (SARSA_FEATURE_DIM)
-  #define NUM_CLASSES (SARSA_CLASSES)
-  #define SEQ_LEN (SARSA_SEQ_LEN)
+  #define SEQ_LEN (NN_PPO_SEQ_LEN)
+#elif INFER_CASE == META_CASE
+  #define FEATURE_DIM (META_FEATURE_DIM)
+  #define NUM_CLASSES (META_CLASSES)
+  #define SEQ_LEN (META_SEQ_LEN)
 #elif INFER_CASE == IMG_CASE
   #define FEATURE_DIM (IMG_FEATURE_DIM)
   #define NUM_CLASSES (IMG_CLASSES)
   #define SEQ_LEN (IMG_SEQ_LEN)
+#else
+  #error "Unknown INFER_CASE"
 #endif
- 
- 
 
+ 
+ struct CLASSIFIER_Prams {
+    int infer_case; // 0: PPO, 1: META
+    int seq_len;
+    int feature_dim;
+    int num_classes;
+ };
 
-extern float classifier_weights[FEATURE_DIM * NUM_CLASSES];
-extern float classifier_bias[NUM_CLASSES];
+ 
 
 // 编译期校验（C11 _Static_assert 或 C++ static_assert）
 _Static_assert(FEATURE_DIM > 0 && NUM_CLASSES > 0, "dims must be positive");

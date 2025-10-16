@@ -4,241 +4,7 @@ import numpy as np
 from collections import deque
 import random
 
-#state_dim = 5  # 健康狀態、溫度、濕度、光照、CO2
-#action_dim = 4  # 4個控制動作
-class LifelongPPOAgent:
-    def __init__(self, state_dim=5, action_dim=4,
-                 clip_epsilon=0.2, value_coef=0.5, entropy_coef=0.01,
-                 ewc_lambda=500, memory_size=1000):
-        self.state_dim = state_dim
-        self.action_dim = action_dim
-        self.clip_epsilon = clip_epsilon
-        self.value_coef = value_coef
-        self.entropy_coef = entropy_coef
-        self.ewc_lambda = ewc_lambda  # EWC正则化强度
 
-        # 构建网络
-        self.actor = self._build_actor()
-        self.critic = self._build_critic()
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate=3e-4)
-
-        # 持续学习相关
-        self.task_memory = deque(maxlen=memory_size)  # 存储之前任务的经验
-        self.fisher_matrices = {}  # 存储每个任务的Fisher信息矩阵
-        self.optimal_params = {}  # 存储每个任务的最优参数
-        self.current_task_id = 0
-    def _count_params(self, model):
-        """計算模型參數數量"""
-        return sum([tf.keras.backend.count_params(w) for w in model.trainable_weights])
-
-    def _build_actor(self):
-        return tf.keras.Sequential([
-            tf.keras.layers.Dense(64, activation='relu', input_shape=(self.state_dim,)),
-            tf.keras.layers.Dense(64, activation='relu'),
-            tf.keras.layers.Dense(self.action_dim, activation='sigmoid')
-        ])
-
-    def _build_critic(self):
-        return tf.keras.Sequential([
-            tf.keras.layers.Dense(64, activation='relu', input_shape=(self.state_dim,)),
-            tf.keras.layers.Dense(64, activation='relu'),
-            tf.keras.layers.Dense(1, activation='linear')
-        ])
-
-    def select_action(self, state):
-        state = tf.expand_dims(tf.convert_to_tensor(state, dtype=tf.float32), 0)
-        probs = self.actor(state)
-        action = tf.cast(probs > 0.5, tf.float32)  # 二值化动作
-        return action.numpy()[0], probs.numpy()[0]
-
-    def get_action(self, state):
-        """Get action for environment interaction (same as select_action)"""
-        action, probs = self.select_action(state)
-        return action
-
-    def _compute_ewc_loss(self):
-        """计算EWC（Elastic Weight Consolidation）正则化损失"""
-        ewc_loss = 0
-        if not self.fisher_matrices:
-            return ewc_loss
-
-        # 对每个之前学习的任务计算EWC损失
-        for task_id in self.fisher_matrices:
-            fisher_matrix = self.fisher_matrices[task_id]
-            optimal_params = self.optimal_params[task_id]
-
-            current_params = self.actor.trainable_variables + self.critic.trainable_variables
-
-            for i, (current_param, optimal_param, fisher) in enumerate(
-                    zip(current_params, optimal_params, fisher_matrix)):
-                # EWC损失: λ/2 * Σ F_i * (θ_i - θ*_i)^2
-                ewc_loss += tf.reduce_sum(
-                    self.ewc_lambda * 0.5 * fisher * tf.square(current_param - optimal_param)
-                )
-
-        return ewc_loss
-
-    def _compute_fisher_matrix(self, experiences):
-        """计算Fisher信息矩阵来衡量参数的重要性"""
-        states, actions, _, old_probs, _ = experiences
-
-        fisher_matrix = []
-        with tf.GradientTape(persistent=True) as tape:
-            # 计算当前策略的概率
-            new_probs = self.actor(states, training=True)
-            actions_float = tf.cast(actions, tf.float32)
-
-            # 计算对数概率
-            new_action_probs = tf.reduce_sum(
-                new_probs * actions_float + (1 - new_probs) * (1 - actions_float), axis=1
-            )
-            log_probs = tf.math.log(new_action_probs + 1e-8)
-
-        # 计算每个参数的Fisher信息
-        trainable_vars = self.actor.trainable_variables + self.critic.trainable_variables
-        for var in trainable_vars:
-            gradients = tape.gradient(log_probs, var)
-            if gradients is not None:
-                # Fisher信息 ≈ 梯度的平方
-                fisher_info = tf.reduce_mean(tf.square(gradients))
-                fisher_matrix.append(fisher_info)
-            else:
-                fisher_matrix.append(tf.constant(0.0, dtype=tf.float32))
-
-        return fisher_matrix
-
-    def save_task_knowledge(self, task_experiences):
-        """保存当前任务的知识"""
-        # 保存最优参数
-        self.optimal_params[self.current_task_id] = [
-            tf.identity(var) for var in self.actor.trainable_variables + self.critic.trainable_variables
-        ]
-
-        # 计算并保存Fisher信息矩阵
-        self.fisher_matrices[self.current_task_id] = self._compute_fisher_matrix(task_experiences)
-
-        # 保存任务经验到记忆库
-        self.task_memory.extend(self._process_experiences_for_memory(task_experiences))
-
-        print(f"任务 {self.current_task_id} 知识已保存")
-        self.current_task_id += 1
-
-    def _process_experiences_for_memory(self, experiences):
-        """处理经验以便存储到长期记忆"""
-        states, actions, advantages, old_probs, returns = experiences
-        processed_experiences = []
-
-        for i in range(states.shape[0]):
-            processed_experiences.append((
-                states[i].numpy(),
-                actions[i].numpy(),
-                advantages[i].numpy(),
-                old_probs[i].numpy(),
-                returns[i].numpy(),
-                self.current_task_id  # 标记来自哪个任务
-            ))
-
-        return processed_experiences
-
-    def replay_previous_tasks(self, batch_size=32):
-        """回放之前任务的经验来防止遗忘"""
-        if len(self.task_memory) == 0:
-            return 0
-
-        # 随机采样之前任务的经验
-        indices = np.random.choice(len(self.task_memory), min(batch_size, len(self.task_memory)), replace=False)
-        batch = [self.task_memory[i] for i in indices]
-
-        # 组织成批量数据
-        states = tf.stack([exp[0] for exp in batch])
-        actions = tf.stack([exp[1] for exp in batch])
-        advantages = tf.convert_to_tensor([exp[2] for exp in batch], dtype=tf.float32)
-        old_probs = tf.stack([exp[3] for exp in batch])
-        returns = tf.convert_to_tensor([exp[4] for exp in batch], dtype=tf.float32)
-
-        # 进行训练（但不计算EWC损失，因为这是记忆回放）
-        with tf.GradientTape() as tape:
-            new_probs = self.actor(states, training=True)
-            new_values = self.critic(states, training=True)
-
-            # 计算PPO损失（与原始train_step相同）
-            actions_float = tf.cast(actions, tf.float32)
-            old_action_probs = tf.reduce_sum(old_probs * actions_float + (1 - old_probs) * (1 - actions_float), axis=1)
-            new_action_probs = tf.reduce_sum(new_probs * actions_float + (1 - new_probs) * (1 - actions_float), axis=1)
-
-            ratio = new_action_probs / (old_action_probs + 1e-8)
-            clipped_ratio = tf.clip_by_value(ratio, 1 - self.clip_epsilon, 1 + self.clip_epsilon)
-
-            policy_loss = -tf.reduce_mean(tf.minimum(ratio * advantages, clipped_ratio * advantages))
-            value_loss = tf.reduce_mean(tf.square(returns - tf.squeeze(new_values)))
-
-            entropy = -tf.reduce_mean(
-                new_probs * tf.math.log(new_probs + 1e-8) +
-                (1 - new_probs) * tf.math.log(1 - new_probs + 1e-8)
-            )
-
-            total_loss = policy_loss + self.value_coef * value_loss - self.entropy_coef * entropy
-
-        # 应用梯度
-        grads = tape.gradient(total_loss, self.actor.trainable_variables + self.critic.trainable_variables)
-        self.optimizer.apply_gradients(
-            zip(grads, self.actor.trainable_variables + self.critic.trainable_variables)
-        )
-
-        return total_loss
-
-    def train_step(self, states, actions, advantages, old_probs, returns, use_ewc=True):
-        """增强的训练步骤，包含持续学习机制"""
-        with tf.GradientTape() as tape:
-            # 原始PPO损失
-            new_probs = self.actor(states, training=True)
-            new_values = self.critic(states, training=True)
-
-            actions_float = tf.cast(actions, tf.float32)
-            old_action_probs = tf.reduce_sum(old_probs * actions_float + (1 - old_probs) * (1 - actions_float), axis=1)
-            new_action_probs = tf.reduce_sum(new_probs * actions_float + (1 - new_probs) * (1 - actions_float), axis=1)
-
-            ratio = new_action_probs / (old_action_probs + 1e-8)
-            clipped_ratio = tf.clip_by_value(ratio, 1 - self.clip_epsilon, 1 + self.clip_epsilon)
-
-            policy_loss = -tf.reduce_mean(tf.minimum(ratio * advantages, clipped_ratio * advantages))
-            value_loss = tf.reduce_mean(tf.square(returns - tf.squeeze(new_values)))
-
-            entropy = -tf.reduce_mean(
-                new_probs * tf.math.log(new_probs + 1e-8) +
-                (1 - new_probs) * tf.math.log(1 - new_probs + 1e-8)
-            )
-
-            # 基础损失
-            base_loss = policy_loss + self.value_coef * value_loss - self.entropy_coef * entropy
-
-            # EWC正则化损失（防止遗忘）
-            ewc_loss = self._compute_ewc_loss() if use_ewc and self.fisher_matrices else 0
-
-            # 总损失 = 基础损失 + EWC正则化
-            total_loss = base_loss + ewc_loss
-
-        # 应用梯度
-        grads = tape.gradient(total_loss, self.actor.trainable_variables + self.critic.trainable_variables)
-        self.optimizer.apply_gradients(
-            zip(grads, self.actor.trainable_variables + self.critic.trainable_variables)
-        )
-
-        return total_loss, policy_loss, value_loss, entropy, ewc_loss
-
-    def test_task_performance(self, env, task_id=None):
-        """测试在特定任务上的性能"""
-        state = env.reset()
-        total_reward = 0
-        done = False
-
-        while not done:
-            action, _ = self.select_action(state)
-            next_state, reward, done, _ = env.step(action)
-            total_reward += reward
-            state = next_state
-
-        return total_reward
 
 
 class MemoryBuffer:
@@ -698,29 +464,36 @@ class PlantHVACEnv:
         self.fisher_matrix = None
         self.prev_weights = None
         self.memory = deque(maxlen=1000)  # 簡單的記憶緩衝區
-
+        #  PlantHVACEnv() {
+        #         mode_params = {
+        #             {"growing",  ModeParam{{22,28},{0.40f,0.70f},{0.25f, 0.35f},{300,600},{400,800} ,{5.8f,6.5f},{0.8f,1.2f}, 0.2f, -0.1f}},
+        #             {"flowering",ModeParam{{20,26},{0.40f,0.60f},{0.30f, 0.40f},{500,800},{600,1000},{5.8f,6.3f},{1.0f,1.5f}, 0.3f, -0.15f}},
+        #             {"seeding",  ModeParam{{24,30},{0.50f,0.70f},{0.20f, 0.30f},{200,400},{400,600} ,{5.5f,6.2f},{0.4f,0.8f},0.1f, -0.05f}}
+        #         };
+                
+        #     }
         # 不同模式的理想環境參數（添加光照和CO2範圍）
         self.mode_params = {
             "growing": {
-                "temp_range": (22, 28),
+                "temp_range":  (22, 28),
                 "humid_range": (0.4, 0.7),
-                "vpd_range": (0.8, 1.5),
+                "vpd_range":   (0.8, 1.5),
                 "light_range": (300, 600),  # lux
-                "co2_range": (400, 800)  # ppm
+                "co2_range":   (400, 800)  # ppm
             },
             "flowering": {
-                "temp_range": (20, 26),
+                "temp_range":  (20, 26),
                 "humid_range": (0.4, 0.6),
-                "vpd_range": (1.0, 1.8),
+                "vpd_range":   (1.0, 1.8),
                 "light_range": (500, 800),  # lux
-                "co2_range": (600, 1000)  # ppm
+                "co2_range":   (600, 1000)  # ppm
             },
             "seeding": {
-                "temp_range": (24, 30),
+                "temp_range":  (24, 30),
                 "humid_range": (0.5, 0.7),
-                "vpd_range": (0.7, 1.3),
+                "vpd_range":   (0.7, 1.3),
                 "light_range": (200, 400),  # lux
-                "co2_range": (400, 600)  # ppm
+                "co2_range":   (400, 600)  # ppm
             }
         }
 
@@ -1548,99 +1321,6 @@ def compute_advantages(rewards, values, next_values, dones, gamma=0.99, gae_lamb
         advantages.insert(0, advantage)  # 插入到开头
 
     return tf.convert_to_tensor(advantages, dtype=tf.float32)
-
-
-def xcollect_experiences(agent, env, num_episodes=100, max_steps_per_episode=None):
-    """
-    收集智能体在环境中的经验
-
-    参数:
-        agent: 智能体对象，需要有 get_action 方法
-        env: 环境对象
-        num_episodes: 要收集的回合数
-        max_steps_per_episode: 每个回合的最大步数，如果为None则使用env.seq_len
-
-    返回:
-        experiences: 收集到的经验列表
-    """
-    if max_steps_per_episode is None:
-        max_steps_per_episode = env.seq_len
-
-    experiences = []
-
-    for episode in range(num_episodes):
-        state = env.reset()
-        episode_experiences = []
-        done = False
-        step = 0
-
-        # 随机选择或根据当前模式设置真实标签
-        if env.mode == "flowering":
-            true_label = 2
-        elif env.mode == "seeding":
-            true_label = 1
-        else:  # growing
-            true_label = 0
-
-        print(f"开始收集第 {episode + 1}/{num_episodes} 回合经验 (模式: {env.mode})")
-
-        while not done and step < max_steps_per_episode:
-            # 智能体选择动作
-            action = agent.get_action(state)
-
-            # 在环境中执行动作
-            next_state, reward, done, info = env.step(
-                action,
-                params={
-                    "energy_penalty": 0.1,
-                    "switch_penalty_per_toggle": 0.2,
-                    "vpd_penalty": 2.0,
-                    "flower_bonus": 0.5,
-                    "seed_bonus": 0.5,
-                    "grow_bonus": 0.5
-                },
-                true_label=true_label
-            )
-
-            # 存储经验
-            experience = {
-                'state': state.copy(),
-                'action': action,
-                'reward': reward,
-                'next_state': next_state.copy(),
-                'done': done,
-                'info': info,
-                'true_label': true_label,
-                'episode': episode,
-                'step': step
-            }
-
-            episode_experiences.append(experience)
-
-            # 更新状态
-            state = next_state
-            step += 1
-
-            # 打印进度
-            if step % 10 == 0:
-                health_status = ["健康", "不健康", "無法判定"][info['health_status']]
-                print(f"  步骤 {step}: 状态={health_status}, 奖励={reward:.3f}, "
-                      f"温度={info['temp']:.1f}°C, 湿度={info['humid']:.3f}")
-
-        # 将本回合的经验添加到总经验中
-        experiences.extend(episode_experiences)
-
-        # 打印回合总结
-        total_reward = sum(exp['reward'] for exp in episode_experiences)
-        avg_health = np.mean([exp['info']['health_status'] for exp in episode_experiences])
-        health_percentage = np.mean([1 if exp['info']['health_status'] == 0 else 0
-                                     for exp in episode_experiences]) * 100
-
-        print(f"回合 {episode + 1} 完成: 总奖励={total_reward:.3f}, "
-              f"健康时间比例={health_percentage:.1f}%, 步数={step}")
-        print("-" * 50)
-
-    return experiences
 
 
 # 使用示例

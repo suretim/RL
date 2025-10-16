@@ -2,24 +2,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-// Undefine any potentially conflicting macros
-#ifdef CHOOSE_MACRO_VA_ARG
-#undef CHOOSE_MACRO_VA_ARG
-#endif
-#ifdef foo
-#undef foo
-#endif
-// 彻底清理所有可能冲突的宏
-#pragma push_macro("CHOOSE_MACRO_VA_ARG")
-#pragma push_macro("foo")
-#pragma push_macro("ESP_STATIC_ASSERT")
-#pragma push_macro("__SELECT_MACRO_VA_ARG_SIZE__")
-
-#undef CHOOSE_MACRO_VA_ARG
-#undef foo
-#undef ESP_STATIC_ASSERT
-#undef __SELECT_MACRO_VA_ARG_SIZE__
  
 // 首先包含最基本的ESP头文件
 #include "esp_system.h"
@@ -29,18 +11,7 @@ extern "C" {
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-
-// 恢复宏（在包含所有ESP头文件之后）
-#pragma pop_macro("__SELECT_MACRO_VA_ARG_SIZE__")
-#pragma pop_macro("ESP_STATIC_ASSERT")
-#pragma pop_macro("foo")
-#pragma pop_macro("CHOOSE_MACRO_VA_ARG")
-
-
   
- 
-//#include "esp_macros.h"
-
 // Then include your other headers
 #include "infer_esp32_lstm_lll.h"
 
@@ -50,8 +21,6 @@ extern "C" {
 #include "sensor_module.h" 
 #include "hvac_q_agent.h"
 
-
-  
 #ifdef __cplusplus
 }
 #endif
@@ -60,23 +29,61 @@ extern "C" {
 #include "tensorflow/lite/micro/micro_interpreter.h"
 #include "tensorflow/lite/micro/system_setup.h"
 #include "tensorflow/lite/schema/schema_generated.h"  
-
+#include "PlantHVACEnv.h" 
 #include "classifier_storage.h" 
 #include "config_mqtt.h"
 #include "esp_partition.h"  
 #include "spi_flash_mmap.h"   // 替代 esp_spi_flash.h
+#include "nn.h"
+#include "ni_debug.h"   
+ 
+extern const unsigned char _binary_esp32_optimized_model_tflite_start[] asm("_binary_esp32_optimized_model_tflite_start");
+extern const unsigned char _binary_esp32_optimized_model_tflite_end[]   asm("_binary_esp32_optimized_model_tflite_end");
+const size_t   esp32_optimized_model_tflite_len=_binary_esp32_optimized_model_tflite_end-_binary_esp32_optimized_model_tflite_start;
 
+extern const unsigned char _binary_meta_model_tflite_start[] asm("_binary_meta_model_tflite_start");
+extern const unsigned char _binary_meta_model_tflite_end[]   asm("_binary_meta_model_tflite_end"); 
+const size_t  meta_model_tflite_len=_binary_meta_model_tflite_end-_binary_meta_model_tflite_start;
+ 
 
-// -------------------------
-// 模型数据 (TFLite flatbuffer) lstm_encoder_contrastive 和 meta_lstm_classifier
-// -------------------------
-//extern const unsigned char lstm_encoder_contrastive_tflite[];
-//extern const unsigned int lstm_encoder_contrastive_tflite_len;
+extern const unsigned char _binary_actor_task0_tflite_start[] asm("_binary_actor_task0_tflite_start");
+extern const unsigned char _binary_actor_task0_tflite_end[]   asm("_binary_actor_task0_tflite_end"); 
+size_t actor_task0_tflite_len = _binary_actor_task0_tflite_end - _binary_actor_task0_tflite_start;
+ 
+extern const unsigned char _binary_critic_task0_tflite_start[] asm("_binary_critic_task0_tflite_start");
+extern const unsigned char _binary_critic_task0_tflite_end[]   asm("_binary_critic_task0_tflite_end"); 
+const size_t    critic_task0_tflite_len=_binary_critic_task0_tflite_end - _binary_critic_task0_tflite_start;
 
-extern const unsigned char meta_model_tflite[];
-//extern const unsigned char actor_tflite[];
-//extern const unsigned int meta_model_tflite_len;
-
+const unsigned char* bin_model_tflite[4] = {
+    _binary_esp32_optimized_model_tflite_start, 
+    _binary_meta_model_tflite_start, 
+    _binary_actor_task0_tflite_start,
+    _binary_critic_task0_tflite_start
+};
+const unsigned int bin_model_tflite_len[4] = {
+    esp32_optimized_model_tflite_len, 
+    meta_model_tflite_len, 
+    actor_task0_tflite_len,
+    critic_task0_tflite_len
+};
+ 
+const char optimized_model_path[] = "/spiffs1/esp32_optimized_model.tflite" ;
+const char meta_model_path[] = "/spiffs1/meta_model.tflite" ;
+const char actor_model_path[] = "/spiffs1/actor_task0.tflite";
+const char critic_model_path[] = "/spiffs1/critic_task0.tflite";
+const char spiffs_ppo_model_bin_path[]=  "/spiffs2/ppo_model.bin" ;
+const char ppo_policy[]="spiffs2/policy.tflite";
+ 
+const char* spiffs1_model_path[SPIFFS1_MODEL_COUNT] = {
+    optimized_model_path,
+    meta_model_path,
+    actor_model_path,
+    critic_model_path 
+};
+const char* spiffs2_model_path[SPIFFS2_MODEL_COUNT] = { 
+    spiffs_ppo_model_bin_path,
+    ppo_policy
+};
 extern float *fisher_matrix;
 extern float *theta ; 
 extern bool ewc_ready;
@@ -85,21 +92,44 @@ extern bool ewc_ready;
 // -------------------------
 
 static const char *TAG = "Inference_lstm";
+#if 1
+struct ModelContext {
+    const tflite::Model* model = nullptr;
+    tflite::MicroInterpreter* interpreter = nullptr;
+    TfLiteTensor* input_tensor = nullptr;
+    TfLiteTensor* output_tensor = nullptr;
+    // 公用的 Op resolver（根据模型需求配置）
+    tflite::MicroMutableOpResolver<24> micro_op_resolver;
+    // tensor arena
+    uint8_t* tensor_arena = nullptr;
+    size_t tensor_arena_size = 0;
+};
 
+// 全局容器 (管理多个模型)
+namespace {
+    constexpr int kNumModels = 4;
+    constexpr size_t kTensorArenaSize[kNumModels] = {
+        16 * 1024, 16 * 1024, 128 * 1024, 256 * 1024
+    };
+
+    std::array<ModelContext, kNumModels> model_contexts;
+
+    
+}
+#else
 // Globals, used for compatibility with Arduino-style sketches.
 namespace {
-  const tflite::Model* model = nullptr;
-  tflite::MicroInterpreter* interpreter = nullptr;
-  TfLiteTensor* input_tensor = nullptr;
-  TfLiteTensor* output_tensor= nullptr; 
+  const tflite::Model* model[4] = {nullptr};
+  tflite::MicroInterpreter* interpreter[4] = {nullptr};
+  TfLiteTensor* input_tensor[4] = {nullptr};
+  TfLiteTensor* output_tensor[4]= {nullptr}; 
   tflite::MicroMutableOpResolver<24> micro_op_resolver;
 
-  constexpr int kTensorArenaSize = 1024 * 1024;  
-  static uint8_t *tensor_arena= nullptr;//[kTensorArenaSize]; // Maybe we should move this to external
+  constexpr int kTensorArenaSize[4] = { 16 * 1024, 16 * 1024, 128 * 1024, 256 * 1024 }; // 4 * 8k 256 * 1024;  
+  static uint8_t *tensor_arena[4]= {nullptr, nullptr, nullptr, nullptr};//[kTensorArenaSize]; // Maybe we should move this to external
 }  // namespace
-
-//float *gradients ;       // 模拟梯度
-
+ 
+#endif
 float LAMBDA_EWC = 0.001f;
 float LR = 0.01f;
 
@@ -113,17 +143,25 @@ extern std::vector<std::vector<float>> fisher_layers;
 extern std::vector<std::vector<int>> layer_shapes;
 std::vector<int> trainable_tensor_indices;     // 存 dense 層的 tensor index
 
-     
-// 全局變量
-//trainable_tensor_indices = [0, 1, 2, 3, 6, 13, 14, 15, 16, 17, 18, 19, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 50, 223, 224, 225]; 
-// 將 TFLite FULLY_CONNECTED 層的 shape 提取到 layer_shapes
+float input_seq[MAX_SEQ_LEN * MAX_FEATURE_DIM] = {0.0};  // 从传感器读取
+float logits[MAX_NUM_CLASSES]= {0.0};
+    
+// ---------------- NN Placeholder ----------------
+// 权重向量示例
+std::vector<float> W1, W2, b1, b2, Vw;
+float Vb = 0.0f;
+extern std::vector<float> health_result;
+
+#define H1          32
+#define H2          4
 
 
 static const void *model_data_ptr = NULL;
 static spi_flash_mmap_handle_t model_mmap_handle;
 #include "tensorflow/lite/schema/schema_generated.h"
 
-bool load_model_from_flash(void) {
+bool load_model_from_flash(int type) {
+    auto& ctx = model_contexts[type];
     const esp_partition_t *partition = esp_partition_find_first(
         ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "spiffs2");
 
@@ -160,14 +198,14 @@ bool load_model_from_flash(void) {
            (int)model_data_ptr, (int)model_size);
 
     // 验证模型
-    model = tflite::GetModel(model_data_ptr);
-    if (model->version() != TFLITE_SCHEMA_VERSION) {
+    ctx.model = tflite::GetModel(model_data_ptr);
+    if (ctx.model->version() != TFLITE_SCHEMA_VERSION) {
         ESP_LOGE(TAG, "Model provided is schema version %d not equal to supported version %d",
-               (int)model->version(), TFLITE_SCHEMA_VERSION);
+               (int)ctx.model ->version(), TFLITE_SCHEMA_VERSION);
         return false;
     }
 
-    ESP_LOGI(TAG, "Model loaded successfully, version: %d", (int)model->version());
+    ESP_LOGI(TAG, "Model loaded successfully, version: %d", (int)ctx.model ->version());
     return true;
 } 
 
@@ -180,118 +218,203 @@ std::string shape_to_string(const std::vector<int>& shape) {
     }
     return s;
 }
-extern uint8_t * read_model_from_spiffs(const char *spi_file_name);
-// 初始化 TFLite Micro interpreter
-bool init_spiffs_model(const char *model_path) {
 
-#if 0
-    FILE *f = fopen(model_path, "rb");
-    if(!f) { 
-        ESP_LOGE(TAG,"Failed to open model");
-        return false; 
-    }
-    fseek(f, 0, SEEK_END);
-    size_t model_size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    uint8_t *model_data = (uint8_t*)malloc(model_size);
-    fread(model_data, 1, model_size, f);
-    fclose(f);
-#else
-    uint8_t *model_data=read_model_from_spiffs(model_path);
-    if(model_data==nullptr) {
-        ESP_LOGE(TAG,"Model read failed");
+
+// 修正的ESP32验证函数
+bool verify_model_integrity(const void* model_data, size_t model_size) {
+    if (model_size < 16) {
+        ESP_LOGE(TAG, "model size too small: %d bytes", model_size);
         return false;
     }
-#endif
-    const tflite::Model *model = tflite::GetModel(model_data);
-    if(model->version() != TFLITE_SCHEMA_VERSION) {
-        ESP_LOGE(TAG,"Model schema mismatch");
-        free(model_data); 
-        model=nullptr;
-        return false;
-    }
-    free(model_data); 
-    return true;
-}
-
-
-
-bool init_tflite_model(const unsigned char model_tflite[]) {
     
-    model = tflite::GetModel(model_tflite);
-    if (model->version() != TFLITE_SCHEMA_VERSION) {
-      MicroPrintf("Model provided is schema version %d not equal to supported "
-                  "version %d.", model->version(), TFLITE_SCHEMA_VERSION);
-      return false ;
-    } 
-    if (tensor_arena == nullptr) {
-       tensor_arena = (uint8_t*) heap_caps_malloc(kTensorArenaSize, MALLOC_CAP_SPIRAM);
+    const uint8_t* data = static_cast<const uint8_t*>(model_data);
+    
+     
+    // 验证模型头（可选但推荐）
+    if (model_size >= 16) {  // 确保文件至少有 16 字节
+        // 检查 FlatBuffer 头（字节0-3）
+        if (data[4] == 'T' && data[5] == 'F' && data[6] == 'L' && data[7] == '3') {
+            // 验证 TFLite 魔术数字（字节 4-7）
+            ESP_LOGI(TAG, "verify model integrity TFLite model header verified");
+            
+        } else {
+            ESP_LOGW(TAG, "Unknown file format, may not be TFLite");
+            return false;
+        }
+    } else {
+        ESP_LOGW(TAG, "Model file is too short, cannot verify header");
+        return false;
     }
-    if (tensor_arena == nullptr) {
-      printf("Couldn't allocate memory of %d bytes\n", kTensorArenaSize);
-      return false;
-    }
+
+    
     return true;
-}
+} 
 
 
+void parse_model_weights(uint8_t *buffer, size_t size) {
+    ESP_LOGI(TAG, "Parsing model weights... (%d bytes)", size);
+
+    // 将 buffer 强制转换为 float*
+    float* ptr = reinterpret_cast<float*>(buffer);
+    size_t offset = 0;
+
+    // 清空之前的 vector 并填充新数据
+    W1.assign(ptr + offset, ptr + offset + H1 * STATE_DIM);
+    offset += H1 * STATE_DIM;
+
+    b1.assign(ptr + offset, ptr + offset + H1);
+    offset += H1;
+
+    W2.assign(ptr + offset, ptr + offset + H2 * H1);
+    offset += H2 * H1;
+
+    b2.assign(ptr + offset, ptr + offset + H2);
+    offset += H2;
+
+    Vw.assign(ptr + offset, ptr + offset + H2);
+    offset += H2;
+
+    Vb = *(ptr + offset);
+    offset += 1;
+
+    ESP_LOGI(TAG, "Model weights parsed successfully. Total floats = %d", offset);
+} 
   
-bool init_model(int type)
-{
-    if(model!=nullptr) {
-        return false;
-    }
-    ESP_LOGI(TAG,"Model loadding..."); //
-    //if(type == PPO_CASE && load_model_from_flash()==false) {
-    if(type == PPO_CASE && init_spiffs_model("/model/lstm_encoder_contrastive.tflite")==false) {
-        ESP_LOGE(TAG,"Failed to load model"); 
-        return false;
-    }
-    
-    if(type == NN_PPO_CASE&& init_tflite_model(meta_model_tflite)==false) {  
-        ESP_LOGE(TAG,"Failed to load model");
-        return false;    
-    }
-    if(type == SARSA_CASE && init_tflite_model(meta_model_tflite)==false) { 
-        ESP_LOGE(TAG,"Failed to load model");
-        return false; 
-    }
-    static tflite::MicroInterpreter static_interpreter(model, micro_op_resolver, tensor_arena, kTensorArenaSize);
-    interpreter = &static_interpreter;
+ 
+ 
 
-    if(interpreter->AllocateTensors() != kTfLiteOk) {
-        ESP_LOGE(TAG,"AllocateTensors failed"); 
-        free(tensor_arena); 
-        tensor_arena = nullptr;
-        return false;
-    }
+unsigned char*  load_from_spiffs(int type, const char* filename,size_t &file_size) {
+    // 打开文件
+    FILE* file = fopen(filename, "rb");
+    if (!file) {
+        //char *bin_str=(char *)bin_model_tflite[type];
+        //save_model_to_spiffs(bin_model_tflite_len[type], bin_str, filename);
+         
+        //file = fopen(filename, "rb");    
+        //if (!file) {
+            ESP_LOGE(TAG, "Failed to open load_from_spiffs file: %s", filename);
+            return nullptr;
+        //}
+    } 
+    // 获取文件大小
+    fseek(file, 0, SEEK_END);
+    file_size = ftell(file);
+    fseek(file, 0, SEEK_SET); 
+    // 分配内存
+    unsigned char* buf = (unsigned char*)malloc(file_size);
+    if (!buf) {
+        ESP_LOGE(TAG, "Failed to allocate memory for load_from_spiffs");
+        fclose(file);
+        return nullptr;
+    } 
+    // 读取文件内容
+    size_t read_size = fread(buf, 1, file_size, file);
+    fclose(file);
 
-    input_tensor = interpreter->input(0);
-    output_tensor = interpreter->output(0);
-    if (input_tensor == nullptr || output_tensor == nullptr) {
-          ESP_LOGE(TAG, "failed to get input or output tensor");
-          free(tensor_arena);
-          tensor_arena = nullptr;
-          return false;
-      }
-    ESP_LOGI(TAG,"Interpreter ready. Input=%d Output=%d",
-             input_tensor->bytes/sizeof(float), output_tensor->bytes/sizeof(float)); 
-    
-    printf("input dims: %d %d %d %d  output dims: %d %d  \n",
-        input_tensor->dims->data[0],
-        input_tensor->dims->data[1],
-        input_tensor->dims->data[2],
-        input_tensor->dims->data[3],
-        output_tensor->dims->data[0],
-        output_tensor->dims->data[1] 
-    ); 
-    free(tensor_arena);
-    tensor_arena = nullptr;
-    if(SEQ_LEN!=input_tensor->dims->data[1] || FEATURE_DIM!=input_tensor->dims->data[2] ) 
-    {
-        printf("input tensor dims not match  %d %d but %d %d \n",SEQ_LEN,FEATURE_DIM,input_tensor->dims->data[1],input_tensor->dims->data[2]);  
-        return false;
+    if (read_size != file_size) {
+        ESP_LOGE(TAG, "Failed to read complete file. Expected %d, read %d", file_size, read_size);
+        free(buf);
+        return nullptr;
     }  
+    return buf; 
+}
+
+  bool init_model(int type)
+{
+    auto& ctx = model_contexts[type];  // 取出对应的 context
+
+    if (ctx.model != nullptr) {
+        ESP_LOGI(TAG, "Model[%d] already initialized", type);
+        return true;
+    }
+
+    ESP_LOGI(TAG, "Loading model[%d]...", type);
+
+    size_t file_size = 0;
+    bool from_spiffs = false;
+    unsigned char* buf = load_from_spiffs(
+        SPIFFS_DATA_TYPE_MODEL,
+        spiffs1_model_path[type],
+        file_size
+    );
+
+    if (buf == nullptr || file_size == 0) {
+        ESP_LOGW(TAG, "Falling back to embedded model[%d]", type);
+        buf       = (unsigned char*)bin_model_tflite[type];
+        file_size = bin_model_tflite_len[type];
+        ESP_LOGI("Model", "Embedded model[%d] size = %d bytes", type, file_size);
+    } else {
+        from_spiffs = true;
+    }
+
+    if (!verify_model_integrity(buf, file_size)) {
+        ESP_LOGE(TAG, "Model verification failed");
+        if (from_spiffs) free(buf);
+        return false;
+    }
+
+    ctx.model = tflite::GetModel(buf);
+    if (ctx.model->version() != TFLITE_SCHEMA_VERSION) {
+        ESP_LOGE(TAG, "Model schema mismatch: model=%d, expect=%d",
+                 (int)ctx.model->version(), TFLITE_SCHEMA_VERSION);
+        if (from_spiffs) free(buf);
+        return false;
+    }
+
+    if (from_spiffs) {
+        ESP_LOGI(TAG, "Model[%d] loaded from SPIFFS (%d bytes)", type, file_size);
+    } else {
+        ESP_LOGI(TAG, "Model[%d] loaded from embedded binary (%d bytes)", type, file_size);
+    }
+
+    // 确保旧 arena 被释放
+    if (ctx.tensor_arena != nullptr) {
+        free(ctx.tensor_arena);
+        ctx.tensor_arena = nullptr;
+    }
+
+    ctx.tensor_arena_size = kTensorArenaSize[type];
+    ctx.tensor_arena = (uint8_t*)heap_caps_malloc(
+        ctx.tensor_arena_size,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
+    );
+
+    if (ctx.tensor_arena == nullptr) {
+        ESP_LOGE(TAG, "Couldn't allocate tensor arena (%d bytes)", ctx.tensor_arena_size);
+        if (from_spiffs) free(buf);
+        return false;
+    }
+
+    ctx.interpreter = new tflite::MicroInterpreter(
+        ctx.model,
+        ctx.micro_op_resolver,
+        ctx.tensor_arena,
+        ctx.tensor_arena_size
+    );
+
+    if (ctx.interpreter->AllocateTensors() != kTfLiteOk) {
+        ESP_LOGE(TAG, "AllocateTensors() failed");
+        free(ctx.tensor_arena);
+        ctx.tensor_arena = nullptr;
+        if (from_spiffs) free(buf);
+        return false;
+    }
+
+    ctx.input_tensor  = ctx.interpreter->input(0);
+    ctx.output_tensor = ctx.interpreter->output(0);
+
+    if (ctx.input_tensor == nullptr || ctx.output_tensor == nullptr) {
+        ESP_LOGE(TAG, "Failed to get input/output tensor");
+        free(ctx.tensor_arena);
+        ctx.tensor_arena = nullptr;
+        if (from_spiffs) free(buf);
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Interpreter ready. Input=%d Output=%d",
+             ctx.input_tensor->bytes / sizeof(float),
+             ctx.output_tensor->bytes / sizeof(float));
+
     return true;
 }
 
@@ -370,8 +493,9 @@ void extract_layer_shapes_from_model(const tflite::Model* model) {
 }
 
  
-void update_dense_layer_weights(void)
+void update_dense_layer_weights(int type)
 {
+    auto &ctx=model_contexts[type];
     extern std::vector<std::vector<float>> trainable_layers;
     extern std::vector<std::vector<float>> fisher_layers;
     extern std::vector<std::vector<int>> layer_shapes;
@@ -379,7 +503,7 @@ void update_dense_layer_weights(void)
 
     for (size_t k = 0; k < trainable_tensor_indices.size(); ++k) {
         int j = trainable_tensor_indices[k];   // 取得對應 tensor id
-        TfLiteEvalTensor* eval_tensor = interpreter->GetTensor(j);
+        TfLiteEvalTensor* eval_tensor = ctx.interpreter ->GetTensor(j);
         TfLiteTensor* tensor = reinterpret_cast<TfLiteTensor*>(eval_tensor);
         if (!tensor || tensor->type != kTfLiteFloat32 || tensor->dims->size < 1)
             continue;
@@ -403,13 +527,14 @@ void update_dense_layer_weights(void)
 }
 
  
-float compute_ewc_loss( 
+float compute_ewc_loss( int type,
                        const std::vector<std::vector<float>> &prev_weights,
                        const std::vector<std::vector<float>> &fisher_matrix) {
     float loss = 0.0f;
+    auto &ctx=model_contexts[type];
     for(size_t i=0; i<prev_weights.size(); ++i) {
         //TfLiteTensor* tensor = interpreter.tensor(i);
-         TfLiteEvalTensor* eval_tensor = interpreter->GetTensor(i);
+         TfLiteEvalTensor* eval_tensor = ctx.interpreter ->GetTensor(i);
         TfLiteTensor* tensor = reinterpret_cast<TfLiteTensor*>(eval_tensor);
         for(size_t j=0; j<prev_weights[i].size(); ++j) {
             float diff = tensor->data.f[j] - prev_weights[i][j];
@@ -444,10 +569,10 @@ float hvac_toggle_score(float x_seq[SEQ_LEN][FEATURE_DIM], float th_toggle, int 
 }
 
 
-void reset_tensor(void)
+void reset_tensor(int type)
 {
   //free(tensor_arena);
-  heap_caps_free(tensor_arena);
+  heap_caps_free(model_contexts[type].tensor_arena);
 }
 
 
@@ -462,66 +587,166 @@ extern "C" {
 #endif
  
 
+
 #include "ml_pid.h"
 
 
+//pid_run_input_st pid_input = {0};  
+//extern pid_run_output_st lstm_pid_out_speed;
 
-pid_run_input_st lll_tensor_run_input = {0};  
-pid_run_output_st ml_pid_out_speed;
+CLASSIFIER_Prams classifier_params;
+extern float pid_map(float x, float in_min, float in_max, float out_min, float out_max);
+int load_up_input_seq(int type,int seq_len)
+{
+    int cnt=0;
+    // float t_feed  = pid_map(bp_pid_th.t_feed,   m_range_params.temp_range.first, m_range_params.temp_range.second, 0, 1);
+    // float h_feed  = pid_map(bp_pid_th.h_feed,   m_range_params.humid_range.first, m_range_params.humid_range.second, 0, 1);
+    // float w_feed  = pid_map(bp_pid_th.w_feed,   m_range_params.water_range.first, m_range_params.water_range.second, 0, 1);
+    // float l_feed  = pid_map(bp_pid_th.l_feed,   m_range_params.light_range.first, m_range_params.light_range.second, 0, 1);
+    // float c_feed  = pid_map(bp_pid_th.c_feed,   m_range_params.co2_range.first, m_range_params.co2_range.second, 0, 1);
+    // float p_feed  = pid_map(bp_pid_th.p_feed,   m_range_params.ph_range.first, m_range_params.ph_range.second, 0, 1);
+    // float v_feed  = pid_map(bp_pid_th.v_feed,   m_range_params.vpd_range.first, m_range_params.vpd_range.second, 0, 1);
+    
+    if(type == PPO_CASE)
+    { 
+        for(int i=0;i<classifier_params.feature_dim;i++){
+            input_seq[cnt*classifier_params.feature_dim + i] = (float) bp_pid_th.f[0][i]; 
+        }
+    }     
+    if(type == META_CASE)
+    {
+ 
+        int h_idx=-1;
+        uint8_t geer[6];
+        // for(int port=1;port<9;port++)
+        // {     
+        //     switch(  devs_type_list[port].real_type  ) 
+        //     {
+        //         case loadType_heater:	h_idx=DEV_TU;  break;
+        //         case loadType_A_C:		h_idx=DEV_TD;  break;
+        //         case loadType_humi:		h_idx=DEV_HU;  break;
+        //         case loadType_dehumi:	h_idx=DEV_HD;  break;
+        //         case loadType_inlinefan:h_idx=(bp_pid_th.v_outside- bp_pid_th.v_feed)>=0?DEV_VU:DEV_VD; break;
+        //         case loadType_fan:      h_idx=(bp_pid_th.v_outside- bp_pid_th.v_feed)>=0?DEV_VU:DEV_VD;   break;
+        //         default:               break;
+        //     }
+        //     if(h_idx>=0)
+        //         geer[h_idx] = ml_pid_out_speed.speed[port];
+        // }
+        for(int i=0;i<classifier_params.feature_dim;i++){
+            input_seq[cnt*classifier_params.feature_dim + i] = (float) bp_pid_th.f[0][i]; 
+        }
+    }
+    cnt++;
+    cnt=cnt%seq_len;
+    return (cnt);
+}
+struct TrainableArray {
+    std::vector<float> weights;      // current trainable weights (shadow)
+    std::vector<float> fisher;       // estimated fisher diagonal
+    std::vector<float> old_weights;  // snapshot at time of consolidation
+
+    TrainableArray() {}
+    TrainableArray(size_t n) { resize(n); }
+    void resize(size_t n) {
+        weights.assign(n, 0.0f);
+        fisher.assign(n, 0.0f);
+        old_weights.assign(n, 0.0f);
+    }
+};
 
 
+TfLiteStatus infer_loop(int type) {
+    auto&ctx=model_contexts[type];
+    int seq_len  = classifier_params.seq_len;
+    int num_feats = classifier_params.feature_dim;
 
+    // ===== 输入填充 =====
+    switch (ctx.input_tensor->type) {
+        case kTfLiteFloat32: {
+            float* in_buf = ctx.input_tensor ->data.f;
+            for (int t=0; t<seq_len; t++) {
+                for (int f=0; f<num_feats; f++) {
+                    in_buf[t*num_feats + f] = (float)input_seq[t*num_feats+f];
+                }
+            }
+            break;
+        }
+        case kTfLiteInt8: {
+            int8_t* in_buf = ctx.input_tensor ->data.int8;
+            for (int t=0; t<seq_len; t++) {
+                for (int f=0; f<num_feats; f++) {
+                    in_buf[t*num_feats + f] = (int8_t)input_seq[t*num_feats+f];
+                }
+            }
+            break;
+        }
+        case kTfLiteUInt8: {
+            uint8_t* in_buf = ctx.input_tensor ->data.uint8;
+            for (int t=0; t<seq_len; t++) {
+                for (int f=0; f<num_feats; f++) {
+                    in_buf[t*num_feats + f] = (uint8_t)input_seq[t*num_feats+f];
+                }
+            }
+            break;
+        }
+        default:
+            ESP_LOGE(TAG, "Unsupported input tensor type: %d", ctx.input_tensor ->type);
+            return kTfLiteError;
+    }
 
-
-// The name of this function is important for Arduino compatibility.
-TfLiteStatus infer_loop() {
-  
-    // 推理範例
-    //float* input = interpreter.input(0)->data.f;
-    //for(int i=0; i<SEQ_LEN*NUM_FEATS; ++i) input[i] = input_data[i];
-
-    TfLiteStatus invoke_status = interpreter->Invoke();
-    if (invoke_status != kTfLiteOk) {
+    // ===== 执行推理 =====
+    if (ctx.interpreter ->Invoke() != kTfLiteOk) {
         ESP_LOGE(TAG, "Invoke failed");
         return kTfLiteError;
     }
-      
-    
-    float* output = output_tensor->data.f;
-    printf("Inference output: ");
-    
-    printf("\n");
-#if INFER_CASE == PPO_CASE
-    for(int i=0; i<NUM_CLASSES; ++i){
-         printf("%.3f ", output[i]);
-        ml_pid_out_speed.speed[i+1] = output[i];
+
+    float* output = ctx.output_tensor ->data.f;
+    TfLiteTensor* out = ctx.interpreter ->output(0); 
+    size_t m = 1;
+    int i=0;
+    for (  i = 0; i < out->dims->size; ++i) {
+        m *= out->dims->data[i];
+    } 
+    std::vector<float>  output_vec ;
+    // ===== 按模型类型输出 =====
+    if (type == CRITIC_MODEL) {
+        
+        output_vec.resize(m);
+        memcpy(output_vec.data(), ctx.interpreter ->typed_output_tensor<float>(0), m * sizeof(float)); 
+        printf("Critic output: %.4f\n", output_vec[0]); 
+        lstm_pid_out_speed.speed[0] = output_vec[0]; 
     }
-#elif INFER_CASE == SARSA_CASE
-    // 計算 EWC loss
-    float ewc_loss = compute_ewc_loss( trainable_layers, fisher_layers);
-    printf("EWC loss: %.6f\n", ewc_loss);
-    // int flowering = is_flowering_seq(x_input, 550.0f);
-    // int toggle_flag;
-    // float toggle_rate = hvac_toggle_score(x_input, 0.15f, &toggle_flag);
+    else if (type == OPTIMIZED_MODEL || type == ACTOR_MODEL) {
+        printf("Actor/Optimized output: ");
+        float sum=0.0f;
+        for (  i=0; i<m; i++) {
+            printf("%.4f ", output[i]);
+            sum+=output[i];
+        }
+        for (  i=0; i<m; i++) {
+            if(sum< 1e-8)
+                lstm_pid_out_speed.speed[i+1]=1.0f/m;
+            else
+                lstm_pid_out_speed.speed[i+1] = output[i]/sum;
+        }
+        printf("\n");
+    }
+    else if (type == META_MODEL) {
+        get_mqtt_feature(output);
+        int predicted = classifier_predict(output);
+        printf("Predicted class: %d\n", predicted);
+    }
 
-    // printf("Flowering: %d, Toggle Rate: %.4f, Toggle Flag: %d\n", flowering, toggle_rate, toggle_flag);
-    // printf("Predicted probabilities: ");
-    // for (int i=0; i<NUM_CLASSES; i++) printf("%.4f ", out_prob[i]);
-    // printf("\n");
-    
-    get_mqtt_feature(output_tensor->data.f); 
-    int predicted = classifier_predict(output_tensor->data.f);
-    printf("Predicted class: %d\n", predicted); 
- #endif     
-   vTaskDelay(1); // to avoid watchdog trigger
-  return kTfLiteOk;
-} 
- 
+    vTaskDelay(1); // 防止 watchdog
+    return kTfLiteOk;
+}
 
-void parse_ewc_assets() {
+  
+void parse_ewc_assets(int type) {
     if (!ewc_ready || ewc_buffer.empty()) return;
-
-    extract_layer_shapes_from_model(model);
+    auto& ctx=model_contexts[type];
+    extract_layer_shapes_from_model(ctx.model);
     trainable_layers.clear();
     fisher_layers.clear();
 
@@ -570,7 +795,7 @@ void parse_ewc_assets() {
     ewc_buffer.clear();
     
     if (!trainable_layers.empty()) { 
-        update_dense_layer_weights();
+        update_dense_layer_weights(type);
         
 
         trainable_layers.clear();  // 可選，保留 capacity
@@ -580,66 +805,91 @@ void parse_ewc_assets() {
     ewc_ready = false;
 }
  
-esp_err_t ppo_inference(float *input_data) {
- 
-     ESP_LOGE(TAG, "ppo_inference Invoke ");
+  
+
+bool actor_critic_infer(int type )
+{ 
+    auto&ctx=model_contexts[type];
+    if(ctx.model==nullptr){
+        ctx.micro_op_resolver.AddFullyConnected();
+        ctx.micro_op_resolver.AddSoftmax();
+        ctx.micro_op_resolver.AddReshape();
+        ctx.micro_op_resolver.AddRelu();
+        ctx.micro_op_resolver.AddQuantize();
+        ctx.micro_op_resolver.AddDequantize();
+        ctx.micro_op_resolver.AddTanh();
+        
+        if(    init_model(type)==false){
+            ESP_LOGE(TAG,"Init actor_critic_inference Model Failed");
+            return false;
+        }   
+        ESP_LOGI("INFERENCE", "Input dimensions: %dD", ctx.input_tensor->dims->size);
+        for (int i = 0; i < ctx.input_tensor ->dims->size; i++) {
+            ESP_LOGI("INFERENCE", "  dim[%d]: %d", i, ctx.input_tensor ->dims->data[i]);
+        }
+        for (int i = 0; i < ctx.output_tensor ->dims->size; i++) {
+            ESP_LOGI("INFERENCE", "  dim[%d]: %d", i, ctx.output_tensor ->dims->data[i]);
+        }
+    
+    }
+    if(type==ACTOR_MODEL)
+    {
+       ESP_LOGI("INFERENCE", "actor  type= %d ", type);
+    }
+    else
+    {
+       ESP_LOGI("INFERENCE", "critic  type= %d ", type);
+    }
+    infer_loop(type);
+    return true;
+}
+
+
+bool ppo_inference(int type) {
+ auto &ctx=model_contexts[type];
+     ESP_LOGI(TAG, "ppo_inference Invoke ");
      // 假设模型只用 10 种算子
      //tflite::MicroMutableOpResolver<10> micro_op_resolver;
-    micro_op_resolver.AddShape();            // SHAPE操作符 - 之前缺失的
-    micro_op_resolver.AddStridedSlice();     // STRIDED_SLICE操作符 - 现在缺失的 ← 添加这一行
-    micro_op_resolver.AddFullyConnected();   // 全连接层
-    micro_op_resolver.AddReshape();          // 重塑层
-    micro_op_resolver.AddSoftmax();          // Softmax
-    micro_op_resolver.AddRelu();             // ReLU激活
-    micro_op_resolver.AddMul();              // 乘法
-    micro_op_resolver.AddAdd();              // 加法
-    micro_op_resolver.AddSub();              // 减法
-    micro_op_resolver.AddConcatenation();    // 连接操作
+     if(ctx.model==nullptr){
+        ctx.micro_op_resolver.AddUnidirectionalSequenceLSTM();
+        ctx.micro_op_resolver.AddShape();            // SHAPE操作符 - 之前缺失的
+        ctx.micro_op_resolver.AddStridedSlice();     // STRIDED_SLICE操作符 - 现在缺失的 ← 添加这一行
+        ctx.micro_op_resolver.AddFullyConnected();   // 全连接层
+        ctx.micro_op_resolver.AddReshape();          // 重塑层
+        ctx.micro_op_resolver.AddSoftmax();          // Softmax
+        ctx.micro_op_resolver.AddRelu();             // ReLU激活
+        ctx.micro_op_resolver.AddMul();              // 乘法
+        ctx.micro_op_resolver.AddAdd();              // 加法
+        ctx.micro_op_resolver.AddSub();              // 减法
 
-    micro_op_resolver.AddSplit();            // 分割操作
-    micro_op_resolver.AddTanh();             // Tanh激活（LSTM常用）
-    micro_op_resolver.AddMean();              
-    micro_op_resolver.AddAbs();              
-    micro_op_resolver.AddFill();              
-    micro_op_resolver.AddLogistic();              
-    
-    micro_op_resolver.AddPack();             // Pack操作
-    micro_op_resolver.AddUnpack();           // Unpack操作
-    micro_op_resolver.AddTranspose();        // 转置操作
-    if(    init_model(INFER_CASE)==false){
-        ESP_LOGE(TAG,"Init ppo_inference Model Failed");
-        return kTfLiteError;
-    }
-    
+        ctx.micro_op_resolver.AddConcatenation();    // 连接操作     
+        ctx.micro_op_resolver.AddSplit();            // 分割操作
+        ctx.micro_op_resolver.AddTanh();             // Tanh激活（LSTM常用）
+        ctx.micro_op_resolver.AddMean();              
+        ctx.micro_op_resolver.AddAbs();              
+        ctx.micro_op_resolver.AddFill();              
+        ctx.micro_op_resolver.AddLogistic();              
+        ctx.micro_op_resolver.AddLessEqual();
+        ctx.micro_op_resolver.AddPack();             // Pack操作
+        ctx.micro_op_resolver.AddUnpack();           // Unpack操作
 
-
-    ESP_LOGI("INFERENCE", "Input dimensions: %dD", input_tensor->dims->size);
-    for (int i = 0; i < input_tensor->dims->size; i++) {
-        ESP_LOGI("INFERENCE", "  dim[%d]: %d", i, input_tensor->dims->data[i]);
-    }
-    
+        ctx.micro_op_resolver.AddTranspose();        // 转置操作
+        if(    init_model(type)==false){
+            ESP_LOGE(TAG,"Init ppo_inference Model Failed");
+            return false;
+        }  
+        ESP_LOGI("INFERENCE", "Input dimensions: %dD", ctx.input_tensor->dims->size);
+        for (int i = 0; i < ctx.input_tensor ->dims->size; i++) {
+            ESP_LOGI("INFERENCE", "  dim[%d]: %d", i, ctx.input_tensor ->dims->data[i]);
+        }
+        for (int i = 0; i < ctx.output_tensor ->dims->size; i++) {
+            ESP_LOGI("INFERENCE", "  dim[%d]: %d", i, ctx.output_tensor ->dims->data[i]);
+        }
      
-    if (input_tensor->dims->size != 3 || 
-        input_tensor->dims->data[0] != 1 || 
-        input_tensor->dims->data[1] != PPO_SEQ_LEN || 
-        input_tensor->dims->data[2] != FEATURE_DIM) {
-        ESP_LOGE("INFERENCE", "Unexpected input shape");
-        return kTfLiteError;
     }
     
-    // 准备输入数据 - 需要10个时间步，每个时间步7个特征
-    //float* input_data = input_tensor->data.f;
-    //float input_data[50] = {0};
     
-    // 填充输入数据
-    //    for(int i=0;i<50;i++) input_data[i] = (float) rand () / UINT32_MAX;
-
-     int seq_len= input_tensor->dims->data[1];
-     int num_feats= input_tensor->dims->data[2];
-     for (int t=0; t<seq_len; t++)
-            for (int f=0; f<num_feats; f++)
-                input_tensor->data.f[t*num_feats + f] = input_data[t*num_feats+f];
-    infer_loop();
+    infer_loop(type);
 #if 0
     TfLiteStatus invoke_status = interpreter->Invoke();
     if (invoke_status != kTfLiteOk) {
@@ -653,103 +903,107 @@ esp_err_t ppo_inference(float *input_data) {
     for(int i=0; i<num_classes; ++i) printf("%.3f ", out_logits[i]);
     printf("\n");           
 #endif 
-    return kTfLiteOk;
+    return true;
 }
   
 // The name of this function is important for Arduino compatibility.
 //TfLiteStatus setup(void) {
-TfLiteStatus sarsa_inference( float* input_seq, float* out_logits) {
-    // int seq_len, int num_feats
-   // tflite::MicroMutableOpResolver<24> micro_op_resolver;
-    micro_op_resolver.AddStridedSlice();
-    micro_op_resolver.AddPack();
-    micro_op_resolver.AddConv2D();
-    micro_op_resolver.AddRelu(); 
-    micro_op_resolver.AddAveragePool2D();
-    micro_op_resolver.AddReshape();  // 🔧 添加这个
-    micro_op_resolver.AddFullyConnected();  // 如果你有 dense 层也要加
-    micro_op_resolver.AddQuantize();
-    micro_op_resolver.AddDequantize();
-    micro_op_resolver.AddSoftmax();
+bool sarsa_inference(int type) {
+   auto &ctx=model_contexts[type];
+   if(ctx.model==nullptr){
+        ctx.micro_op_resolver.AddStridedSlice();
+        ctx.micro_op_resolver.AddPack();
+        ctx.micro_op_resolver.AddConv2D();
+        ctx.micro_op_resolver.AddRelu(); 
+        ctx.micro_op_resolver.AddAveragePool2D();
+        ctx.micro_op_resolver.AddReshape();  // 🔧 添加这个
+        ctx.micro_op_resolver.AddFullyConnected();  // 如果你有 dense 层也要加
+        ctx.micro_op_resolver.AddQuantize();
+        ctx.micro_op_resolver.AddDequantize();
+        ctx.micro_op_resolver.AddSoftmax();
 
-    micro_op_resolver.AddAdd(); 
-    micro_op_resolver.AddSub();
-    micro_op_resolver.AddMul();
-    micro_op_resolver.AddShape();
-    micro_op_resolver.AddTranspose();
-    micro_op_resolver.AddUnpack();  
-    micro_op_resolver.AddFill();
-    micro_op_resolver.AddSplit(); 
-    micro_op_resolver.AddLogistic();  // This handles sigmoid activation CONCATENATION
-    micro_op_resolver.AddTanh();
+        ctx.micro_op_resolver.AddAdd(); 
+        ctx.micro_op_resolver.AddSub();
+        ctx.micro_op_resolver.AddMul();
+        ctx.micro_op_resolver.AddShape();
+        ctx.micro_op_resolver.AddTranspose();
+        ctx.micro_op_resolver.AddUnpack();  
+        ctx.micro_op_resolver.AddFill();
+        ctx.micro_op_resolver.AddSplit(); 
+        ctx.micro_op_resolver.AddLogistic();  // This handles sigmoid activation CONCATENATION
+        ctx.micro_op_resolver.AddTanh();
 
-    micro_op_resolver.AddMean();
-    micro_op_resolver.AddAbs();
-    micro_op_resolver.AddConcatenation();  
-    init_model(INFER_CASE); 
-    // 微调示意：更新权重，EWC参与 
-    parse_ewc_assets();   
- 
-    for (int t=0; t<SEQ_LEN; t++)
-        for (int f=0; f<FEATURE_DIM; f++)
-            input_tensor->data.f[t*FEATURE_DIM + f] = input_seq[t*FEATURE_DIM+f];
-     
+        ctx.micro_op_resolver.AddMean();
+        ctx.micro_op_resolver.AddAbs();
+        ctx.micro_op_resolver.AddConcatenation();  
+        
+        if( init_model(type)==false){
+                ESP_LOGE(TAG,"Init  inference Model Failed");
+                return false;
+        }  
+        ESP_LOGI("INFERENCE", "Input dimensions: %dD", ctx.input_tensor->dims->size);
+        for (int i = 0; i < ctx.input_tensor ->dims->size; i++) {
+            ESP_LOGI("INFERENCE", "  dim[%d]: %d", i, ctx.input_tensor ->dims->data[i]);
+        }
+        for (int i = 0; i < ctx.output_tensor ->dims->size; i++) {
+            ESP_LOGI("INFERENCE", "  dim[%d]: %d", i, ctx.output_tensor ->dims->data[i]);
+        }
+        // 微调示意：更新权重，EWC参与 
+        parse_ewc_assets(type);   
     
-     
-    // 7) 读取输出
-     
-    //int num_classes = output->dims->data[1];
-    //memcpy(out_logits, output->data.f, num_classes * sizeof(float));
-    infer_loop();
-     
-     
-     
+        
+        
+    } 
+    infer_loop(type);   
     vTaskDelay(1); // to avoid watchdog trigger 
    //   interpreter->ResetTempAllocations();
 
     //free(tensor_arena);
    // ESP_LOGI(TAG, "推理完成，系统正常运行");
  
-    return kTfLiteOk;
+    return true;
 }
   
-TfLiteStatus img_inference( float* input_seq, float* out_logits) {
+bool img_inference(int type) {
+    auto &ctx= model_contexts[type];
     // int seq_len, int num_feats
     //tflite::MicroMutableOpResolver<24> micro_op_resolver;
-    micro_op_resolver.AddStridedSlice();
-    micro_op_resolver.AddPack();
-    micro_op_resolver.AddConv2D();
-    micro_op_resolver.AddRelu(); 
-    micro_op_resolver.AddAveragePool2D();
-    micro_op_resolver.AddReshape();  // 🔧 添加这个
-    micro_op_resolver.AddFullyConnected();  // 如果你有 dense 层也要加
-    micro_op_resolver.AddQuantize();
-    micro_op_resolver.AddDequantize();
-    micro_op_resolver.AddSoftmax();
+    if(ctx.model==nullptr)
+    {
+        ctx.micro_op_resolver.AddStridedSlice();
+        ctx.micro_op_resolver.AddPack();
+        ctx.micro_op_resolver.AddConv2D();
+        ctx.micro_op_resolver.AddRelu(); 
+        ctx.micro_op_resolver.AddAveragePool2D();
+        ctx.micro_op_resolver.AddReshape();  
+        ctx.micro_op_resolver.AddFullyConnected();   
+        ctx.micro_op_resolver.AddQuantize();
+        ctx.micro_op_resolver.AddDequantize();
+        ctx.micro_op_resolver.AddSoftmax();
 
-    micro_op_resolver.AddAdd(); 
-    micro_op_resolver.AddSub();
-    micro_op_resolver.AddMul();
-    micro_op_resolver.AddShape();
-    micro_op_resolver.AddTranspose();
-    micro_op_resolver.AddUnpack();  
-    micro_op_resolver.AddFill();
-    micro_op_resolver.AddSplit(); 
-    micro_op_resolver.AddLogistic();  // This handles sigmoid activation CONCATENATION
-    micro_op_resolver.AddTanh();
+        ctx.micro_op_resolver.AddAdd(); 
+        ctx.micro_op_resolver.AddSub();
+        ctx.micro_op_resolver.AddMul();
+        ctx.micro_op_resolver.AddShape();
+        ctx.micro_op_resolver.AddTranspose();
+        ctx.micro_op_resolver.AddUnpack();  
+        ctx.micro_op_resolver.AddFill();
+        ctx.micro_op_resolver.AddSplit(); 
+        ctx.micro_op_resolver.AddLogistic();   
+        ctx.micro_op_resolver.AddTanh();
 
-    micro_op_resolver.AddMean();
-    micro_op_resolver.AddAbs();
-    micro_op_resolver.AddConcatenation();  
-    init_model(INFER_CASE); 
-    for (int t=0; t<SEQ_LEN; t++)
-        for (int f=0; f<FEATURE_DIM; f++)
-            input_tensor->data.f[t*FEATURE_DIM + f] = input_seq[t*FEATURE_DIM+f];
-      
-    // 7) 读取输出 
-    //int num_classes = output->dims->data[1];
-    //memcpy(out_logits, output->data.f, num_classes * sizeof(float));
-    infer_loop(); 
+        ctx.micro_op_resolver.AddMean();
+        ctx.micro_op_resolver.AddAbs();
+        ctx.micro_op_resolver.AddConcatenation();  
+        
+        
+        if(    init_model(type)==false){
+            ESP_LOGE(TAG,"Init image_inference Model Failed");
+            return false;
+        }
+    }
+     
+    infer_loop(type); 
      
     vTaskDelay(1); // to avoid watchdog trigger 
    //   interpreter->ResetTempAllocations();
@@ -757,144 +1011,145 @@ TfLiteStatus img_inference( float* input_seq, float* out_logits) {
     //free(tensor_arena);
    // ESP_LOGI(TAG, "推理完成，系统正常运行");
  
-    return kTfLiteOk;
+    return true;
 }
 
 
-float input_seq[SEQ_LEN * FEATURE_DIM] = {0.0};  // 从传感器读取
-float logits[NUM_CLASSES]= {0.0};
 
-void prepare_lstm_input() {
-    // 获取输入张量
-     
-    
-    // 检查输入维度
-    ESP_LOGI("INFERENCE", "Input dimensions: %dD", input_tensor->dims->size);
-    for (int i = 0; i < input_tensor->dims->size; i++) {
-        ESP_LOGI("INFERENCE", "  dim[%d]: %d", i, input_tensor->dims->data[i]);
-    }
-    
-    // 输入应该是 [1, 10, 7] - batch=1, timesteps=10, features=7
-    if (input_tensor->dims->size != 3 || 
-        input_tensor->dims->data[0] != 1 || 
-        input_tensor->dims->data[1] != 10 || 
-        input_tensor->dims->data[2] != 7) {
-        ESP_LOGE("INFERENCE", "Unexpected input shape");
-        return;
-    }
-    
-    // 准备输入数据 - 需要10个时间步，每个时间步7个特征
-    float* input_data = input_tensor->data.f;
-    
-    // 示例：填充10个时间步的数据
-    for (int timestep = 0; timestep < 10; timestep++) {
-        for (int feature = 0; feature < 7; feature++) {
-            // 这里根据您的实际数据填充
-            // 例如：input_data[timestep * 7 + feature] = your_sensor_data[feature];
-            input_data[timestep * 7 + feature] = 0.0f; // 临时用0填充
-        }
-    }
-}
-
-int load_up_input_seq(void)
-{
-      int cnt=0;
-
-#if INFER_CASE == PPO_CASE
+bool (*functionInferArray[4])(int type) = {
+    actor_critic_infer,
+    ppo_inference, 
+    sarsa_inference,     
+    img_inference
+};
  
+ 
+
+//void catch_tensor_dim(enum CaseType type) {
+void catch_tensor_dim(int type) {
     
-    input_seq[cnt*FEATURE_DIM + 0] = (float)0.0;
-    input_seq[cnt*FEATURE_DIM + 1] = (float)bp_pid_th.t_feed;
-    input_seq[cnt*FEATURE_DIM + 2] = (float)bp_pid_th.h_feed;
-    input_seq[cnt*FEATURE_DIM + 3] = (float)bp_pid_th.l_feed;
-    input_seq[cnt*FEATURE_DIM + 4] = (float)bp_pid_th.c_feed; 
-      
-#elif INFER_CASE == SARSACASE
-    int h_idx=-1;
-    uint8_t geer[6];
-    for(int port=1;port<9;port++)
-    {     
-        switch(  devs_type_list[port].real_type  ) 
-        {
-            case loadType_heater:	h_idx=DEV_TU;  break;
-            case loadType_A_C:		h_idx=DEV_TD;  break;
-            case loadType_humi:		h_idx=DEV_HU;  break;
-            case loadType_dehumi:	h_idx=DEV_HD;  break;
-            case loadType_inlinefan:h_idx=(bp_pid_th.v_outside- bp_pid_th.v_feed)>=0?DEV_VU:DEV_VD; break;
-            case loadType_fan:      h_idx=(bp_pid_th.v_outside- bp_pid_th.v_feed)>=0?DEV_VU:DEV_VD;   break;
-            default:               break;
-        }
-        if(h_idx>=0)
-            geer[h_idx] = ml_pid_out_speed.speed[port];
+    classifier_params.infer_case=INFER_CASE;
+    classifier_params.feature_dim = FEATURE_DIM;
+    classifier_params.num_classes = NUM_CLASSES;
+    classifier_params.seq_len = SEQ_LEN;
+    if (type == PPO_CASE) {
+        classifier_params.infer_case=PPO_CASE;
+        classifier_params.feature_dim = PPO_FEATURE_DIM;
+        classifier_params.num_classes = PPO_CLASSES;
+        classifier_params.seq_len = PPO_SEQ_LEN;
     }
-    input_seq[cnt*FEATURE_DIM + 0] = (float)bp_pid_th.t_feed;
-    input_seq[cnt*FEATURE_DIM + 1] = (float)bp_pid_th.h_feed;
-    input_seq[cnt*FEATURE_DIM + 2] = (float)bp_pid_th.l_feed;
-    input_seq[cnt*FEATURE_DIM + 3] = (float)geer[0];
-    input_seq[cnt*FEATURE_DIM + 4] = (float)geer[1];
-    input_seq[cnt*FEATURE_DIM + 5] = (float)geer[2];
-    input_seq[cnt*FEATURE_DIM + 6] = (float)geer[3];//+rand() % 10;
-#endif
-    cnt++;
-    cnt=cnt%SEQ_LEN;
-    return (cnt);
+    if (type == META_CASE) {
+        classifier_params.infer_case=META_CASE;
+        classifier_params.feature_dim = META_FEATURE_DIM;
+        classifier_params.num_classes = META_CLASSES;
+        classifier_params.seq_len = META_SEQ_LEN;
+    }
+    if (type == IMG_CASE) {
+        classifier_params.infer_case=IMG_CASE;
+        classifier_params.feature_dim = IMG_FEATURE_DIM;
+        classifier_params.num_classes = IMG_CLASSES;
+        classifier_params.seq_len = IMG_SEQ_LEN;
+    }
+    
 }
 
 
-
+//extern void set_plant_action(const std::array<int, ACTION_CNT>& action);
+void set_plant_action(const std::array<int, ACTION_CNT>& action) {
+    extern std::array<int, ACTION_CNT> plant_action ;
+    plant_action = action;
+}
 //u_int8_t get_tensor_state(void);
-esp_err_t  lll_tensor_run(void) 
-{
-    // int16_t sensor_val_list[ENV_CNT];
-	// uint8_t cur_load_type[PORT_CNT];
-	// uint8_t port_dev_origin[PORT_CNT];
+ 
+extern curLoad_t curLoad[PORT_CNT] ;
+extern pid_run_input_st pid_run_input;
+//extern st_bp_pid_th  r_pid_th;
 
-	// pid_run_output_st pid_run_output;
-	// pid_param_get(ai_setting, cur_load_type, port_dev_origin, sensor_val_list, &pid_run_input );
-	// pid_run_output = pid_run_rule( &pid_run_input );
-	// pid_rule_output_set_speed(pid_run_output, cur_load_type, output_port_list );
-
-    // extern void pid_param_get(ai_setting_t *ai_setting, uint8_t* load_type_list, uint8_t* dev_origin_list, int16_t* env_value_list, pid_run_input_st* param);
-     
-     
-    read_all_sensor_trigger();
-    // pid_param_get(&g_ai_setting, NULL, NULL, NULL, &pid_run_input );
-     
-    lll_tensor_run_input.env_en_bit  = 0xff;
-    lll_tensor_run_input.ml_run_sta  = 1;
-    lll_tensor_run_input.env_target[ENV_TEMP] =30.0;
-    lll_tensor_run_input.env_target[ENV_HUMID]=60.0;
-    lll_tensor_run_input.env_target[ENV_LIGHT]=320;
-    lll_tensor_run_input.env_target[ENV_CO2]  =500;
-    devs_type_list[1].real_type = lll_tensor_run_input.dev_type[1] =loadType_A_C;
-    devs_type_list[2].real_type = lll_tensor_run_input.dev_type[2]= loadType_heater;
-    devs_type_list[3].real_type = lll_tensor_run_input.dev_type[3]= loadType_dehumi;
-    devs_type_list[4].real_type = lll_tensor_run_input.dev_type[4]= loadType_humi;
-    devs_type_list[5].real_type = lll_tensor_run_input.dev_type[5]= loadType_A_C;
-    devs_type_list[6].real_type = lll_tensor_run_input.dev_type[6]= loadType_heater;
-    devs_type_list[7].real_type = lll_tensor_run_input.dev_type[7]= loadType_dehumi;
-    devs_type_list[8].real_type = lll_tensor_run_input.dev_type[8]= loadType_humi;
-    for(int port=1;port<9;port++)
-    {    
-        lll_tensor_run_input.is_switch[port] = 1;
-    }
-    pid_run_output_st out_speed = pid_run_rule( &lll_tensor_run_input );
-    for(int port=1;port<9;port++)
-    {    
-        ml_pid_out_speed.speed[port] += out_speed.speed[port];
-    }
+bool pid_env_init(void) 
+{ 
+    //pid_param_get(&g_ai_setting, NULL, NULL, NULL, &pid_run_input );
     
-    int ret=load_up_input_seq(); 
+    pid_run_input.env_target[ENV_TEMP]  =(plant_range_params.temp_range.first  + plant_range_params.temp_range.second)/2.0;
+    pid_run_input.env_target[ENV_HUMID] =(plant_range_params.humid_range.first + plant_range_params.humid_range.second)/2.0;
+    pid_run_input.env_target[ENV_LIGHT] =(plant_range_params.light_range.first + plant_range_params.light_range.second)/2.0;
+    pid_run_input.env_target[ENV_CO2]   =(plant_range_params.co2_range.first   + plant_range_params.co2_range.second)/2.0; 
+    pid_run_input.env_target[ENV_SOIL]  =(plant_range_params.water_range.first + plant_range_params.water_range.second)/2.0; 
+    if(pid_run_input.env_target[ENV_TEMP]==0||pid_run_input.env_target[ENV_HUMID]==0||pid_run_input.env_target[ENV_LIGHT]==0||pid_run_input.env_target[ENV_CO2]==0||pid_run_input.env_target[ENV_SOIL]==0)
+        return false;
+    pid_run_input.dev_type[1] =loadType_heater ;
+    pid_run_input.dev_type[2]= loadType_A_C;
+    pid_run_input.dev_type[3]= loadType_humi ;
+    pid_run_input.dev_type[4]= loadType_dehumi;
+    pid_run_input.dev_type[5]= loadType_water_pump;
+    pid_run_input.dev_type[6]= loadType_growLight;
+    pid_run_input.dev_type[7]= loadType_co2_generator;
+    pid_run_input.dev_type[8]= loadType_pump;
+    curLoad[1].load_type=loadType_heater ;
+    curLoad[2].load_type=loadType_A_C ;
+    curLoad[3].load_type=loadType_humi ;
+    curLoad[4].load_type=loadType_dehumi ;
+    curLoad[5].load_type=loadType_water_pump ;
+    curLoad[6].load_type=loadType_growLight ;
+    curLoad[7].load_type=loadType_co2_generator ;
+    curLoad[8].load_type=loadType_pump ;
+     
+    pid_run_input.env_en_bit  = (1 << ENV_TEMP) | (1 << ENV_HUMID)| (1 << ENV_VPD);
+    pid_run_input.ml_run_sta  = 1;
+      
+    for(int port=1;port<PORT_CNT;port++)
+    {    
+        pid_run_input.is_switch[port] = 1;
+    } 
+    r_env_th.t_target=pid_run_input.env_target[ENV_TEMP];
+    r_env_th.h_target=pid_run_input.env_target[ENV_HUMID];  
+    bp_pid_dbg("pid_env_init Sucessfully \r\n");
+    return true;
+}
+
+void pid_run(void) 
+{   
+     
+    if( pid_env_init() ==false)
+    {
+        bp_pid_dbg("pid_env_init Error \r\n");
+        return  ;
+    } 
+    
+	if(read_all_sensor_trigger()==false)
+    {
+        bp_pid_dbg("Sensor Working Error \r\n");
+        return ;
+    } 
+    if(pid_run_rule( &pid_run_input )==true)
+    {
+        std::array<int,ACTION_CNT>  action;
+        for(int port=1;port<= ACTION_CNT;port++)
+        {    
+            
+            action[port-1]=ml_pid_out_speed.speed[port];
+            set_plant_action(action);
+
+        }
+        bp_pid_dbg("pid_run_output_st =(%d,%d,%d,%d)\r\n", action[0],action[1], action[2],action[3]);
+    }
+    return;
+}
+
+
+esp_err_t  lll_tensor_run(int type) 
+{ 
+    catch_tensor_dim(type); 
+    int ret=load_up_input_seq(classifier_params.infer_case,classifier_params.seq_len); 
      
     if(ret==0)
     {    
-#if INFER_CASE == PPO_CASE 
-        if( kTfLiteError == ppo_inference(input_seq))  
-#elif INFER_CASE == SARSA_CASE
-        if( kTfLiteError ==  sarsa_inference(input_seq) )
-#elif INFER_CASE == IMG_CASE
-        if( kTfLiteError ==  sarsa_inference(input_seq) )
-#endif
+        
+        if( false == functionInferArray[type](ACTOR_MODEL))   
+        {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            return ESP_FAIL;  //kTfLiteOK
+        }  
+        if( false == functionInferArray[type](CRITIC_MODEL))   
         {
             vTaskDelay(pdMS_TO_TICKS(10));
             return ESP_FAIL;  //kTfLiteOK

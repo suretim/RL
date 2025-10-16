@@ -1,35 +1,82 @@
+#pragma once
+
+
 #ifndef HVAC_Q_AGENT_H
 #define HVAC_Q_AGENT_H
 
 #include <stdio.h>
 
 // 假设状态维度 5：health + ac_target + dehum_target + light + humidity
-#define STATE_DIM 5
-#define NUM_FLASK_TASK 4
+//#define STATE_DIM 5
+//#define NUM_FLASK_GET_TASK 2
+//#define NUM_FLASK_PUT_TASK 1
 
-enum flask_state{
-    FLASH_DOWN_LOAD_MODEL=0,
-    INIT_EXPORTER=1,
-    DOWN_LOAD_MODEL=2,
-    DOWN_LOAD_MODEL_OTA=3,
+enum enum_spiffs_data_type{
+    SPIFFS_DATA_TYPE_WEIGHT=0, 
+    SPIFFS_DATA_TYPE_MODEL=1, 
+    SPIFFS_DATA_TYPE_COUNT=2,
 };
-// ======= WiFi 與 OTA 配置 ======= 
-#if 0
-     #define BASE_URL  "192.168.68.237"     
-#else
-    //#define BASE_URL  "192.168.0.57" 
-    #define BASE_URL  "192.168.30.132" 
-    
 
-#define HTTP_GET_MODEL_JSON_URL "http://192.168.30.132:5001/api/model?name=esp32_policy"
-#define OTA_SERVER_URL          "http://192.168.30.132:5001"   // 换成你的 PC IP
-    //const char* check_url = "http://192.168.0.57:5000/api/check-update/device001/1.0.0";
-    //const char* download_url = "http://192.168.0.57:5000/api/download-update";
-    //const char* download_bin_url = "http://192.168.0.57:5000/api/bin-update";
-    //#define OTA_BIN_UPDATE_URL "http://192.168.0.57:5000/api/bin-update"
+enum enum_http_data_type{
+    HTTP_DATA_TYPE_BIN=0, 
+    HTTP_DATA_TYPE_B64=1, 
+    HTTP_DATA_TYPE_COUNT=2,
+};
+
+enum enum_flask_state{
+    SPIFFS_MODEL_EMPTY=0, 
+    SPIFFS_MODEL_SAVED=1, 
+    SPIFFS_MODEL_READED=2,
+    SPIFFS_MODEL_ERR=3,
+};
+
+enum enum_flask_get_state {
+    FLASK_OPTI_MODEL = 0, 
+    FLASK_META_MODEL = 1, 
+    IMG_MODEL=2,
+    MODEL_BIN_PPO_MD5 = 3,
+    FLASK_ACTOR_MODEL = 4,
+    FLASK_GET_COUNT, // This automatically becomes 2, useful for array sizing
+};
+ 
+enum spiffs1_model_type {
+    OPTIMIZED_MODEL = 0, 
+    META_MODEL=1, 
+    ACTOR_MODEL=2,
+    CRITIC_MODEL = 3,
+    VIT_MODEL=4, 
+    SPIFFS1_MODEL_COUNT,  
+};
+
+enum spiffs2_model_type {
+    BIN_MODEL = 0, 
+    WEIGHT_MODEL=1,  
+    SPIFFS2_MODEL_COUNT,  
+};
+
+
+#define FLASK_STATES_GET_COUNT 2
+ 
+enum enum_flask_put_state{
+     
+    INIT_EXPORTER=0, 
+    FLASK_PUT_COUNT
+};
+
+
+
+#ifdef __cplusplus
+extern "C" {
 #endif
-#define BASE_PORT "5000"
-#define POLICY_PORT "5001"
+
+
+void wifi_get_package(int type); 
+void wifi_put_package(int type);  
+void hvac_agent(void); 
+
+#ifdef __cplusplus
+}
+#endif
 
 #if 0
 const int STATE_SIZES[STATE_DIM] = {2, 2, 2, 3, 3}; // 例：health 0/1, light 0/1/2 等

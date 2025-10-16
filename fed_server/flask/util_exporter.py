@@ -1,6 +1,6 @@
 import tensorflow as tf
 import numpy as np
-#from util_hvac_agent import LifelongPPOBaseAgent
+
 import tensorflow_probability as tfp
 import tensorflow_model_optimization as tfmot
 import zlib
@@ -19,7 +19,8 @@ class ESP32BaseExporter:
         self.model = policy_model
         self.converter = None
 
-    def create_representative_dataset(self, env, num_samples=1000):
+
+    def rand_create_representative_dataset(self, env, num_samples=1000):
         """创建代表性数据集"""
         representative_data = []
         for _ in range(num_samples):
@@ -129,7 +130,7 @@ class ESP32BaseExporter:
 # 獨立的 TensorFlow → ESP32 匯出器（不再繼承 Agent）
 # -----------------------------
 class TensorFlowESP32Exporter(ESP32BaseExporter):
-    def __init__(self, model_or_path: Union[str, tf.keras.Model]):
+    def __init__(self, model_or_path: Union[str, tf.keras.Model], quantize: bool = False):
         super().__init__(model_or_path)
         """
         Args:
@@ -145,12 +146,27 @@ class TensorFlowESP32Exporter(ESP32BaseExporter):
         self.quantized_model_bytes: Optional[bytes] = None
         self.fisher_matrix: Optional[Dict[str, np.ndarray]] = None
         self.optimal_params: Optional[Dict[str, np.ndarray]] = None
+        self.ota_package=None
+        self.quantize = quantize
 
+    def convert_model_to_tflite(self) -> bytes:
+        """
+        Converts the model to TFLite without applying quantization.
+        """
+        print("Converting model to TFLite without quantization...")
+        converter = tf.lite.TFLiteConverter.from_keras_model(self.model)
+        converter.optimizations = []  # No optimizations (no quantization)
+        tflite_model = converter.convert()
+        return tflite_model
     # 量化
     def apply_quantization(self, representative_data: np.ndarray) -> bytes:
         """
         將模型量化為 int8,適合 ESP32。
         """
+        if not self.quantize:
+            print("Quantization is disabled. Returning the original model.")
+            # Return the original model if quantization is disabled
+            return self.convert_model_to_tflite()
         print("Applying post-training quantization...")
 
         converter = tf.lite.TFLiteConverter.from_keras_model(self.model)
@@ -304,28 +320,37 @@ class TensorFlowESP32Exporter(ESP32BaseExporter):
 
 
     # 壓縮
-    def compress_for_esp32(self, tflite_bytes: bytes) -> Dict[str, Any]:
-        print("Compressing model for ESP32...")
-        comp = zlib.compress(tflite_bytes)
-        original_size = len(tflite_bytes)
-        compressed_size = len(comp)
-        compression_ratio = original_size / compressed_size if compressed_size > 0 else float('inf')
-        print(f"Compression ratio: {compression_ratio:.2f}x")
-        print(f"Original: {original_size} bytes, Compressed: {compressed_size} bytes")
-        return {
-            'compressed_model': comp,
-            'original_size': original_size,
-            'compressed_size': compressed_size,
-            'compression_ratio': compression_ratio,  # FIX: 供 metadata 使用
-        }
+    def compress_for_esp32(self, tflite_bytes, compress=False):  # 添加compress参数
+        """
+        为ESP32压缩模型数据
 
-    # OTA 組包
+        Args:
+            tflite_bytes: TFLite模型字节数据
+            compress: 是否进行压缩，默认为True
+        """
+        if compress:
+            # 压缩逻辑
+            compressed = zlib.compress(tflite_bytes)
+            compression_ratio = len(tflite_bytes) / len(compressed)
+            return {
+                'compressed_model': compressed,
+                'compression_ratio': compression_ratio,
+                'compressed': True
+            }
+        else:
+            # 不压缩，直接返回原始数据
+            return {
+                'compressed_model': tflite_bytes,
+                'compression_ratio': 1.0,
+                'compressed': False
+            }
     def create_ota_package(self,
                            representative_data: np.ndarray,
                            firmware_version: str = "1.0.0",
                            fine_tune_data=None,  #fine_tune_data=(x_train, y_train)
                            prune: bool = True,
-                           quantize: bool = True) -> Dict[str, Any]:
+                           compress=False,
+                           quantize: bool = False) -> Dict[str, Any]:
         print("Creating OTA package...")
         if prune:
             if fine_tune_data is not None:
@@ -339,9 +364,16 @@ class TensorFlowESP32Exporter(ESP32BaseExporter):
             tflite_bytes = self.apply_quantization(representative_data)
         else:
             converter = tf.lite.TFLiteConverter.from_keras_model(self.model)
+            converter.optimizations = []
+            converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS]
+            converter.inference_input_type = tf.float32  # 确保输入类型为 float32
+            converter.inference_output_type = tf.float32  # 确保输出类型为 float32
             tflite_bytes = converter.convert()
+            print("converter.optimizations=[]")
+            for layer in self.model.layers:
+                print(f"Layer {layer.name}: {layer.__class__}")
 
-        comp = self.compress_for_esp32(tflite_bytes)
+        comp = self.compress_for_esp32(tflite_bytes, compress=compress)
         simplified_fisher = self._simplify_fisher_matrix()
         metadata = {
             'firmware_version': firmware_version,
@@ -362,7 +394,7 @@ class TensorFlowESP32Exporter(ESP32BaseExporter):
             'model_data_b64': model_data_b64,
             'fisher_matrix': simplified_fisher,
             'optimal_params': self._prepare_optimal_params(),
-            'crc32': self._calculate_crc(comp['compressed_model']),
+            'crc32': f"{self._calculate_crc(comp['compressed_model'])}",
         }
         return ota_package
 
@@ -389,18 +421,20 @@ class TensorFlowESP32Exporter(ESP32BaseExporter):
     def _calculate_crc(self, data: bytes) -> int:
         return zlib.crc32(data)
 
-    def save_ota_package(self, output_path: str, representative_data: np.ndarray,fine_tune_data=None, **kwargs) -> None:
-        ota = self.create_ota_package(representative_data,fine_tune_data=fine_tune_data, **kwargs)
+    def save_ota_package(self, output_path: str, representative_data=None,fine_tune_data=None, quantize=False, **kwargs) -> None:
+        self.ota_package = self.create_ota_package(representative_data=representative_data,
+                                                   fine_tune_data=fine_tune_data,
+                                                   quantize= quantize, **kwargs)
 
         # JSON 檔（Base64 模型）
         with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(ota, f, indent=2, ensure_ascii=False)
+            json.dump(self.ota_package, f, indent=2, ensure_ascii=False)
 
         # 二進位（含 bytes）— 使用 pickle
         binary_path = output_path.replace('.json', '.bin')
         import pickle
         with open(binary_path, 'wb') as f:
-            pickle.dump(ota, f)
+            pickle.dump(self.ota_package, f)
 
         print(f"OTA package saved to {output_path} and {binary_path}")
         print(f"JSON size: {os.path.getsize(output_path)} bytes")
