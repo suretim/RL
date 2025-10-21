@@ -33,7 +33,13 @@
 std::vector<uint8_t> ewc_buffer;  // 接收 buffer
 bool ewc_ready=false;
 
+// ===================== worker 消息结构 =====================
+typedef struct {
+    size_t len;
+    uint8_t *data;
+} mqtt_worker_msg_t;
 
+static QueueHandle_t mqtt_msg_queue = NULL;
 
 static esp_mqtt_client_handle_t mqtt_client = NULL; 
 float  f_out[DENSE_IN_FEATURES ]= {
@@ -379,7 +385,7 @@ static esp_err_t mqtt_event_handler_cb (esp_mqtt_event_handle_t event) {
                 strncmp(event->topic, WEIGHT_FISH_SUB, event->topic_len) == 0)
             {
                 //ESP_LOGI(TAG, "MQTT data received: %.*s", event->data_len, event->data);
-            ESP_LOGI(TAG, "len=%d, preview=%.*s", event->data_len, event->data_len>100?100:event->data_len, event->data);
+                ESP_LOGI(TAG, "len=%d, preview=%.*s", event->data_len, event->data_len>100?100:event->data_len, event->data);
 
                 mqtt_data_handler(event->data);
                 
@@ -482,28 +488,125 @@ void handle_mqtt_message(const char *json_str) {
 }
 
   
+static void mqtt_worker_task(void *arg)
+{
+    mqtt_worker_msg_t msg;
+    ParsedModelParams params;
 
+    for (;;) {
+        if (xQueueReceive(mqtt_msg_queue, &msg, portMAX_DELAY)) {
+            ESP_LOGI(TAG, "Worker 收到模型数据 len=%d", (int)msg.len);
 
-static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
-                               int32_t event_id, void *event_data) {
-    mqtt_event_handler_cb((esp_mqtt_event_handle_t)event_data);
-    
-    return;
+            if (decode_model_params(msg.data, msg.len, &params)) {
+                //update_classifier_weights_bias(params.values,
+                //                               params.value_count,
+                //                               params.param_type);
+                // 处理参数类型
+                switch (params.param_type) {
+                    case ParamType_CLASSIFIER_WEIGHT:
+                        ESP_LOGI(TAG, "Classifier weight received, values: %d", params.value_count);
+                        //handle_classifier_weight(params.values, params.values_count, params.shape, params.shape_count);
+                        update_classifier_weights_bias(params.values, params.value_count,0);
+                        break;
+                    case ParamType_CLASSIFIER_BIAS:
+                        ESP_LOGI(TAG, "Classifier bias received");
+                        //handle_classifier_bias(params.values, params.value_count);
+                        update_classifier_weights_bias(params.values, params.value_count,1);
+                        
+                        break;
+                    case ParamType_ENCODER_WEIGHT:  
+                            ESP_LOGI(TAG, "Fisher weight received");
+                            update_fishermatrix_theta(params.values, params.value_count,0);
+                        
+                        break;
+                    case ParamType_ENCODER_BIAS:
+                        ESP_LOGI(TAG, "Fisher bias received");
+                        update_fishermatrix_theta(params.values, params.value_count,1);                        
+                        
+                        break;
+                    default:
+                        ESP_LOGW(TAG, "Unknown or unsupported param_type: %d", params.param_type);
+                        break;
+                } 
+            }
+
+            free(msg.data);
+        }
+    }
+} 
+
+extern "C" void mqtt_event_handler(void* handler_args, esp_event_base_t base, int32_t event_id, void* event_data)
+{
+    // ✅ 显式强制转换 event_data 为 esp_mqtt_event_handle_t 类型
+    esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t) event_data;
+    esp_mqtt_client_handle_t client = event->client;
+
+    switch ((esp_mqtt_event_id_t)event_id)
+    {
+        case MQTT_EVENT_CONNECTED:
+        ESP_LOGI(TAG, "MQTT connected");
+            //test_protobuf();
+            esp_mqtt_client_subscribe(event->client, MQTT_TOPIC_SUB, 1);
+            esp_mqtt_client_subscribe(event->client, FISH_SHAP_SUB, 1);
+            esp_mqtt_client_subscribe(event->client, WEIGHT_FISH_SUB, 1);
+            publish_feature_vector(0,1); 
+         
+        break;
+
+        case MQTT_EVENT_DATA:
+            ESP_LOGI(TAG, "MQTT 收到消息 topic=%.*s, len=%d",
+                    event->topic_len, event->topic, event->data_len);
+            if (event->topic_len == strlen(MQTT_TOPIC_SUB) &&
+                strncmp(event->topic, MQTT_TOPIC_SUB, event->topic_len) == 0) {
+             
+                mqtt_worker_msg_t msg;
+                msg.len = event->data_len;
+                msg.data =(uint8_t *) malloc(event->data_len);
+                memcpy(msg.data, event->data, event->data_len);
+
+                if (xQueueSend(mqtt_msg_queue, &msg, 0) != pdTRUE) {
+                    ESP_LOGW(TAG, "队列已满，丢弃消息");
+                    free(msg.data);
+                }
+            }
+            break;
+
+        default:
+            break;
+    }
 }
+
+
+// static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
+//                                int32_t event_id, void *event_data) {
+//     mqtt_event_handler_cb((esp_mqtt_event_handle_t)event_data);
+    
+//     return;
+// }
+
+
+
+
 
 #ifdef __cplusplus
 extern "C" {
 #endif  
 
 
+//extern EventGroupHandle_t wifi_event_group;
+//#define WIFI_CONNECTED_BIT BIT0
+//#define MQTT_CONNECTED_BIT BIT1
+//#define MODEL_READY_BIT    BIT2
 // ---------------- 启动 MQTT 客户端 ----------------
-void start_mqtt_client (void * pvParameters) { 
+void mqtt_task(void * pvParameters) { 
+  
     // 构造唯一 client_id，例如：leaf_detector_1234s
-       char client_id[64];
+    static char client_id[64];
     snprintf(client_id, sizeof(client_id), MQTT_CLIENT_ID_PREFIX "%ld", random() % 10000);
     //snprintf(client_id, sizeof(client_id), "mqttx_fefb0396");
-    
-    esp_mqtt_client_config_t mqtt_cfg = {
+    //xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
+
+    static esp_mqtt_client_config_t mqtt_cfg = {
         .broker = {
             .address = {
                 .uri = MQTT_BROKER_URI
@@ -528,11 +631,45 @@ void start_mqtt_client (void * pvParameters) {
  
     mqtt_client = esp_mqtt_client_init(&mqtt_cfg);
 
-    #define ESP_EVENT_ANY_ID     ((esp_mqtt_event_id_t) -1)
-    esp_mqtt_client_register_event(mqtt_client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
+    //#define ESP_EVENT_ANY_ID     ((esp_mqtt_event_id_t) -1)
+    //esp_mqtt_client_register_event(mqtt_client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
+
+    esp_mqtt_client_register_event(mqtt_client, (esp_mqtt_event_id_t)ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
     ESP_ERROR_CHECK(esp_mqtt_client_start(mqtt_client)); 
-    return;
+    // for (;;) {
+    //     //可定期检查 MQTT 状态或执行心跳任务
+    //      UBaseType_t free_words = uxTaskGetStackHighWaterMark(NULL);
+    // ESP_LOGI("MQTT", "Stack high water mark: %u words (≈%u bytes)",
+    //          free_words, free_words * 4);
+     
+    //    vTaskDelay(pdMS_TO_TICKS(5000));
+    // }
+    vTaskDelete(NULL);
+    //return;
 }
+
+
+void periodic_task(void *pvParameter) {
+    while (1) {
+        publish_feature_vector(0,1);
+        vTaskDelay(pdMS_TO_TICKS(120000)); // 延遲 60 秒
+    }
+}
+// ===================== 初始化入口 =====================
+void mqtt_system_start(void)
+{
+    mqtt_msg_queue = xQueueCreate(4, sizeof(mqtt_worker_msg_t));
+    if (!mqtt_msg_queue) {
+        ESP_LOGE(TAG, "创建队列失败");
+        return;
+    }
+
+    xTaskCreate(mqtt_worker_task, "mqtt_worker", 8192, NULL, 5, NULL);
+    xTaskCreate(mqtt_task, "mqtt_task", 4096, NULL, 5, NULL);
+    xTaskCreate(periodic_task, "periodic_task", 8192, NULL, 5, NULL);
+}
+
+
 
 #ifdef __cplusplus
 }

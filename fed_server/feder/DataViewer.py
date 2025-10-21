@@ -38,9 +38,9 @@ def print_h5_structure(filepath):
 
 # 使用示例
 if __name__ == '__main__':
-    #filepath = "..\..\..\..\data\client_003_20250809_123254.h5"
-    #filepath = "..\..\..\..\data\client_004_20250809_155237.h5"
-    filepath = "..\..\..\..\data\client_004.h5"
+    #filepath = "..\..\..\data\client_003_20250809_123254.h5"
+    #filepath = "..\..\..\data\client_004_20250809_155237.h5"
+    filepath = "..\..\..\data\client_004.h5"
 
     print_h5_metadata(filepath)
     print_h5_structure(filepath)

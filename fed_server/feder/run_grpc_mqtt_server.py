@@ -21,12 +21,19 @@ import argparse
 
 #MQTT_BROKER = "192.168.0.57"
 
+#conda activate my_env
+#cd C:\tim\aicam\main\fed_server\cloud_models
+#python emqx_manager.py
+#netstat -ano | findstr :18083
+#fserv=None
+MQTT_PORT = 1883
+MQTT_BROKER = "192.168.30.86"
 GRPC_SUBSCRIBE = "grpc_sub/weights"
 FEDER_PUBLISH = "federated_model/parameters"
 GRPC_SERVER = "127.0.0.1:50051"
 
 EWC_ASSETS="../lstm/ewc_assets"
-DATA_DIR = "../../../../data"
+DATA_DIR = "../../../data"
 
 #define MQTT_TOPIC_PUB "grpc_sub/weights"
 #define MQTT_TOPIC_SUB "federated_model/parameters"
@@ -258,13 +265,6 @@ def serve(server,fserv):
 
 
 
-#conda activate my_env
-#cd C:\tim\aicam\main\fed_server\cloud_models
-#python emqx_manager.py
-#netstat -ano | findstr :18083
-#fserv=None
-MQTT_PORT = 1883
-MQTT_BROKER = "127.0.0.1"
 
 def main(args):
     global MQTT_BROKER,MQTT_PORT, EWC_ASSETS,DATA_DIR

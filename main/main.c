@@ -29,6 +29,7 @@
 #include "hvac_q_agent.h"
 #include "config_spiffs.h"
 #include "classifier_storage.h"
+#include "config_mqtt.h"
 #define TAG "main      " // 10个字符
 
 
@@ -602,21 +603,23 @@ void app_main(void)
 	//updata_creat_event();
  	main_creat_objs();
 	//tcp_client_creat_objs();
-	//     start_ota();
-
+	//start_ota();
+	//mqtt_task();
 	//comm_creat_objs();
     //////////////////
 	// xTaskCreate(ble_task, 			TASK_NAME_BLE, 		TASK_STACK_BLE, 	NULL, TASK_PRIO_BLE, 	NULL);
 	//xTaskCreate(wifi_task, 			TASK_NAME_WIFI, 	TASK_STACK_WIFI, 	NULL, TASK_PRIO_WIFI, 	NULL);
+	//xTaskCreate(mqtt_task, 			TASK_NAME_MQTT, 	TASK_STACK_MQTT, 	NULL, TASK_PRIO_MQTT, 	NULL);
+	mqtt_system_start();
 	//xTaskCreate(updata_task,		TASK_NAME_UPDATA,	TASK_STACK_UPDATA, 	NULL, TASK_PRIO_UPDATA, NULL);
-	xTaskCreate(main_task, 			TASK_NAME_MAIN, 	TASK_STACK_MAIN, 	NULL, TASK_PRIO_MAIN, 	NULL);
+	//xTaskCreate(main_task, 			TASK_NAME_MAIN, 	TASK_STACK_MAIN, 	NULL, TASK_PRIO_MAIN, 	NULL);
 	// xTaskCreate(main_monitor_task, 	TASK_NAME_MOMITOR, 	TASK_STACK_MOMITOR, NULL, TASK_PRIO_MOMITOR, NULL);
 
 	//tcp_client_creat_task();
 	//tcp_client_creat_rcv_task();
 	//xTaskCreate(chgup_load_task, 	TASK_NAME_CHGUPLOAD, TASK_STACK_CHGUPLOAD, NULL, TASK_PRIO_CHGUPLOAD, NULL);
 
-	 xTaskCreate(plant_env_make_task,TASK_NAME_PLANT_ENV, TASK_STACK_PLANT_ENV, NULL, TASK_PRIO_PLANT_ENV, NULL);	// 通信数据解析
+	// xTaskCreate(plant_env_make_task,TASK_NAME_PLANT_ENV, TASK_STACK_PLANT_ENV, NULL, TASK_PRIO_PLANT_ENV, NULL);	// 通信数据解析
 
 	// xTaskCreate(comm_decode_task, 	TASK_NAME_COMMDECODE, TASK_STACK_COMMDECODE, NULL, TASK_PRIO_COMMDECODE, NULL);	// 通信数据解析
 	// xTaskCreate(cmd_decode_task, 	TASK_NAME_CMDDECODE, TASK_STACK_CMDDECODE, NULL, TASK_PRIO_CMDDECODE, NULL);	// 通信数据包解析

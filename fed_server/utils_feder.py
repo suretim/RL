@@ -523,7 +523,7 @@ class FederatedLearningServicer(model_pb2_grpc.FederatedLearningServicer):
                 #features = np.round(features, decimals=3)  # Round to 1 decimal
                 #print("federated features: ", features)
 
-                #data_dir = "../../../../data"
+                #data_dir = "../../../data"
                 #device_id = "client_003"
                 data_gen = DataSaver(self.data_dir,client_id)
 
