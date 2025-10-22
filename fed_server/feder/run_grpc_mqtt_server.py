@@ -12,7 +12,7 @@ from utils import DataLoader
 
 from utils import DataSaver
 from utils import LeamPipeline
-from MqttClientServer import MqttClientServer
+from util_FedServer import MqttClientServer,FederatedLearningServicer
 import os
 import sys
 import argparse
@@ -51,7 +51,7 @@ DATA_DIR = "../../../data"
 #model_parameters_list = []
 #new_model_parameters=[]
 
-class FederatedLearningServicer(model_pb2_grpc.FederatedLearningServicer):
+class xFederatedLearningServicer(model_pb2_grpc.FederatedLearningServicer):
     def __init__(self,data_dir=None):
         self.data_dir = data_dir
         self.model_parameters_list = np.empty((0, 64))

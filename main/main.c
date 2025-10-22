@@ -457,14 +457,13 @@ void main_task(void *pvParameters)
 			main_flash_heart();  
 			flag_100ms++;
 		    //if (  flag_100ms>=100 && flask_state_get_flag[FLASK_OPTI_MODEL]==SPIFFS_MODEL_SAVED )
-			if (  flag_100ms>=100   )
+			if (  flag_100ms>=1000   )
 			{
 				pid_run();//tim modify
 				flag_100ms = 1;	
-				if(	lll_tensor_run(PPO_CASE)==ESP_FAIL){ 
-					
-					break; 
-				} 
+				//if(	lll_tensor_run(PPO_CASE)==ESP_FAIL){ 
+				//	 break; 
+				//} 
 				//ai_check_plug_in(1);   // called per sec
 				// ESP_LOGW(TAG, "heap free=%ld, min=%ld",esp_get_free_heap_size(),esp_get_minimum_free_heap_size() );
 				//ESP_LOGW(TAG, "inter heap free=%ld, min=%d",esp_get_free_internal_heap_size(), heap_caps_get_minimum_free_size( MALLOC_CAP_8BIT | MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL ) );
@@ -612,7 +611,7 @@ void app_main(void)
 	//xTaskCreate(mqtt_task, 			TASK_NAME_MQTT, 	TASK_STACK_MQTT, 	NULL, TASK_PRIO_MQTT, 	NULL);
 	mqtt_system_start();
 	//xTaskCreate(updata_task,		TASK_NAME_UPDATA,	TASK_STACK_UPDATA, 	NULL, TASK_PRIO_UPDATA, NULL);
-	//xTaskCreate(main_task, 			TASK_NAME_MAIN, 	TASK_STACK_MAIN, 	NULL, TASK_PRIO_MAIN, 	NULL);
+	xTaskCreate(main_task, 			TASK_NAME_MAIN, 	TASK_STACK_MAIN, 	NULL, TASK_PRIO_MAIN, 	NULL);
 	// xTaskCreate(main_monitor_task, 	TASK_NAME_MOMITOR, 	TASK_STACK_MOMITOR, NULL, TASK_PRIO_MOMITOR, NULL);
 
 	//tcp_client_creat_task();

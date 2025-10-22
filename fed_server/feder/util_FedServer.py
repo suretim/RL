@@ -9,6 +9,15 @@ import model_pb2
 import model_pb2_grpc
 
 import math
+
+
+import datetime
+import threading
+
+from utils import DataLoader
+
+from utils import DataSaver
+from utils import LeamPipeline
 #MQTT_BROKER = "127.0.0.1"
 
 GRPC_SERVER = "127.0.0.1:50051"
@@ -21,6 +30,130 @@ GRPC_SUBSCRIBE = "grpc_sub/weights"
 EWC_ASSETS="../lstm/ewc_assets"
 DATA_DIR = "../../../../data"
 client_request_code=1
+import base64
+import logging
+
+class FederatedLearningServicer(model_pb2_grpc.FederatedLearningServicer):
+    def __init__(self, data_dir=None, mqtt_client=None):
+        self.data_dir = data_dir
+        self.model_parameters_list = np.empty((0, 64), dtype=np.float32)
+        self.model_labels_list = np.empty((0,), dtype=np.int32)
+        self.client_id = None
+        self._lock = threading.Lock()
+        # optional: keep a reference to mqtt client so pb_to_mqtt can publish
+        self.mqtt_client = mqtt_client
+
+    def pb_to_mqtt(self, model_parms1, model_parms2, client_id, publish=False, topic=FEDER_PUBLISH):
+        """
+        Convert numpy arrays to protobuf and optionally publish via self.mqtt_client.
+        Returns tuple(payload_weights_bytes, payload_bias_bytes)
+        """
+        # Normalize to numpy arrays
+        par1 = np.asarray(model_parms1)
+        par2 = np.asarray(model_parms2)
+
+        # build weight message
+        msg_w = model_pb2.ModelParams()
+        msg_w.param_type = model_pb2.CLASSIFIER_WEIGHT
+        msg_w.values.extend(par1.flatten().astype(float).tolist())
+        msg_w.client_id = client_id or ""
+        payload_w = msg_w.SerializeToString()
+
+        # build bias message
+        msg_b = model_pb2.ModelParams()
+        msg_b.param_type = model_pb2.CLASSIFIER_BIAS
+        msg_b.values.extend(par2.flatten().astype(float).tolist())
+        msg_b.client_id = client_id or ""
+        payload_b = msg_b.SerializeToString()
+
+        if publish and self.mqtt_client is not None:
+            # publish as binary (or base64 if your broker/clients expect text)
+            try:
+                self.mqtt_client.publish(topic, payload_w)
+                self.mqtt_client.publish(topic, payload_b)
+                logging.info("Published model parameters to MQTT (bytes lengths: %d, %d)", len(payload_w), len(payload_b))
+            except Exception as e:
+                logging.exception("Failed to publish MQTT messages: %s", e)
+
+        return payload_w, payload_b
+
+    def GetUpdateStatus(self, request, context):
+        return model_pb2.ServerResponse(
+            message="Model update status fetched successfully.",
+            update_successful=True,
+            update_timestamp=int(time.time())
+        )
+
+    def federated_avg_from_DataLoder(self, data_dir, device_id):
+        data_loader = DataLoader(data_dir=data_dir, device_id=device_id)
+        pipeline = LeamPipeline(data_loader=data_loader)
+        devices = pipeline.get_available_devices()
+        federated_data = pipeline.get_federated_dataset(devices=devices, samples_per_device=500)
+        return federated_data
+
+    def federated_avg(self, data_dir, device_id):
+        features, labels = self.federated_avg_from_DataLoder(data_dir, device_id)
+        return self.pb_to_mqtt(features, labels, device_id)
+
+    def UploadModelParams(self, request, context):
+        client_id = getattr(request, "client_id", "")
+        logging.info("收到来自客户端 %s 的参数", client_id)
+        try:
+            client_params = list(request.values)  # request.values is iterable
+            if not client_params:
+                raise ValueError("Empty values received in UploadModelParams")
+
+            GROUP_SIZE = 65
+            if len(client_params) % GROUP_SIZE != 0:
+                raise ValueError(f"values length {len(client_params)} not divisible by GROUP_SIZE={GROUP_SIZE}")
+
+            num_groups = len(client_params) // GROUP_SIZE
+            data = np.array(client_params, dtype=np.float32).reshape(num_groups, GROUP_SIZE)
+            labels_array = data[:, 0].astype(np.int32)
+            params_array = data[:, 1:65].astype(np.float32)
+
+            # thread-safe append
+            with self._lock:
+                if self.model_parameters_list.size == 0:
+                    # ensure shape (0, 64)
+                    self.model_parameters_list = np.empty((0, params_array.shape[1]), dtype=np.float32)
+
+                if params_array.shape[1] != self.model_parameters_list.shape[1]:
+                    logging.warning("维度不匹配，重置存储列表：%s -> %s", self.model_parameters_list.shape, params_array.shape)
+                    self.model_parameters_list = np.empty((0, params_array.shape[1]), dtype=np.float32)
+                    self.model_labels_list = np.empty((0,), dtype=np.int32)
+
+                self.model_parameters_list = np.vstack([self.model_parameters_list, params_array])
+                self.model_labels_list = np.concatenate([self.model_labels_list, labels_array])
+
+                n_saved = self.model_parameters_list.shape[0]
+                logging.info("Received model_parameters_list rows: %d", n_saved)
+
+                if n_saved >= 10:
+                    data_gen = DataSaver(self.data_dir, client_id)
+                    data_gen.save_features(features=self.model_parameters_list, labels=self.model_labels_list)
+                    # reset
+                    self.model_parameters_list = np.empty((0, params_array.shape[1]), dtype=np.float32)
+                    self.model_labels_list = np.empty((0,), dtype=np.int32)
+                    logging.info("Model parameters saved and reset buffers")
+
+            return model_pb2.ServerResponse(
+                message="Model parameters successfully updated.",
+                update_successful=True,
+                update_timestamp=int(time.time())
+            )
+
+        except Exception as e:
+            logging.exception("Error during UploadModelParams")
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details(str(e))
+            return model_pb2.ServerResponse(
+                message=f"Model parameters not updated. client:{client_id} error:{str(e)}",
+                update_successful=False,
+                update_timestamp=int(time.time())
+            )
+
+
 class MqttClientServer(mqtt_client.Client):
     def __init__(self,fserv=None ,mqtt_broker=None,mqtt_port=None,data_dir=None):
         super().__init__()
