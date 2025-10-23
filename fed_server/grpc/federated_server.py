@@ -352,10 +352,10 @@ def main():
         mqttc.start_connect()
 
         # start gRPC server (non-blocking)
-        server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-        model_pb2_grpc.add_FederatedLearningServicer_to_server(fserv, server)
-        server.add_insecure_port("[::]:50051")
-        server.start()
+        grpc_server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+        model_pb2_grpc.add_FederatedLearningServicer_to_server(fserv, grpc_server)
+        grpc_server.add_insecure_port("[::]:50051")
+        grpc_server.start()
         logging.info("gRPC started at [::]:50051")
 
         logging.info("Server up. Ctrl+C to stop.")
@@ -374,7 +374,7 @@ def main():
         except Exception:
             pass
         try:
-            server.stop(5)
+            grpc_server.stop(5)
             logging.info("gRPC stopped")
         except Exception:
             pass

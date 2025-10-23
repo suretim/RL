@@ -2,7 +2,7 @@ import os
 import numpy as np
 import pandas as pd
 
-SAVE_DIR = "../../../../data/lll_data"
+SAVE_DIR = "../../../data/lll_data"
 os.makedirs(SAVE_DIR, exist_ok=True)
 NUM_FILES = 50
 SEQ_LEN = 1000

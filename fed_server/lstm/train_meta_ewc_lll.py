@@ -18,12 +18,12 @@ from tensorflow.keras import layers, models, optimizers
 import argparse
 from tensorflow.keras.optimizers import legacy
 
-from utils import *
+from util_model import *
 # ---------------- Hyperparameters ----------------
 # =============================
 # Hyperparameters
 # =============================
-DATA_GLOB = "../../../../data/lll_data/*.csv"
+DATA_GLOB = "../../../data/lll_data/*.csv"
 
 NUM_FEATS = 7
 
@@ -42,7 +42,7 @@ tf.random.set_seed(42)
 random.seed(42)
 
 
-def load_csvs(data_dir="../../../../data/lll_data"):
+def load_csvs(data_dir="../../../data/lll_data"):
     X_labeled_list, y_labeled_list, X_unlabeled_list = [], [], []
     files = sorted(glob.glob(os.path.join(data_dir,"*.csv")))
     for f in files:
@@ -69,7 +69,7 @@ def load_csvs(data_dir="../../../../data/lll_data"):
 
 
 # ---------------- End-to-End Serv Pipeline ----------------
-def serv(data_dir="../../../../data/lll_data", tflite_out="meta_model_lstm.tflite"):
+def serv(data_dir="../../../data/lll_data", tflite_out="meta_model_lstm.tflite"):
     print("Loading CSV data...")
     X_unlabeled, X_labeled, y_labeled = load_csvs(data_dir)
     print("Unlabeled samples:", len(X_unlabeled))

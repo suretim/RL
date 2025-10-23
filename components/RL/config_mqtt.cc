@@ -119,7 +119,7 @@ void publish_feature_vector(int label,int type ) {
     int msg_id = esp_mqtt_client_publish(mqtt_client, MQTT_TOPIC_PUB, payload.c_str(), payload.length(), 1, 0);
       
     if (msg_id != -1) {
-        ESP_LOGI("MQTT", "%s, msg_id=%d",payload.c_str(), msg_id);
+        ESP_LOGI("MQTT", "%s %s, msg_id=%d",MQTT_TOPIC_PUB,payload.c_str(), msg_id);
     } else {
         ESP_LOGE("MQTT", "Failed to publish feature vector");
     }

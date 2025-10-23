@@ -96,10 +96,10 @@ def serv_pipline(tflite_out,num_classes=3,seq_len=100, num_feats=7,feature_dim=6
         model.save_fisher_and_weights(model=meta_model, fisher_matrix=fisher_matrix)
     if X_labeled.size > 0:
         model.save_tflite(meta_model, tflite_out)
-        model.encoder.save("encoder.h5")
-        model.classifier.save("classifier.h5")
-        model.model.save("meta_model.h5")
-        model.model.summary()
+        #model.encoder.save("encoder.h5")
+        #model.classifier.save("classifier.h5")
+        #model.model.save("meta_model.h5")
+        #model.model.summary()
         print("save meta tflite Done.")
 
     # quick forward test

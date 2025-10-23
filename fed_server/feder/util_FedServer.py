@@ -12,6 +12,7 @@ import math
 
 
 import datetime
+import json
 import threading
 
 from utils import DataLoader
@@ -162,15 +163,26 @@ class MqttClientServer(mqtt_client.Client):
         self.mqtt_broker = mqtt_broker
         self.mqtt_port = mqtt_port
         self.fserv = fserv
-        #self.on_connect = self._on_connect
-        #self.on_message = self._on_message
-
+        #self.on_connect = self.on_connect
+        #self.on_message = self.on_message
 
     def start_connect(self):
-        self.connect(self.mqtt_broker, self.mqtt_port, 60)
+        username = "tim"  # 替换为你的 MQTT 用户名
+        password = "tim"  # 替换为你的 MQTT 密码
+        self.username_pw_set(username, password)  # 设置用户名和密码
+        reconnect_timeout_ms = 10000  # 10秒的重连超时
+        self.reconnect_delay_set(min_delay=1, max_delay=10)  # 设置重连延迟（最小1秒，最大10秒）
 
+
+        result = self.connect(self.mqtt_broker, self.mqtt_port, 60)
+        if result != 0:
+            print(f"[MQTT] connect() returned {result} — check broker/port/auth")
+        else:
+            print(f" [MQTT] Sucessfully connected to {self.mqtt_broker}:{self.mqtt_port}")
         self.loop_start()
-        print(f"[MQTT] connected to {self.mqtt_broker}{self.mqtt_port}")
+        #print(f"[MQTT] connected to {self.mqtt_broker} {self.mqtt_port}")
+
+
     def save_fisher_matrix_to_bin(self ,fisher_matrix, bin_file_path):
         # Open the binary file in write mode
         with open(bin_file_path, 'wb') as bin_file:
@@ -255,8 +267,8 @@ class MqttClientServer(mqtt_client.Client):
         client_request_code = client_request_code + 1
 
     # MQTT 客户端回调函数
-    @classmethod
-    def _on_connect(cls, client, userdata, flags, rc):
+    #@classmethod
+    def on_connect(self, client, userdata, flags, rc):
         if rc == 0:
             print("Connected to MQTT broker successfully!")
             # 连接成功后，订阅一个主题
@@ -265,10 +277,10 @@ class MqttClientServer(mqtt_client.Client):
 
         else:
             print("Failed to connect, return code:", rc)
-    @classmethod
-    def _on_message(cls,client,  userdata, msg):
+    #@classmethod
+    def on_message(self,client,  userdata, msg):
         global client_request_code
-        #print(f"[MQTT] Received on {msg.topic}: {msg.payload.decode()}")
+        print(f"[MQTT] Received on {msg.topic}: {msg.payload.decode()}")
         try:
             # 尝试解析 JSON 并提取参数
             message = json.loads(msg.payload.decode())

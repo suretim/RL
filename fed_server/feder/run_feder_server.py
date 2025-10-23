@@ -6,7 +6,7 @@ import threading
 # MQTT 代理配置（根据实际情况修改）
 MQTT_BROKER = "192.168.30.86"  # 公共测试服务器
 MQTT_PORT = 1883
-TOPIC = "capture/mqttx_"  # 替换为你的主题
+TOPIC = "federated_model/prameters"  # 替换为你的主题
 CLIENT_ID = "python_publisher"
 
 # 创建MQTT客户端

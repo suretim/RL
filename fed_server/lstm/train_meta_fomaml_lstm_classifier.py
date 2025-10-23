@@ -27,7 +27,7 @@ from tensorflow.keras import layers, models
 import keras
 
 # ---------------- Config / Globals ----------------
-DATA_GLOB = "../../../../data/lll_data/*.csv"
+DATA_GLOB = "../../../data/lll_data/*.csv"
 NUM_FEATS = 7
 
 ENCODER_MODE = "freeze"  # one of {"finetune","freeze","last_n"}

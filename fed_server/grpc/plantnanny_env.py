@@ -20,6 +20,10 @@ import math
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
+STATE_MOISTURE = 0
+STATE_HOUR = 1
+STATE_PHASE = 2
+STATE_GROWTH_NORM = 3
 
 class PlantNannyEnv(gym.Env):
     """A simplified Growlink-style irrigation environment.
@@ -51,16 +55,18 @@ class PlantNannyEnv(gym.Env):
             "min_moisture": 0.0,
             "max_moisture": 1.0,
             # irrigation amounts per action (normalized moisture units)
-            "irrigation_amounts": [0.0, 0.06, 0.12, 0.2],
+            "irrigation_amounts": [0.00, 0.006, 0.012, 0.02],
             # evaporation base rate per dt (moisture units)
-            "evap_base": 0.01,
+            "evap_base": 0.011,
             # diurnal evaporation multiplier (peaks midday)
-            "evap_amp": 0.02,
+            "evap_amp": 0.009,
+            "base_evap_rate": 0.009,
+
             # phases definition: tuple(start_hour, end_hour, target_min, target_max)
             # P1: ramp up, P2: maintenance, P3: dry down
             "phases": [
-                (6, 9, 0.5, 0.8),   # P1
-                (9, 13, 0.55, 0.65), # P2
+                (6,   9, 0.5,  0.8),   # P1
+                (9,  13, 0.55, 0.65), # P2
                 (13, 24, 0.35, 0.6), # P3
             ],
             # reward coefficients
@@ -70,6 +76,7 @@ class PlantNannyEnv(gym.Env):
             "underwater_penalty": -0.5,
             # milestone growth threshold (cumulative growth to trigger reward)
             "growth_milestone": 0.25,
+            "phase_transition_bonus": 0.1,
         }
         if config:
             cfg.update(config)
@@ -123,15 +130,28 @@ class PlantNannyEnv(gym.Env):
                 return i
         return self.n_phases - 1
 
-    def _evaporation(self, hour):
+    def _xevaporation(self, hour):
         # simple diurnal model: evap_base + evap_amp * gaussian around midday (13:00)
         midday = 13.0
-        sigma = 3.0
+        sigma = 4.0
         diurnal = math.exp(-0.5 * ((hour - midday) / sigma) ** 2)
-        evap = self.cfg["evap_base"] + self.cfg["evap_amp"] * diurnal
+        evap_rate = self.cfg["evap_base"] + self.cfg["evap_amp"] * diurnal
+        evap_rate *= (0.5 + 0.5 * self.state[STATE_MOISTURE])  # 湿度越高，蒸发越快；越干越慢
+        return evap_rate
+
+    def _evaporation(self, hour):
+        # 基於環境因素 + 可自調 base rate
+        temp_factor = (0.5 + 0.5 * np.sin(hour / 24 * 2 * np.pi))
+        evap = self.cfg["base_evap_rate"] * temp_factor
         return evap
 
-    def xreset(self):
+    def _auto_tune_evaporation(self, moisture, target):
+        err = target - moisture
+        self.cfg["base_evap_rate"] += 0.0005 * err
+        self.cfg["base_evap_rate"] = float(np.clip(self.cfg["base_evap_rate"], 0.001, 0.05))
+
+    def reset(self, *, seed=None, options=None):
+        super().reset(seed=seed)
         self.current_step = 0
         moisture = float(self.cfg["initial_moisture"]) + np.random.randn() * 0.01
         moisture = np.clip(moisture, self.cfg["min_moisture"], self.cfg["max_moisture"])
@@ -141,54 +161,11 @@ class PlantNannyEnv(gym.Env):
         self._milestone_achieved = False
         self.state = np.array([moisture, hour, phase, 0.0], dtype=np.float32)
         self.history = {"moisture": [moisture], "time": [hour], "reward": []}
-        return self.state.copy()
+        return self.state.copy(), {}
 
-    def reset(self, *, seed=None, options=None):
-        super().reset(seed=seed)
-        self.state = np.array([
-            np.random.uniform(20, 30),  # 溫度
-            np.random.uniform(40, 60),  # 濕度
-            np.random.uniform(400, 600),  # 光照
-            0.5  # 健康度
-        ], dtype=np.float32)
-        self.step_count = 0
-        return self.state, {}
 
-    def xstep(self, action):
-        temp, hum, light, health = self.state
-        water_action, light_action = action
 
-        # 模擬植物的物理反應
-        temp += np.random.normal(0, 0.3)
-        hum += water_action * 5.0 + np.random.normal(0, 1.0)
-        light += light_action * 50.0 + np.random.normal(0, 10.0)
 
-        # 限制範圍
-        hum = np.clip(hum, 0, 100)
-        light = np.clip(light, 0, 1000)
-
-        # 健康度根據最適區域計算
-        optimal_temp = 26
-        optimal_hum = 60
-        optimal_light = 700
-
-        health -= 0.01  # 隨時間衰退
-        penalty = (
-                abs(temp - optimal_temp) * 0.01 +
-                abs(hum - optimal_hum) * 0.005 +
-                abs(light - optimal_light) * 0.0005
-        )
-        health = np.clip(health - penalty, 0, 1)
-
-        # reward: 維持高健康度
-        reward = health - penalty
-
-        self.state = np.array([temp, hum, light, health], dtype=np.float32)
-        self.step_count += 1
-        terminated = health <= 0.1
-        truncated = self.step_count >= self.max_steps
-
-        return self.state, reward, terminated, truncated, {}
     def step(self, action):
         assert self.action_space.contains(action), f"invalid action: {action}"
 
@@ -213,7 +190,8 @@ class PlantNannyEnv(gym.Env):
         next_phase = float(self._get_phase_index(next_hour))
 
         # growth model: if moisture inside phase target band, plant accumulates growth
-        p_min, p_max = self._get_phase_target_band(next_phase)
+        p_min, p_max,p_target = self._get_phase_target_moisture_band(next_phase)
+        self._auto_tune_evaporation(moisture, p_target)
         in_band = (p_min <= moisture <= p_max)
         # growth increment proportional to how close to center of band
         center = 0.5 * (p_min + p_max)
@@ -221,7 +199,7 @@ class PlantNannyEnv(gym.Env):
         if in_band:
             # normalized closeness
             closeness = 1.0 - abs(moisture - center) / (p_max - p_min + 1e-6)
-            growth_inc = 0.01 * closeness  # per-step growth contribution
+            growth_inc = 0.01 * closeness * (1 + 0.2 * phase)  # per-step growth contribution
         else:
             # penalty if too dry/wet reduces growth
             growth_inc = -0.005
@@ -245,13 +223,15 @@ class PlantNannyEnv(gym.Env):
         if (not self._milestone_achieved) and (self._growth_accum >= self.cfg["growth_milestone"]):
             reward += self.cfg["milestone_reward"]
             self._milestone_achieved = True
-
+        phase_changed = (int(next_phase) != int(phase))
+        if phase_changed:
+            reward += self.cfg.get("phase_transition_bonus", 0.5)
         # done condition
         done = False
-        if self.current_step >= self.max_steps:
-            done = True
+        #if self.current_step >= self.max_steps:
+        #    done = True
         # optional early termination if plant dies (moisture extreme for long time)
-        if moisture <= 0.02 or moisture >= 0.99:
+        if moisture <= 0.01 or moisture >= 0.99:
             # heavy penalty and end
             reward -= 5.0
             done = True
@@ -270,18 +250,18 @@ class PlantNannyEnv(gym.Env):
             "in_band": bool(in_band),
             "target_band": (p_min, p_max),
         }
+        truncated = False #self.current_step >= self.max_steps
+        return self.state.copy(), float(reward), bool(done),truncated, info
 
-        return self.state.copy(), float(reward), bool(done), info
-
-    def _get_phase_target_band(self, phase_index):
+    def _get_phase_target_moisture_band(self, phase_index):
         # returns (min, max) for given phase index
         i = int(phase_index)
         _, _, tmin, tmax = self.cfg["phases"][i]
-        return float(tmin), float(tmax)
+        return float(tmin), float(tmax),float( ( tmax + tmin)*0.5 )
 
     def render(self, mode="human"):
         moisture, hour, phase, growth_norm = self.state
-        pmin, pmax = self._get_phase_target_band(int(phase))
+        pmin, pmax ,_= self._get_phase_target_moisture_band(int(phase))
         s = (
             f"Step:{self.current_step} Hour:{hour:.2f} Phase:{int(phase)} Moisture:{moisture:.3f} "
             f"Target:[{pmin:.2f}-{pmax:.2f}] Growth:{self._growth_accum:.3f}"
