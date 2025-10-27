@@ -1,5 +1,5 @@
-url = "http://192.168.68.237:5000"
-
+url = "http://192.168.0.57:5000"
+DATA_DIR="../../../data/lll_data/"
 NUM_FILES = 100
 SEQ_LEN = 10
 BSEQ_LEN= SEQ_LEN*4

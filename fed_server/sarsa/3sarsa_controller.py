@@ -8,6 +8,7 @@ import tensorflow as tf
 from tensorflow.keras import layers, models, optimizers
 from sklearn.model_selection import train_test_split
 from utils_module import generate_plant_sequence
+from utils_module import sample_tasks,load_csv_data
 
 from global_hyparm import *
 # ------------------ 配置 ------------------
@@ -113,7 +114,7 @@ def rollout_meta_sarsa(meta_model, X_seq, labels=None, steps=30, epsilon=0.1):
 # ------ Service (orchestrates the pipeline) ------
 
 def serv_pipline(num_classes=NUM_CLASSES, seq_len=SEQ_LEN, num_feats=NUM_FEATURES, feature_dim=FEATURE_DIM):
-    load_glob = os.path.join(LOAD_DIR, f"*.csv")
+    load_glob = os.path.join(DATA_DIR, f"*.csv")
 
     # 1. 初始化 MetaModel
     model = MetaModel(num_classes=NUM_CLASSES, seq_len=SEQ_LEN, num_feats=NUM_FEATURES, feature_dim=FEATURE_DIM)
@@ -182,9 +183,9 @@ def serv_pipline(num_classes=NUM_CLASSES, seq_len=SEQ_LEN, num_feats=NUM_FEATURE
     except Exception as e:
         print("[Warn] save_tflite failed:", e)
 
-    actions_list, rewards_list = rollout_meta_sarsa(meta_model, X_labeled.copy(), labels=y_labeled, steps=30, epsilon=0.1)
-    sarsa_full_batch_robust(meta_model)
-    test_rollout(meta_model)
+    #actions_list, rewards_list = rollout_meta_sarsa(meta_model, X_labeled.copy(), labels=y_labeled, steps=30, epsilon=0.1)
+    #sarsa_full_batch_robust(meta_model)
+    #test_rollout(meta_model)
 
 
 
@@ -196,21 +197,21 @@ mixed_precision.set_global_policy(policy)
 eps = EPS_START
 
 # ------------------ 数据生成 ------------------
-os.makedirs(SAVE_DIR, exist_ok=True)
+os.makedirs(DATA_DIR, exist_ok=True)
 for i in range(NUM_FILES):
-    file_path = os.path.join(SAVE_DIR, f"plant_seq_with_hvac_fail_{i}.csv")
+    file_path = os.path.join(DATA_DIR, f"plant_seq_with_hvac_fail_{i}.csv")
     if not os.path.exists(file_path):
-        df = generate_plant_sequence(SAVE_DIR, seq_len=SEQ_LEN, noise_std=NOISE_STD)
+        df = generate_plant_sequence(DATA_DIR, seq_len=SEQ_LEN, noise_std=NOISE_STD)
         df.to_csv(file_path, index=False)
 
-files = [os.path.join(SAVE_DIR, f) for f in os.listdir(SAVE_DIR) if f.endswith(".csv")]
+files = [os.path.join(DATA_DIR, f) for f in os.listdir(DATA_DIR) if f.endswith(".csv")]
 
 # ------------------ 载入 CSV 预训练 encoder ------------------
 def load_all_csvs(data_dir):
     dfs = [pd.read_csv(os.path.join(data_dir, f)) for f in os.listdir(data_dir) if f.endswith(".csv")]
     return pd.concat(dfs, axis=0).reset_index(drop=True)
 
-df_all = load_all_csvs(SAVE_DIR)
+df_all = load_all_csvs(DATA_DIR)
 X = df_all[["temp", "humid", "light", "ac", "heater", "dehum", "hum"]].values.astype(np.float32)
 y = df_all["label"].values.astype(np.int32)
 X[:, 0] /= 40.0

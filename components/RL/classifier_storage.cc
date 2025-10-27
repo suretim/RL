@@ -77,7 +77,7 @@ int classifier_predict(const float *features) {
 
     int predicted_class = 0;
     softmax(logits, NUM_CLASSES, &predicted_class);
-    publish_feature_vector(predicted_class,0);
+    //publish_feature_vector(predicted_class,0);
     return predicted_class;
 } 
  

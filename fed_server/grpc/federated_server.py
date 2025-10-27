@@ -213,7 +213,7 @@ class MqttClientServer(mqtt_client.Client):
     # --- EWC helpers (I/O helpers for fisher matrix) ---
     def load_ewc_assets(self, save_dir=None):
         save_dir = save_dir or self.ewc_assets
-        path = os.path.join(save_dir, "fisher_matrix.npz")
+        path = os.path.join(save_dir, "ewc_assets.npz")
         if not os.path.exists(path):
             raise FileNotFoundError(path)
         fisher_data = np.load(path)

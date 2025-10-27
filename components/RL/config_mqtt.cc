@@ -345,8 +345,7 @@ void mqtt_data_handler(const char *payload) {
     memcpy(g_big_buffer + g_received_len, tmp_buf, chunk_len);
     g_received_len += chunk_len;
 
-    ESP_LOGI(TAG, "Received chunk %d/%d, chunk_len=%d, total_received=%d",
-             seq, total_chunks, (int)chunk_len, (int)g_received_len);
+    //ESP_LOGI(TAG, "Received chunk %d/%d, chunk_len=%d, total_received=%d",seq, total_chunks, (int)chunk_len, (int)g_received_len);
 
     if (seq == total_chunks - 1) {
         ESP_LOGI(TAG, "All chunks received! total size=%d bytes", (int)g_received_len);
@@ -554,8 +553,19 @@ extern "C" void mqtt_event_handler(void* handler_args, esp_event_base_t base, in
         break;
 
         case MQTT_EVENT_DATA:
-            ESP_LOGI(TAG, "MQTT 收到消息 topic=%.*s, len=%d",
-                    event->topic_len, event->topic, event->data_len);
+            //ESP_LOGI(TAG, "MQTT 收到消息 topic=%.*s, len=%d",event->topic_len, event->topic, event->data_len);
+
+            if (event->topic_len == strlen(WEIGHT_FISH_SUB) &&
+                strncmp(event->topic, WEIGHT_FISH_SUB, event->topic_len) == 0)
+            {
+                //ESP_LOGI(TAG, "MQTT data received: %.*s", event->data_len, event->data);
+                //ESP_LOGI(TAG, "len=%d, preview=%.*s", event->data_len, event->data_len>100?100:event->data_len, event->data);
+
+                mqtt_data_handler(event->data);
+                
+                break;
+            }
+        
             if (event->topic_len == strlen(MQTT_TOPIC_SUB) &&
                 strncmp(event->topic, MQTT_TOPIC_SUB, event->topic_len) == 0) {
              
@@ -651,7 +661,10 @@ void mqtt_task(void * pvParameters) {
 
 void periodic_task(void *pvParameter) {
     while (1) {
-        publish_feature_vector(0,1);
+        if(ewc_ready==false) {
+            publish_feature_vector(0,1); 
+        }
+        
         vTaskDelay(pdMS_TO_TICKS(120000)); // 延遲 60 秒
     }
 }

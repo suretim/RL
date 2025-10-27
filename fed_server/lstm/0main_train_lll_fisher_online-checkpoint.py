@@ -24,7 +24,7 @@ import json
 # =============================
 # Hyperparameters
 # =============================
-DATA_GLOB = "../../../lll_data/*.csv"
+DATA_GLOB = "../../../data/lll_data/*.csv"
 SEQ_LEN = 10
 FEATURE_DIM = 64
 BATCH_SIZE = 32
@@ -418,7 +418,7 @@ def save_ewc_assets(model, fisher_matrix, save_dir="ewc_assets"):
     os.makedirs(save_dir, exist_ok=True)
     
     # Save model weights
-    model.save_weights(os.path.join(save_dir, "model_weights.h5"))
+    #model.save_weights(os.path.join(save_dir, "model_weights.h5"))
     
     # Save Fisher matrix
     fisher_numpy = [f.numpy() for f in fisher_matrix]
@@ -578,7 +578,7 @@ def main(args):
         # Save assets if we have them
         if fisher_matrix is not None:
             save_fisher_and_weights(model=meta_model, fisher_matrix=fisher_matrix)
-            #save_ewc_assets(meta_model, fisher_matrix)
+            save_ewc_assets(meta_model, fisher_matrix)
 
 
         # Save models

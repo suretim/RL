@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 # =============================
 # Hyperparameters
 # =============================
-DATA_GLOB = "./data/*.csv"
+DATA_GLOB = "../../../data/lll_data/*.csv"
 SEQ_LEN = 64
 FEATURE_DIM = 64
 BATCH_SIZE = 32

@@ -461,9 +461,9 @@ void main_task(void *pvParameters)
 			{
 				pid_run();//tim modify
 				flag_100ms = 1;	
-				//if(	lll_tensor_run(PPO_CASE)==ESP_FAIL){ 
-				//	 break; 
-				//} 
+				if(	lll_tensor_run(META_CASE)==ESP_FAIL){ 
+					 break; 
+				} 
 				//ai_check_plug_in(1);   // called per sec
 				// ESP_LOGW(TAG, "heap free=%ld, min=%ld",esp_get_free_heap_size(),esp_get_minimum_free_heap_size() );
 				//ESP_LOGW(TAG, "inter heap free=%ld, min=%d",esp_get_free_internal_heap_size(), heap_caps_get_minimum_free_size( MALLOC_CAP_8BIT | MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL ) );

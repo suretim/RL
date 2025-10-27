@@ -207,7 +207,7 @@ class MqttClientServer(mqtt_client.Client):
         # Load model weights
         # model.load_weights(os.path.join(save_dir, "model_weights.h5"))
 
-        # Load Fisher matrix
+        # Load Fisher matrix ewc_assets.npz fisher_matrix.npz
         fisher_data = np.load(os.path.join(save_dir, "fisher_matrix.npz"))
         fisher_matrix = [tf.constant(arr) for arr in fisher_data.values()]
 
@@ -242,7 +242,7 @@ class MqttClientServer(mqtt_client.Client):
 
             # 发布分片
             result = self.publish(WEIGHT_FISH_PUBLISH, json.dumps(payload), qos=1)
-            print(f"[MQTT] 发布分片 {i + 1}/{total_chunks}, result={result}")
+            #print(f"[MQTT] 发布分片 {i + 1}/{total_chunks}, result={result}")
 
     def publish_messagex(self):
         global client_request_code
