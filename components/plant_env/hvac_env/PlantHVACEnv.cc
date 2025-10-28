@@ -25,6 +25,7 @@ PlantHVACEnv::PlantHVACEnv(int seq_len_, int n_features_, float temp_init_,
     encoder = build_hvac_encoder(seq_len, n_features, latent_dim);
     proto_cls = new PrototypeClassifierSimple(3, latent_dim, 0.1f);
     plant_limit_params = mode_params["limit"]; 
+    plant_range_params = mode_params[plant_mode]; 
 
     
 }

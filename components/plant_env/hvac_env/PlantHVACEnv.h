@@ -77,7 +77,9 @@ public:
     } 
      
     PlantHVACEnv() {
-       plant_limit_params = mode_params["limit"];  
+       plant_limit_params = mode_params["limit"];
+       plant_range_params = mode_params[plant_mode]; 
+  
     }
 private:
     HVACEncoder* encoder;
@@ -145,13 +147,10 @@ public:
                 v_env_th.w_feed   =(mode_params["seeding"].water_range.first +mode_params["seeding"].water_range.second )/ 2.0f ;   //;     
                 v_env_th.l_feed   =(mode_params["seeding"].light_range.first +mode_params["seeding"].light_range.second )/ 2.0f ;   //; // 设定初始光照为300lux
                 v_env_th.c_feed   =(mode_params["seeding"].co2_range.first   +mode_params["seeding"].co2_range.second )/ 2.0f ;   //; // 设定初始CO2浓度为400ppm
-                v_env_th.p_feed   =(mode_params["seeding"].ph_range.first   +mode_params["seeding"].ph_range.second )/ 2.0f ;   //; // 设定初始CO2浓度为400ppm
+                v_env_th.p_feed   =(mode_params["seeding"].ph_range.first    +mode_params["seeding"].ph_range.second )/ 2.0f ;   //; // 设定初始CO2浓度为400ppm
                 v_env_th.v_target =(mode_params["seeding"].vpd_range.first   +mode_params["seeding"].vpd_range.second )/ 2.0f ;   //;  
-            }
-            
-            done = false;         // 重置任务结束标志
-            
-          
+            } 
+            done = false;         // 重置任务结束标志  
         };
 private:
     std::vector<float> _get_state() const;

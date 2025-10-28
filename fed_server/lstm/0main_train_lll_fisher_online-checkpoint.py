@@ -25,6 +25,7 @@ import json
 # Hyperparameters
 # =============================
 DATA_GLOB = "../../../data/lll_data/*.csv"
+MODEL_DIR="models"
 SEQ_LEN = 10
 FEATURE_DIM = 64
 BATCH_SIZE = 32
@@ -519,9 +520,9 @@ def set_trainable_layers(encoder, meta_model, encoder_mode="finetune", last_n=1)
 
 def main(args):
     # 更新全局变量
-    global  ENCODER_MODE , LAST_N 
-    ENCODER_MODE = args.encoder_mode 
-    LAST_N = args.last_n 
+    #global  ENCODER_MODE , LAST_N
+    #ENCODER_MODE = args.encoder_mode
+    #LAST_N = args.last_n
     
     
     try:
@@ -552,7 +553,7 @@ def main(args):
         # Meta model
         meta_model = build_meta_model(lstm_encoder, NUM_CLASSES)
         meta_optimizer = tf.keras.optimizers.Adam(META_LR)
-        set_trainable_layers(lstm_encoder, meta_model, ENCODER_MODE, LAST_N)
+        set_trainable_layers(lstm_encoder, meta_model, args.encoder_mode, args.last_n)
 
         memory = ReplayBuffer(capacity=REPLAY_CAPACITY)
         meta_loss_history, meta_acc_history = [], []
@@ -582,10 +583,11 @@ def main(args):
 
 
         # Save models
-        save_tflite(lstm_encoder, "lstm_encoder_contrastive.tflite")
+
+        save_tflite(lstm_encoder, os.path.join(args.model_dir, "lstm_encoder_contrastive.tflite"))
         if X_labeled.size > 0:
-            save_tflite(meta_model, "meta_lstm_classifier.tflite")
-            make_indices(model_path="meta_lstm_classifier.tflite")
+            save_tflite(meta_model, os.path.join(args.model_dir,"meta_lstm_classifier.tflite"))
+            make_indices(model_path=os.path.join(args.model_dir,"meta_lstm_classifier.tflite"))
             #model = tf.keras.models.load_model("your_keras_model.h5")
             #generate_trainable_tensor_indices(meta_model, "meta_lstm_classifier.tflite")
 
@@ -606,7 +608,8 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser() 
-    parser.add_argument("--encoder_mode", type=str, default=ENCODER_MODE) 
+    parser.add_argument("--encoder_mode", type=str, default=ENCODER_MODE)
+    parser.add_argument("--model_dir", type=str, default=MODEL_DIR)
     parser.add_argument("--last_n", type=int, default=LAST_N) 
     #args = parser.parse_args()
     # ============ 解析參數 ============

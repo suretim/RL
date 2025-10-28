@@ -113,7 +113,7 @@ def rollout_meta_sarsa(meta_model, X_seq, labels=None, steps=30, epsilon=0.1):
 
 # ------ Service (orchestrates the pipeline) ------
 
-def serv_pipline(num_classes=NUM_CLASSES, seq_len=SEQ_LEN, num_feats=NUM_FEATURES, feature_dim=FEATURE_DIM):
+def serv_pipline(num_classes=NUM_CLASSES, seq_len=SEQ_LEN, num_feats=NUM_FEATURES, feature_dim=FEATURE_DIM,model_dir="models"):
     load_glob = os.path.join(DATA_DIR, f"*.csv")
 
     # 1. 初始化 MetaModel
@@ -179,7 +179,7 @@ def serv_pipline(num_classes=NUM_CLASSES, seq_len=SEQ_LEN, num_feats=NUM_FEATURE
 
     # 5. 导出 TFLite（保留原逻辑）
     try:
-        model.save_tflite(meta_model.model, "meta_model.tflite")
+        model.save_tflite(meta_model, os.path.join(model_dir,"meta_model.tflite"))
     except Exception as e:
         print("[Warn] save_tflite failed:", e)
 

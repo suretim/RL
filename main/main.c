@@ -457,12 +457,12 @@ void main_task(void *pvParameters)
 			main_flash_heart();  
 			flag_100ms++;
 		    //if (  flag_100ms>=100 && flask_state_get_flag[FLASK_OPTI_MODEL]==SPIFFS_MODEL_SAVED )
-			if (  flag_100ms>=1000   )
+			if (  flag_100ms>=100   )
 			{
 				pid_run();//tim modify
 				flag_100ms = 1;	
-				if(	lll_tensor_run(META_CASE)==ESP_FAIL){ 
-					 break; 
+				if(	lll_tensor_run(META_CASE, META_MODEL )==ESP_FAIL){  //META_CASE
+					 break;  
 				} 
 				//ai_check_plug_in(1);   // called per sec
 				// ESP_LOGW(TAG, "heap free=%ld, min=%ld",esp_get_free_heap_size(),esp_get_minimum_free_heap_size() );
@@ -618,7 +618,7 @@ void app_main(void)
 	//tcp_client_creat_rcv_task();
 	//xTaskCreate(chgup_load_task, 	TASK_NAME_CHGUPLOAD, TASK_STACK_CHGUPLOAD, NULL, TASK_PRIO_CHGUPLOAD, NULL);
 
-	// xTaskCreate(plant_env_make_task,TASK_NAME_PLANT_ENV, TASK_STACK_PLANT_ENV, NULL, TASK_PRIO_PLANT_ENV, NULL);	// 通信数据解析
+	xTaskCreate(plant_env_make_task,TASK_NAME_PLANT_ENV, TASK_STACK_PLANT_ENV, NULL, TASK_PRIO_PLANT_ENV, NULL);	// 通信数据解析
 
 	// xTaskCreate(comm_decode_task, 	TASK_NAME_COMMDECODE, TASK_STACK_COMMDECODE, NULL, TASK_PRIO_COMMDECODE, NULL);	// 通信数据解析
 	// xTaskCreate(cmd_decode_task, 	TASK_NAME_CMDDECODE, TASK_STACK_CMDDECODE, NULL, TASK_PRIO_CMDDECODE, NULL);	// 通信数据包解析
