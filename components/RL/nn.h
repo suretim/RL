@@ -295,7 +295,7 @@ public:
     std::vector<float> predictAction(const std::vector<float>& obs) {
         return actor_network.forwardActor(obs);
     }
-
+     
     float predictValue(const std::vector<float>& obs) {
         return critic_network.forwardCritic(obs);
     }

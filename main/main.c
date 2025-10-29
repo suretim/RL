@@ -552,6 +552,7 @@ void plant_env_make_task(void *pvParameters)
 		done=false;
 		vTaskDelay(pdMS_TO_TICKS(10000));
 	} 
+	vTaskDelete(NULL);
 }
 
 /*

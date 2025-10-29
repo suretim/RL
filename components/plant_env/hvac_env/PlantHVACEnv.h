@@ -61,7 +61,7 @@ public:
     uint32_t rng_seed = 12345;
     std::string plant_mode = "testing";
     int true_label= -1; 
-    
+    int img_health=-1;
     float rand_uniform() {
         // 简单 LCG 随机数生成器，返回 0~1
         rng_seed = 1664525 * rng_seed + 1013904223;
@@ -98,9 +98,11 @@ private:
     // float co2;
     // float vpd; // 蒸汽压差 (kPa)
     bool done;
-    int health;
+    int env_health;
     int t;
-    std::array<int,ACTION_CNT> prev_action; 
+    //std::array<int,ACTION_CNT> prev_action; 
+    std::vector<float> prev_action; 
+    
     SeqFetcher seq_fetcher; 
 
 public:
@@ -127,9 +129,9 @@ public:
     ~PlantHVACEnv();
 
     void set_seq_fetcher(SeqFetcher fetcher);
-
-    StepResult step(const std::array<int,ACTION_CNT>& action,
-                    const std::map<std::string,float>& params = {});
+ 
+    //StepResult step(const std::array<int,ACTION_CNT>& action, const std::map<std::string,float>& params = {});
+    StepResult step(const std::vector<float> &action, const std::map<std::string,float>& params = {});
 
     std::vector<float> get_state() const;
     void update_prototypes(const std::vector<std::vector<float>>& features,
@@ -152,6 +154,7 @@ public:
             } 
             done = false;         // 重置任务结束标志  
         };
+     
 private:
     std::vector<float> _get_state() const;
     int _get_state_cnt() const;

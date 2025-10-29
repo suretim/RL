@@ -1109,9 +1109,19 @@ void catch_tensor_dim(int type) {
 }
 
 
+//float itm_heat      =  0.01f;        
+// float itm_ac        = -0.005f;
+// float itm_humid     =  0.0002f;
+// float itm_dehumi    = -0.0005f;
+// float itm_waterpump = 1.0;
+// float itm_light     = 20.f;
+// float itm_co2       = 50.0f;
+// float itm_pump      = 1.1f;
 //extern void set_plant_action(const std::array<int, ACTION_CNT>& action);
 void set_plant_action(const std::array<int, ACTION_CNT>& action) {
     extern std::array<int, ACTION_CNT> plant_action ;
+    extern std::vector<float> reward_history;
+     
     plant_action = action;
 }
 //u_int8_t get_tensor_state(void);

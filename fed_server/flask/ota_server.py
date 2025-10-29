@@ -175,7 +175,7 @@ class QBuffer:
 qbuffer = QBuffer(maxlen=1000)
 process_q = queue.Queue()
 current_idx = 0
-
+img_health=0
 # ========== Flask ==========
 app = Flask(__name__)
 
@@ -195,7 +195,7 @@ def push_data():
 
     # 放到處理隊列，馬上返回
     process_q.put(obs)
-    return jsonify({"status": "queued"})
+    return jsonify({"status": img_health})
 
 @app.route('/seq_input', methods=['GET'])
 def get_seq_input():
