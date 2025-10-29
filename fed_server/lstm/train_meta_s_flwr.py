@@ -9,7 +9,7 @@ from sklearn.model_selection import train_test_split
 # ---------------------
 # 參數
 # ---------------------
-SAVE_DIR = "../../../../data/lll_data"   # 會在本腳本下創建資料夾
+SAVE_DIR = "../../../data/lll_data"   # 會在本腳本下創建資料夾
 NUM_FILES = 30
 SEQ_LEN = 1000
 NOISE_STD = 0.5
@@ -252,7 +252,7 @@ for ep in range(1, SARSA_EPISODES+1):
         # take action a0 now; we consider environment transitions to t+1 and then agent will choose a1
         # build next state's raw features from df row t+1 but overwrite HVAC columns with action bits
         next_row = df.iloc[t+1].copy()
-        next_row_vals = next_row[["temp","humid","light","ac","heater","dehum","hum"]].values.astype(np.float32)
+        next_row_vals = next_row[["heater","temp","humid","light","ac","dehum","hum"]].values.astype(np.float32)
         next_row_vals[0] /= 40.0; next_row_vals[1] /= 100.0; next_row_vals[2] /= 1000.0
         # overwrite HVAC (indices 3..6) with agent action bits
         next_row_vals[3:7] = a0_bits

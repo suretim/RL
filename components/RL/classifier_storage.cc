@@ -12,10 +12,12 @@
 #include "config_mqtt.h"   
 #include <math.h> 
 #include <stdio.h>   
+#include <array>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"  
 
-  
+#include "model_context.h"
+     
  
 float *fisher_matrix ;   // 每个变量的 Fisher 数组
 float *theta ;    // 上一次权重
@@ -65,18 +67,22 @@ static float softmax(float x[], int len, int *out_index) {
     return max_prob;
 }
 
+extern  std::array<ModelContext, NUM_INFER_CASE> model_contexts; 
 
-int classifier_predict(const float *features) {
-    float logits[NUM_CLASSES] = {0};
-    for (int i = 0; i < NUM_CLASSES; ++i) {
-        for (int j = 0; j < FEATURE_DIM; ++j) {
-            logits[i] += classifier_weights[i*FEATURE_DIM + j] * features[j];
+int classifier_predict(int type,const float *features) {
+    auto&ctx=model_contexts[type];
+    int num_classes=ctx.classifier_params.num_classes;
+    int feature_dim=ctx.classifier_params.feature_dim;
+    float logits[ctx.classifier_params.num_classes] = {0};
+    for (int i = 0; i < num_classes; ++i) {
+        for (int j = 0; j <  feature_dim; ++j) {
+            logits[i] += classifier_weights[i* feature_dim + j] * features[j];
         }
         logits[i] += classifier_bias[i];
     }
 
     int predicted_class = 0;
-    softmax(logits, NUM_CLASSES, &predicted_class);
+    softmax(logits, num_classes, &predicted_class);
     //publish_feature_vector(predicted_class,0);
     return predicted_class;
 } 
@@ -84,12 +90,13 @@ int classifier_predict(const float *features) {
 
 // 更新分类器的权重和偏置
 void update_classifier_weights_bias(const float* values, int value_count,int type) {
-    
-    
-    int expected = NUM_CLASSES * FEATURE_DIM ;
+    auto&ctx=model_contexts[type];
+    int num_classes=ctx.classifier_params.num_classes;
+    int feature_dim=ctx.classifier_params.feature_dim;
+    int expected = num_classes * feature_dim ;
     if(type==1)
     {
-        expected=NUM_CLASSES;
+        expected=num_classes;
     }
     
     if (value_count != expected) {
@@ -98,16 +105,16 @@ void update_classifier_weights_bias(const float* values, int value_count,int typ
     }
     if(type==0)
     {
-        // 前 NUM_CLASSES * NUM_INPUTS 是权重
-        for (int i = 0; i < NUM_CLASSES; ++i) {
-            for (int j = 0; j < FEATURE_DIM; ++j) {
-                classifier_weights[i*FEATURE_DIM + j] = values[i * FEATURE_DIM + j];
+        // 前 num_classes * NUM_INPUTS 是权重
+        for (int i = 0; i < num_classes; ++i) {
+            for (int j = 0; j < feature_dim; ++j) {
+                classifier_weights[i*feature_dim + j] = values[i * feature_dim + j];
             }
         }
     }
     else{    
         // 后 NUM_CLASSES 是 bias
-        for (int i = 0; i < NUM_CLASSES; ++i) {
+        for (int i = 0; i < num_classes; ++i) {
             classifier_bias[i] = values[ i];
         }
     }
@@ -132,7 +139,10 @@ void update_fishermatrix_theta(const float* values, int value_count,int type) {
 
  
 void set_classifier_from_buffer(const uint8_t* buf, size_t len,size_t type) {
-    size_t expected = (size_t)(FEATURE_DIM * NUM_CLASSES + NUM_CLASSES) * sizeof(float);
+    auto&ctx=model_contexts[type];
+    int num_classes=ctx.classifier_params.num_classes;
+    int feature_dim=ctx.classifier_params.feature_dim;
+    size_t expected = (size_t)(feature_dim * num_classes + num_classes) * sizeof(float);
     if(type==1)
         expected = FisherArenaSize*2;
     if (len <= expected) {
@@ -141,8 +151,8 @@ void set_classifier_from_buffer(const uint8_t* buf, size_t len,size_t type) {
     } 
      if(type==0){
         
-        memcpy(classifier_weights, buf, FEATURE_DIM * NUM_CLASSES * sizeof(float));
-        memcpy(classifier_bias, buf + FEATURE_DIM * NUM_CLASSES * sizeof(float),NUM_CLASSES * sizeof(float));
+        memcpy(classifier_weights, buf, feature_dim * num_classes * sizeof(float));
+        memcpy(classifier_bias, buf + feature_dim * num_classes * sizeof(float),num_classes * sizeof(float));
         ESP_LOGI(TAG, "Classifier updated in memory");
     }
     if(type==1){
@@ -158,7 +168,10 @@ void set_classifier_from_buffer(const uint8_t* buf, size_t len,size_t type) {
 // 从 buffer 更新 + 写入 NVS
 // ==============================
 int update_classifier_from_bin(const uint8_t* data, size_t len,size_t type) {
-    size_t expected = (size_t)(FEATURE_DIM * NUM_CLASSES + NUM_CLASSES) * sizeof(float);
+    auto&ctx=model_contexts[type];
+    int num_classes=ctx.classifier_params.num_classes;
+    int feature_dim=ctx.classifier_params.feature_dim;
+    size_t expected = (size_t)(feature_dim * num_classes + num_classes) * sizeof(float);
     if (len < expected) {
         ESP_LOGE(TAG, "update_classifier_from_bin: insufficient data len=%d expected=%d",
                  (int)len, (int)expected);

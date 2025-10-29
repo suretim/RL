@@ -13,7 +13,7 @@ Meta-learning pipeline with HVAC-aware features and flowering-period focus.
 """
 
 
-from utils import *
+from util_model import *
 
 
 if __name__ == "__main__":
@@ -29,4 +29,4 @@ if __name__ == "__main__":
     LAST_N = args.last_n
 
     meta = MetaModel(feature_dim=FEATURE_DIM)
-    meta.serv(encoder_mode=ENCODER_MODE, last_n=LAST_N, data_glob=DATA_GLOB)
+    meta.service_pipeline(encoder_mode=ENCODER_MODE, last_n=LAST_N, data_glob=DATA_GLOB)

@@ -5,11 +5,11 @@ from tqdm import tqdm
 #pip install Pillow
 
 # 参数设置
-train_dir = "../../../../dataset/sprout_y_n_data3/train"
-val_dir = "../../../../dataset/sprout_y_n_data3/val"
-test_dir = "../../../../dataset/sprout_y_n_data3/test"
+train_dir = "../../../dataset/sprout_y_n_data3/train"
+val_dir = "../../../dataset/sprout_y_n_data3/val"
+test_dir = "../../../dataset/sprout_y_n_data3/test"
 categories = ["y", "w", "n"]
-img_size = (64, 64)
+img_size = (224, 224)
 num_images = 100  # 每类生成100张
 
 

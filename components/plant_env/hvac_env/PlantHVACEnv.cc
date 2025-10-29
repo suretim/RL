@@ -20,11 +20,12 @@ HVACEncoder* build_hvac_encoder(int seq_len, int n_features, int latent_dim) {
 PlantHVACEnv::PlantHVACEnv(int seq_len_, int n_features_, float temp_init_,
                            float humid_init_, int latent_dim_)
     : seq_len(seq_len_), n_features(n_features_), latent_dim(latent_dim_),
-      temp_init(temp_init_), humid_init(humid_init_), health(0), t(0), prev_action({0,0,0,0})
+      temp_init(temp_init_), humid_init(humid_init_), env_health(0), t(0), prev_action({0,0,0,0})
 {
     encoder = build_hvac_encoder(seq_len, n_features, latent_dim);
     proto_cls = new PrototypeClassifierSimple(3, latent_dim, 0.1f);
     plant_limit_params = mode_params["limit"]; 
+    plant_range_params = mode_params[plant_mode]; 
 
     
 }
@@ -43,7 +44,13 @@ void PlantHVACEnv::set_seq_fetcher(SeqFetcher fetcher) {
 // ==== 获取状态 ====
 std::vector<float> PlantHVACEnv::_get_state() const {
      
-    return {static_cast<float>(health), v_env_th.t_feed, v_env_th.h_feed,v_env_th.w_feed,v_env_th.l_feed,v_env_th.c_feed,v_env_th.p_feed};
+    return {static_cast<float>(env_health), 
+        v_env_th.t_feed, 
+        v_env_th.h_feed,
+        v_env_th.w_feed,
+        v_env_th.l_feed,
+        v_env_th.c_feed,
+        v_env_th.p_feed};
 } 
 
 int PlantHVACEnv::_get_state_cnt() const {
@@ -84,7 +91,11 @@ void PlantHVACEnv::update_dynamics(float t_feed,StepResult result,const std::arr
     result.itm_ac   += 0.0001f * error * action[1];
 }
 //extern float pid_map(float x, float in_min, float in_max, float out_min, float out_max);
-StepResult PlantHVACEnv::step(const std::array<int,ACTION_CNT>& action,
+//std::vector<float> plant_action;
+
+//StepResult PlantHVACEnv::step(const std::array<int,ACTION_CNT>& action,
+//                                            const std::map<std::string,float>& params)
+StepResult PlantHVACEnv::step(const std::vector<float> &action,
                                             const std::map<std::string,float>& params)
 {
     StepResult result; //    std::cout << "step " << t << std::endl;
@@ -178,10 +189,10 @@ StepResult PlantHVACEnv::step(const std::array<int,ACTION_CNT>& action,
     float vpd_target   =(plant_range_params.vpd_range.first  +plant_range_params.vpd_range.second)/2.0;
     float light_target =(plant_range_params.light_range.first+plant_range_params.light_range.second)/2.0;
     float co2_target   =(plant_range_params.co2_range.first  +plant_range_params.co2_range.second)/2.0;
-    health = (optimal>=4?0:(optimal>=2?1:2)); 
+    env_health = (optimal>=4?0:(optimal>=2?1:2)); 
 
     // --- Reward ---
-    float health_reward = (health==0?2.0f:(health==1?0.5f:-1.0f));
+    float health_reward = (env_health==0?2.0f:(env_health==1?0.5f:-1.0f));
     float energy_cost = (params.count("energy_penalty")?params.at("energy_penalty"):0.1f)*(dev_ac+dev_humid+dev_heat+dev_dehumi);
 
     int switch_diff = 0;

@@ -156,7 +156,8 @@ config = {
 basic_params = client.get_parameters(config)
 dense_weights,dense_bias, num_examples, metrics=client.fit(basic_params, config=config)
 
-MQTT_BROKER = "192.168.0.57"
+MQTT_BROKER = "192.168.30.86"
+#MQTT_BROKER = "192.168.0.57"
 #MQTT_BROKER = "192.168.68.237"
 #MQTT_BROKER = "127.0.0.1"
 MQTT_PORT = 1883

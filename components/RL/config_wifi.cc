@@ -22,7 +22,7 @@ static int reconnect_attempts = 0;
 
 // 全局变量 
 static volatile bool wifi_connected = false;
-static EventGroupHandle_t wifi_event_group;
+EventGroupHandle_t wifi_event_group;
 static EventGroupHandle_t s_wifi_event_group;
 #define WIFI_CONNECTED_BIT BIT0
 bool got_ip = false;

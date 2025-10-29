@@ -9,8 +9,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 AUTOTUNE = tf.data.AUTOTUNE
-TRAIN_DIR = "../../../../dataset/sprout_y_n_data3/train"
-VAL_DIR   = "../../../../dataset/sprout_y_n_data3/val"
+TRAIN_DIR = "../../../dataset/sprout_y_n_data3/train"
+VAL_DIR   = "../../../dataset/sprout_y_n_data3/val"
 TEACHER_SAVED_MODEL = "teacher_saved_model"
 
 # -------------------------

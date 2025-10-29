@@ -20,7 +20,7 @@ class DataSaver:
         self.model_parameters_list = np.empty((0, 64))
         self.model_labels_list = np.empty((0,))
 
-    def t_UploadModelParams( self,request_values, context=None):
+    def UploadModelParams( self,request_values, context=None):
         """
         更新全局模型并通过 MQTT 发布
         """
@@ -166,7 +166,7 @@ class DataSaver:
         self.save_features(device_id, features, labels, filename)
 if __name__ == '__main__':
 
-    data_dir='..\..\..\..\data'
+    data_dir='..\..\..\data'
     device_id='client_004'
     data_saver=DataSaver(data_dir,device_id)
     # 使用示例

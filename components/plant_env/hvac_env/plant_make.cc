@@ -22,8 +22,8 @@ std::vector<float> health_result;
 std::vector<std::vector<float>> state_history; // 存储每步的状态
 std::vector<float> reward_history;
 
-std::array<int, ACTION_CNT> plant_action{};   
-
+//std::array<int, ACTION_CNT> plant_action{};   
+std::vector<float> plant_action;
 PlantHVACEnv env(20, 3, 25.0f, 0.5f, 64);
 
 static const char *TAG = "HTTP_CLIENT";
@@ -53,6 +53,8 @@ extern "C" bool send_seq_to_server(void) {
     
 	const char* url = "http://192.168.0.57:5000/push_data";
 
+     
+        
     char* post_data = vec_to_json(health_result);
 
     esp_http_client_config_t config = {
@@ -69,10 +71,10 @@ extern "C" bool send_seq_to_server(void) {
 
     free(post_data); // 釋放記憶體
     esp_http_client_cleanup(client);
-
+    
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "POST success, status = %d",
-                 esp_http_client_get_status_code(client));
+        env.img_health=esp_http_client_get_status_code(client) ;
+        ESP_LOGI(TAG, "POST success, status = %d",env.img_health);
         return true;
     } else {
         ESP_LOGE(TAG, "HTTP POST request failed: %s", esp_err_to_name(err));
@@ -81,11 +83,21 @@ extern "C" bool send_seq_to_server(void) {
 }
 
 
-
-const std::array<int, ACTION_CNT>& get_plant_action() {
-    return plant_action;
+std::array<int, ACTION_CNT> get_plant_action() {
+    std::array<int, ACTION_CNT> action{};
+    for (int i = 0; i < ACTION_CNT; i++) {
+        action[i] = plant_action[i];
+    }
+    return action;  // returned by value (efficient, safe)
 }
 
+void set_plant_action(std ::vector<float> action) {
+    //std::array<int, ACTION_CNT> action{};
+    for (int i = 0; i < ACTION_CNT; i++) {
+          plant_action[i]=action[i] ;
+    }
+    return ;   
+}
 
 void fetch_seq_from_server_step() {
     
@@ -106,6 +118,16 @@ void fetch_seq_from_server_step() {
         return seq_input;
     }); 
 }
+
+// === Example Environment API ===
+// (You already have something like this)
+struct EnvResult {
+    std::vector<float> state;
+    float reward;
+    bool done;
+    float flower_prob;
+};
+ 
 extern "C" void plant_env_step(void) {  
         
         auto  result = env.step(plant_action,env.default_params);
@@ -115,7 +137,14 @@ extern "C" void plant_env_step(void) {
  
         state_history.push_back(new_state);  // 存储当前状态
         reward_history.push_back(reward);    // 存储当前奖励
-
+        const size_t MAX_HISTORY = 100;
+        //reward_history.push_back(reward);
+        if (reward_history.size() > MAX_HISTORY) 
+            reward_history.erase(reward_history.begin()); 
+         
+        //state_history.push_back(new_state);
+        if (state_history.size() > MAX_HISTORY) 
+            state_history.erase(state_history.begin()); 
         // 如果任务完成，可能需要重新初始化环境
         if (done) { 
             std::cout << "Task finished. Resetting environment." << std::endl; 
@@ -131,11 +160,12 @@ extern "C" void plant_env_step(void) {
         
         std::cout << "Reward: " << reward << std::endl;
         
-        std::vector<float> health_result={
+        std::vector<float> hs={
             result.reward, 
             result.flower_prob           
         };
-        return  ;
+        health_result=hs;
+        return    ;
 }
  
 
@@ -155,26 +185,30 @@ extern "C" bool hvac_ewc(void) {
     // }
 
     // 初始化环境
-    bool done = false;
-    
-    env.reset(); 
-    // PPO 模型 
-    ewcppoModel.initModel();  // 如果有 initModel()
-    
+    static bool done = true;
+    // 如果环境结束，重置
+    if (done) {
+        env.reset(); 
+        // PPO 模型 
+        ewcppoModel.initModel();  
+        done = false; 
+    } 
     static std::vector<float> old_action_probs = {0.0f, 0.0f, 0.0f};
  
     bp_pid_dbg("init hvac_ewc \r\n");  
-    while(done==false){
+    //while(done==false){
         // ====== 环境状态 ======
         std::vector<float> observation = env.get_state();
 
         // ====== 模型推理 ======
         auto [action_probs, value] = ewcppoModel.predictFull(observation);
-        
+        if(value>0.5)
+          set_plant_action(action_probs);
         // 选一个动作 (argmax)
         //int action = std::distance(action_probs.begin(),
         //                           std::max_element(action_probs.begin(), action_probs.end()));
-
+        //  Compute action using current policy weights
+        //float action = ewcppoModel.policy_action(observation);
         // ====== 环境交互 ======
         auto result = env.step(plant_action, env.default_params);
         std::vector<float> new_state = result.state;
@@ -189,11 +223,11 @@ extern "C" bool hvac_ewc(void) {
         }
 
         // // ====== health_result ======
-        std::vector<float> health_result = {
+        std::vector<float> hs = {
             result.reward, 
             result.flower_prob
         };
-
+        health_result=hs;
         // ====== 计算梯度 + EWC 更新 ======
         std::vector<float> grads;
         ewcppoModel.calculateGradients(observation, action_probs,
@@ -215,13 +249,10 @@ extern "C" bool hvac_ewc(void) {
         for (auto& grad : grads) printf("%.3f ", grad);
         printf("\n");
 
-        // 如果环境结束，重置
-        if (done) {
-            env.reset(); 
-        }
+        
 
         vTaskDelay(pdMS_TO_TICKS(5000)); // 每 5 秒交互一次
-    }
+    //}
     return done;
 }
 

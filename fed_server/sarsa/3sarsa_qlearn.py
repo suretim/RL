@@ -19,7 +19,7 @@ from utils_module import generate_plant_sequence,load_all_csvs
 #from utils_fisher import MetaModel
 from utils_QModel import QModel
 DATA_DIR  = "../../../data/sarsa"
-META_OUT_TF="../meta_model.tflite"
+META_OUT_TF="../meta_lstm_classifier.tflite"
 ENCODER_LATENT_DIM = 16
 Q_HIDDEN = [64, 64]
 

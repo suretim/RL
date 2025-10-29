@@ -1,6 +1,7 @@
 # TFLite 模型文件
  
-set(MODEL_META_TFLITE   "../../fed_server/flask/models/meta_model.tflite")
+set(MODEL_META_TFLITE   "../../fed_server/sarsa/models/meta_model.tflite")
+set(MODEL_LSTM_TFLITE   "../../fed_server/sarsa/models/meta_lstm_classifier.tflite")
 set(MODEL_OPTI_TFLITE   "../../fed_server/flask/models/esp32_optimized_model.tflite")
 set(MODEL_ACTOR_TFLITE  "../../fed_server/flask/ppo_model/actor_task0.tflite")
 set(MODEL_CRITIC_TFLITE "../../fed_server/flask/ppo_model/critic_task0.tflite")
@@ -33,6 +34,7 @@ idf_component_register(
 
     EMBED_FILES 
         "${MODEL_META_TFLITE}"
+        "${MODEL_LSTM_TFLITE}"
         "${MODEL_OPTI_TFLITE}"
         "${MODEL_ACTOR_TFLITE}"
         "${MODEL_CRITIC_TFLITE}"

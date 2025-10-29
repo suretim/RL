@@ -4,9 +4,12 @@
 #include <stddef.h>
 #include "esp_err.h"
 #include "version.h"
-enum CaseType { PPO_CASE,NN_PPO_CASE, META_CASE ,IMG_CASE,NUM_CASE};
+enum CaseType { PPO_CASE,NN_PPO_CASE, META_LSTM_CASE ,META_CASE ,IMG_CASE,NUM_INFER_CASE};
 
- 
+ //actor_critic_infer,
+ //   ppo_inference, 
+ //   meta_inference,     
+ //   img_inference
 
 #define INFER_CASE PPO_CASE
 
@@ -31,46 +34,39 @@ enum CaseType { PPO_CASE,NN_PPO_CASE, META_CASE ,IMG_CASE,NUM_CASE};
 #define META_SEQ_LEN 10
 #define IMG_SEQ_LEN 64
 
- #ifndef INFER_CASE
-  #error "INFER_CASE is not defined"
-#elif INFER_CASE == PPO_CASE
-  #define FEATURE_DIM (PPO_FEATURE_DIM)
-  #define NUM_CLASSES (PPO_CLASSES)
-  #define SEQ_LEN (PPO_SEQ_LEN)
-#elif INFER_CASE == NN_PPO_CASE
-  #define FEATURE_DIM (NN_PPO_FEATURE_DIM)
-  #define NUM_CLASSES (NN_PPO_CLASSES)
-  #define SEQ_LEN (NN_PPO_SEQ_LEN)
-#elif INFER_CASE == META_CASE
-  #define FEATURE_DIM (META_FEATURE_DIM)
-  #define NUM_CLASSES (META_CLASSES)
-  #define SEQ_LEN (META_SEQ_LEN)
-#elif INFER_CASE == IMG_CASE
-  #define FEATURE_DIM (IMG_FEATURE_DIM)
-  #define NUM_CLASSES (IMG_CLASSES)
-  #define SEQ_LEN (IMG_SEQ_LEN)
-#else
-  #error "Unknown INFER_CASE"
-#endif
+// #ifndef INFER_CASE
+//   #error "INFER_CASE is not defined"
+// #elif INFER_CASE == PPO_CASE
+//   #define FEATURE_DIM (PPO_FEATURE_DIM)
+//   #define NUM_CLASSES (PPO_CLASSES)
+//   #define SEQ_LEN (PPO_SEQ_LEN)
+// #elif INFER_CASE == NN_PPO_CASE
+//   #define FEATURE_DIM (NN_PPO_FEATURE_DIM)
+//   #define NUM_CLASSES (NN_PPO_CLASSES)
+//   #define SEQ_LEN (NN_PPO_SEQ_LEN)
+// #elif INFER_CASE == META_CASE
+//   #define FEATURE_DIM (META_FEATURE_DIM)
+//   #define NUM_CLASSES (META_CLASSES)
+//   #define SEQ_LEN (META_SEQ_LEN)
+// #elif INFER_CASE == IMG_CASE
+//   #define FEATURE_DIM (IMG_FEATURE_DIM)
+//   #define NUM_CLASSES (IMG_CLASSES)
+//   #define SEQ_LEN (IMG_SEQ_LEN)
+// #else
+//   #error "Unknown INFER_CASE"
+// #endif
 
- 
- struct CLASSIFIER_Prams {
-    int infer_case; // 0: PPO, 1: META
-    int seq_len;
-    int feature_dim;
-    int num_classes;
- };
 
  
 
 // 编译期校验（C11 _Static_assert 或 C++ static_assert）
-_Static_assert(FEATURE_DIM > 0 && NUM_CLASSES > 0, "dims must be positive");
-_Static_assert(sizeof(float) == 4, "float must be 32-bit");
+//_Static_assert(FEATURE_DIM > 0 && NUM_CLASSES > 0, "dims must be positive");
+//_Static_assert(sizeof(float) == 4, "float must be 32-bit");
 
  
 #define FISHER_LAYER 12
 //void classifier_set_params(const float *weights, const float *bias, int input_dim, int output_dim);
-int classifier_predict(const float *features);  // 返回预测类别索引
+int classifier_predict(int type,const float *features);  // 返回预测类别索引
 void update_classifier_weights_bias(const float* values, int value_count,int type) ;
 void update_fishermatrix_theta(const float* values, int value_count,int type) ;
 

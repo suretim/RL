@@ -179,8 +179,8 @@ GRPC_SUBSCRIBE = "grpc_sub/weights"
 if __name__ == '__main__':
     c_model_name = 'encoder_model'
 
-    #data_dir = "../../../../data"
-    dataset_dir = "../../../../dataset/data3"
+    #data_dir = "../../../data"
+    dataset_dir = "../../../dataset/data3"
     client_id=1
     mqtt_broker=MQTT_BROKER
     mqtt_port=MQTT_PORT

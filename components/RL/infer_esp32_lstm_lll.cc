@@ -25,10 +25,11 @@ extern "C" {
 }
 #endif
 
-#include "tensorflow/lite/micro/micro_mutable_op_resolver.h"
-#include "tensorflow/lite/micro/micro_interpreter.h"
-#include "tensorflow/lite/micro/system_setup.h"
-#include "tensorflow/lite/schema/schema_generated.h"  
+// #include "tensorflow/lite/micro/micro_mutable_op_resolver.h"
+// #include "tensorflow/lite/micro/micro_interpreter.h"
+// #include "tensorflow/lite/micro/system_setup.h"
+// #include "tensorflow/lite/schema/schema_generated.h"
+#include "model_context.h"
 #include "PlantHVACEnv.h" 
 #include "classifier_storage.h" 
 #include "config_mqtt.h"
@@ -41,6 +42,10 @@ extern const unsigned char _binary_esp32_optimized_model_tflite_start[] asm("_bi
 extern const unsigned char _binary_esp32_optimized_model_tflite_end[]   asm("_binary_esp32_optimized_model_tflite_end");
 const size_t   esp32_optimized_model_tflite_len=_binary_esp32_optimized_model_tflite_end-_binary_esp32_optimized_model_tflite_start;
 
+extern const unsigned char _binary_meta_lstm_classifier_tflite_start[] asm("_binary_meta_lstm_classifier_tflite_start");
+extern const unsigned char _binary_meta_lstm_classifier_tflite_end[]   asm("_binary_meta_lstm_classifier_tflite_end"); 
+const size_t  meta_lstm_classifier_tflite_len=_binary_meta_lstm_classifier_tflite_end-_binary_meta_lstm_classifier_tflite_start;
+ 
 extern const unsigned char _binary_meta_model_tflite_start[] asm("_binary_meta_model_tflite_start");
 extern const unsigned char _binary_meta_model_tflite_end[]   asm("_binary_meta_model_tflite_end"); 
 const size_t  meta_model_tflite_len=_binary_meta_model_tflite_end-_binary_meta_model_tflite_start;
@@ -54,23 +59,23 @@ extern const unsigned char _binary_critic_task0_tflite_start[] asm("_binary_crit
 extern const unsigned char _binary_critic_task0_tflite_end[]   asm("_binary_critic_task0_tflite_end"); 
 const size_t    critic_task0_tflite_len=_binary_critic_task0_tflite_end - _binary_critic_task0_tflite_start;
 
-const unsigned char* bin_model_tflite[4] = {
+const unsigned char* bin_model_tflite[NUM_INFER_CASE] = {
     _binary_esp32_optimized_model_tflite_start, 
-    _binary_meta_model_tflite_start, 
+    _binary_meta_lstm_classifier_tflite_start, 
     _binary_actor_task0_tflite_start,
     _binary_critic_task0_tflite_start
 };
-const unsigned int bin_model_tflite_len[4] = {
+const unsigned int bin_model_tflite_len[NUM_INFER_CASE] = {
     esp32_optimized_model_tflite_len, 
-    meta_model_tflite_len, 
+    meta_lstm_classifier_tflite_len, 
     actor_task0_tflite_len,
     critic_task0_tflite_len
 };
  
 const char optimized_model_path[] = "/spiffs1/esp32_optimized_model.tflite" ;
-const char meta_model_path[] = "/spiffs1/meta_model.tflite" ;
-const char actor_model_path[] = "/spiffs1/actor_task0.tflite";
-const char critic_model_path[] = "/spiffs1/critic_task0.tflite";
+const char meta_model_path[]      = "/spiffs1/meta_lstm_classifier.tflite" ;
+const char actor_model_path[]     = "/spiffs1/actor_task0.tflite";
+const char critic_model_path[]    = "/spiffs1/critic_task0.tflite";
 const char spiffs_ppo_model_bin_path[]=  "/spiffs2/ppo_model.bin" ;
 const char ppo_policy[]="spiffs2/policy.tflite";
  
@@ -93,29 +98,18 @@ extern bool ewc_ready;
 
 static const char *TAG = "Inference_lstm";
 #if 1
-struct ModelContext {
-    const tflite::Model* model = nullptr;
-    tflite::MicroInterpreter* interpreter = nullptr;
-    TfLiteTensor* input_tensor = nullptr;
-    TfLiteTensor* output_tensor = nullptr;
-    // 公用的 Op resolver（根据模型需求配置）
-    tflite::MicroMutableOpResolver<24> micro_op_resolver;
-    // tensor arena
-    uint8_t* tensor_arena = nullptr;
-    size_t tensor_arena_size = 0;
-};
-
+ 
+ 
 // 全局容器 (管理多个模型)
-namespace {
-    constexpr int kNumModels = 4;
-    constexpr size_t kTensorArenaSize[kNumModels] = {
-        16 * 1024, 16 * 1024, 128 * 1024, 256 * 1024
+//namespace {
+    //constexpr int kNumModels = 4;
+    constexpr size_t kTensorArenaSize[NUM_INFER_CASE] = {
+        64 * 1024, 64 * 1024, 64 * 1024, 64 * 1024, 256 * 1024
     };
 
-    std::array<ModelContext, kNumModels> model_contexts;
+    std::array<ModelContext, NUM_INFER_CASE> model_contexts; 
+//}
 
-    
-}
 #else
 // Globals, used for compatibility with Arduino-style sketches.
 namespace {
@@ -303,7 +297,7 @@ unsigned char*  load_from_spiffs(int type, const char* filename,size_t &file_siz
     // 分配内存
     unsigned char* buf = (unsigned char*)malloc(file_size);
     if (!buf) {
-        ESP_LOGE(TAG, "Failed to allocate memory for load_from_spiffs");
+        ESP_LOGE(TAG, "Failed to allocate memory for load_from_spiffs from load_from_spiffs");
         fclose(file);
         return nullptr;
     } 
@@ -362,9 +356,9 @@ unsigned char*  load_from_spiffs(int type, const char* filename,size_t &file_siz
     }
 
     if (from_spiffs) {
-        ESP_LOGI(TAG, "Model[%d] loaded from SPIFFS (%d bytes)", type, file_size);
+        ESP_LOGI(TAG, "init_model [%d] loaded from SPIFFS (%d bytes)", type, file_size);
     } else {
-        ESP_LOGI(TAG, "Model[%d] loaded from embedded binary (%d bytes)", type, file_size);
+        ESP_LOGI(TAG, "init_model [%d] loaded from embedded binary (%d bytes)", type, file_size);
     }
 
     // 确保旧 arena 被释放
@@ -548,25 +542,25 @@ float compute_ewc_loss( int type,
 // ---------------------------
 // Flowering/HVAC 判定
 // ---------------------------
-int is_flowering_seq(float x_seq[SEQ_LEN][FEATURE_DIM], float th_light)
-{
-    float mean_light = 0.0f;
-    for (int t=0; t<SEQ_LEN; t++) mean_light += x_seq[t][2];
-    mean_light /= SEQ_LEN;
-    return mean_light >= th_light;
-}
-float hvac_toggle_score(float x_seq[SEQ_LEN][FEATURE_DIM], float th_toggle, int *flag) {
-    float diff_sum = 0.0f;
-    int count = 0;
-    for (int t=1; t<SEQ_LEN; t++)
-        for (int f=3; f<7; f++) {
-            diff_sum += fabsf(x_seq[t][f] - x_seq[t-1][f]);
-            count++;
-        }
-    float rate = diff_sum / count;
-    *flag = rate >= th_toggle;
-    return rate;
-}
+// int is_flowering_seq(float x_seq[SEQ_LEN][FEATURE_DIM], float th_light)
+// {
+//     float mean_light = 0.0f;
+//     for (int t=0; t<SEQ_LEN; t++) mean_light += x_seq[t][2];
+//     mean_light /= SEQ_LEN;
+//     return mean_light >= th_light;
+// }
+// float hvac_toggle_score(float x_seq[SEQ_LEN][FEATURE_DIM], float th_toggle, int *flag) {
+//     float diff_sum = 0.0f;
+//     int count = 0;
+//     for (int t=1; t<SEQ_LEN; t++)
+//         for (int f=3; f<7; f++) {
+//             diff_sum += fabsf(x_seq[t][f] - x_seq[t-1][f]);
+//             count++;
+//         }
+//     float rate = diff_sum / count;
+//     *flag = rate >= th_toggle;
+//     return rate;
+// }
 
 
 void reset_tensor(int type)
@@ -594,11 +588,10 @@ extern "C" {
 //pid_run_input_st pid_input = {0};  
 //extern pid_run_output_st lstm_pid_out_speed;
 
-CLASSIFIER_Prams classifier_params;
 extern float pid_map(float x, float in_min, float in_max, float out_min, float out_max);
-int load_up_input_seq(int type,int seq_len)
+int load_up_input_seq( int type,int seq_len,int feature_dim)
 {
-    int cnt=0;
+    static int cnt=0;
     // float t_feed  = pid_map(bp_pid_th.t_feed,   m_range_params.temp_range.first, m_range_params.temp_range.second, 0, 1);
     // float h_feed  = pid_map(bp_pid_th.h_feed,   m_range_params.humid_range.first, m_range_params.humid_range.second, 0, 1);
     // float w_feed  = pid_map(bp_pid_th.w_feed,   m_range_params.water_range.first, m_range_params.water_range.second, 0, 1);
@@ -607,17 +600,17 @@ int load_up_input_seq(int type,int seq_len)
     // float p_feed  = pid_map(bp_pid_th.p_feed,   m_range_params.ph_range.first, m_range_params.ph_range.second, 0, 1);
     // float v_feed  = pid_map(bp_pid_th.v_feed,   m_range_params.vpd_range.first, m_range_params.vpd_range.second, 0, 1);
     
-    if(type == PPO_CASE)
-    { 
-        for(int i=0;i<classifier_params.feature_dim;i++){
-            input_seq[cnt*classifier_params.feature_dim + i] = (float) bp_pid_th.f[0][i]; 
+    //if(type == PPO_CASE)
+    //{ 
+        for(int i=0;i< feature_dim;i++){
+            input_seq[cnt* feature_dim + i] = (float) bp_pid_th.f[0][i]; 
         }
-    }     
-    if(type == META_CASE)
-    {
+    //}     
+    //if(type == META_CASE)
+    //{
  
-        int h_idx=-1;
-        uint8_t geer[6];
+        //int h_idx=-1;
+        //uint8_t geer[6];
         // for(int port=1;port<9;port++)
         // {     
         //     switch(  devs_type_list[port].real_type  ) 
@@ -633,10 +626,10 @@ int load_up_input_seq(int type,int seq_len)
         //     if(h_idx>=0)
         //         geer[h_idx] = ml_pid_out_speed.speed[port];
         // }
-        for(int i=0;i<classifier_params.feature_dim;i++){
-            input_seq[cnt*classifier_params.feature_dim + i] = (float) bp_pid_th.f[0][i]; 
-        }
-    }
+        //for(int i=0;i<classifier_params.feature_dim;i++){
+        //    input_seq[cnt*classifier_params.feature_dim + i] = (float) bp_pid_th.f[0][i]; 
+        //}
+    //}
     cnt++;
     cnt=cnt%seq_len;
     return (cnt);
@@ -656,10 +649,10 @@ struct TrainableArray {
 };
 
 
-TfLiteStatus infer_loop(int type) {
+TfLiteStatus infer_loop( int type,int sub_type) {
     auto&ctx=model_contexts[type];
-    int seq_len  = classifier_params.seq_len;
-    int num_feats = classifier_params.feature_dim;
+    int seq_len  = ctx.classifier_params.seq_len;
+    int num_feats = ctx.classifier_params.feature_dim;
 
     // ===== 输入填充 =====
     switch (ctx.input_tensor->type) {
@@ -710,14 +703,14 @@ TfLiteStatus infer_loop(int type) {
     } 
     std::vector<float>  output_vec ;
     // ===== 按模型类型输出 =====
-    if (type == CRITIC_MODEL) {
+    if (sub_type == CRITIC_MODEL) {
         
         output_vec.resize(m);
         memcpy(output_vec.data(), ctx.interpreter ->typed_output_tensor<float>(0), m * sizeof(float)); 
         printf("Critic output: %.4f\n", output_vec[0]); 
         lstm_pid_out_speed.speed[0] = output_vec[0]; 
     }
-    else if (type == OPTIMIZED_MODEL || type == ACTOR_MODEL) {
+    else if (sub_type == OPTIMIZED_MODEL || sub_type == ACTOR_MODEL) {
         printf("Actor/Optimized output: ");
         float sum=0.0f;
         for (  i=0; i<m; i++) {
@@ -732,10 +725,10 @@ TfLiteStatus infer_loop(int type) {
         }
         printf("\n");
     }
-    else if (type == META_MODEL) {
+    else if (sub_type == META_MODEL) {
         get_mqtt_feature(output);
-        int predicted = classifier_predict(output);
-        printf("Predicted class: %d\n", predicted);
+        int predicted = classifier_predict(type,output);
+        printf("META_MODEL Predicted class: %d\n", predicted);
     }
 
     vTaskDelay(1); // 防止 watchdog
@@ -744,7 +737,9 @@ TfLiteStatus infer_loop(int type) {
 
   
 void parse_ewc_assets(int type) {
-    if (!ewc_ready || ewc_buffer.empty()) return;
+    if (!ewc_ready || ewc_buffer.empty()) {
+        return;
+    }
     auto& ctx=model_contexts[type];
     extract_layer_shapes_from_model(ctx.model);
     trainable_layers.clear();
@@ -807,9 +802,9 @@ void parse_ewc_assets(int type) {
  
   
 
-bool actor_critic_infer(int type )
+bool actor_critic_infer(int sub_type )
 { 
-    auto&ctx=model_contexts[type];
+    auto&ctx=model_contexts[PPO_CASE];
     if(ctx.model==nullptr){
         ctx.micro_op_resolver.AddFullyConnected();
         ctx.micro_op_resolver.AddSoftmax();
@@ -819,7 +814,7 @@ bool actor_critic_infer(int type )
         ctx.micro_op_resolver.AddDequantize();
         ctx.micro_op_resolver.AddTanh();
         
-        if(    init_model(type)==false){
+        if(    init_model(PPO_CASE)==false){
             ESP_LOGE(TAG,"Init actor_critic_inference Model Failed");
             return false;
         }   
@@ -832,21 +827,21 @@ bool actor_critic_infer(int type )
         }
     
     }
-    if(type==ACTOR_MODEL)
+    if(sub_type==ACTOR_MODEL)
     {
-       ESP_LOGI("INFERENCE", "actor  type= %d ", type);
+       ESP_LOGI("INFERENCE", "actor  sub_type= %d ", sub_type);
     }
     else
     {
-       ESP_LOGI("INFERENCE", "critic  type= %d ", type);
+       ESP_LOGI("INFERENCE", "critic  sub_type= %d ", sub_type);
     }
-    infer_loop(type);
+    infer_loop(PPO_CASE,sub_type);
     return true;
 }
 
 
-bool ppo_inference(int type) {
- auto &ctx=model_contexts[type];
+bool ppo_inference(int sub_type) {
+ auto &ctx=model_contexts[NN_PPO_CASE];
      ESP_LOGI(TAG, "ppo_inference Invoke ");
      // 假设模型只用 10 种算子
      //tflite::MicroMutableOpResolver<10> micro_op_resolver;
@@ -874,7 +869,7 @@ bool ppo_inference(int type) {
         ctx.micro_op_resolver.AddUnpack();           // Unpack操作
 
         ctx.micro_op_resolver.AddTranspose();        // 转置操作
-        if(    init_model(type)==false){
+        if(    init_model(NN_PPO_CASE)==false){
             ESP_LOGE(TAG,"Init ppo_inference Model Failed");
             return false;
         }  
@@ -889,7 +884,7 @@ bool ppo_inference(int type) {
     }
     
     
-    infer_loop(type);
+    infer_loop(NN_PPO_CASE,sub_type);
 #if 0
     TfLiteStatus invoke_status = interpreter->Invoke();
     if (invoke_status != kTfLiteOk) {
@@ -908,15 +903,15 @@ bool ppo_inference(int type) {
   
 // The name of this function is important for Arduino compatibility.
 //TfLiteStatus setup(void) {
-bool sarsa_inference(int type) {
-   auto &ctx=model_contexts[type];
+bool meta_inference(int sub_type) {
+   auto &ctx=model_contexts[META_CASE];
    if(ctx.model==nullptr){
         ctx.micro_op_resolver.AddStridedSlice();
         ctx.micro_op_resolver.AddPack();
         ctx.micro_op_resolver.AddConv2D();
         ctx.micro_op_resolver.AddRelu(); 
         ctx.micro_op_resolver.AddAveragePool2D();
-        ctx.micro_op_resolver.AddReshape();  // 🔧 添加这个
+        ctx.micro_op_resolver.AddReshape();   
         ctx.micro_op_resolver.AddFullyConnected();  // 如果你有 dense 层也要加
         ctx.micro_op_resolver.AddQuantize();
         ctx.micro_op_resolver.AddDequantize();
@@ -937,24 +932,25 @@ bool sarsa_inference(int type) {
         ctx.micro_op_resolver.AddAbs();
         ctx.micro_op_resolver.AddConcatenation();  
         
-        if( init_model(type)==false){
-                ESP_LOGE(TAG,"Init  inference Model Failed");
+        if( init_model(META_CASE)==false){
+                ESP_LOGE(TAG,"Init Meta inference Model Failed");
                 return false;
         }  
-        ESP_LOGI("INFERENCE", "Input dimensions: %dD", ctx.input_tensor->dims->size);
+        ESP_LOGI("Meta INFERENCE", "Input dimensions: %dD", ctx.input_tensor->dims->size);
         for (int i = 0; i < ctx.input_tensor ->dims->size; i++) {
-            ESP_LOGI("INFERENCE", "  dim[%d]: %d", i, ctx.input_tensor ->dims->data[i]);
+            ESP_LOGI("Meta INFERENCE", "  dim[%d]: %d", i, ctx.input_tensor ->dims->data[i]);
         }
         for (int i = 0; i < ctx.output_tensor ->dims->size; i++) {
-            ESP_LOGI("INFERENCE", "  dim[%d]: %d", i, ctx.output_tensor ->dims->data[i]);
+            ESP_LOGI("Meta INFERENCE", "  dim[%d]: %d", i, ctx.output_tensor ->dims->data[i]);
         }
-        // 微调示意：更新权重，EWC参与 
-        parse_ewc_assets(type);   
-    
+        
         
         
     } 
-    infer_loop(type);   
+    // 微调 更新权重，EWC参与 
+    parse_ewc_assets(META_CASE);   
+    
+    infer_loop(META_CASE,sub_type);   
     vTaskDelay(1); // to avoid watchdog trigger 
    //   interpreter->ResetTempAllocations();
 
@@ -964,8 +960,65 @@ bool sarsa_inference(int type) {
     return true;
 }
   
+ 
+// The name of this function is important for Arduino compatibility.
+//TfLiteStatus setup(void) {
+bool meta_lstm_inference(int type) {
+   auto &ctx=model_contexts[META_LSTM_CASE];
+   if(ctx.model==nullptr){
+        ctx.micro_op_resolver.AddStridedSlice();
+        ctx.micro_op_resolver.AddPack();
+        ctx.micro_op_resolver.AddConv2D();
+        ctx.micro_op_resolver.AddRelu(); 
+        ctx.micro_op_resolver.AddAveragePool2D();
+        ctx.micro_op_resolver.AddReshape();   
+        ctx.micro_op_resolver.AddFullyConnected();  // 如果你有 dense 层也要加
+        ctx.micro_op_resolver.AddQuantize();
+        ctx.micro_op_resolver.AddDequantize();
+        ctx.micro_op_resolver.AddSoftmax();
+
+        ctx.micro_op_resolver.AddAdd(); 
+        ctx.micro_op_resolver.AddSub();
+        ctx.micro_op_resolver.AddMul();
+        ctx.micro_op_resolver.AddShape();
+        ctx.micro_op_resolver.AddTranspose();
+        ctx.micro_op_resolver.AddUnpack();  
+        ctx.micro_op_resolver.AddFill();
+        ctx.micro_op_resolver.AddSplit(); 
+        ctx.micro_op_resolver.AddLogistic();  // This handles sigmoid activation CONCATENATION
+        ctx.micro_op_resolver.AddTanh();
+
+        ctx.micro_op_resolver.AddMean();
+        ctx.micro_op_resolver.AddAbs();
+        ctx.micro_op_resolver.AddConcatenation();  
+        
+        if( init_model(META_LSTM_CASE)==false){
+                ESP_LOGE(TAG,"Init Meta inference Model Failed");
+                return false;
+        }  
+        ESP_LOGI("Meta INFERENCE", "Input dimensions: %dD", ctx.input_tensor->dims->size);
+        for (int i = 0; i < ctx.input_tensor ->dims->size; i++) {
+            ESP_LOGI("Meta INFERENCE", "  dim[%d]: %d", i, ctx.input_tensor ->dims->data[i]);
+        }
+        for (int i = 0; i < ctx.output_tensor ->dims->size; i++) {
+            ESP_LOGI("Meta INFERENCE", "  dim[%d]: %d", i, ctx.output_tensor ->dims->data[i]);
+        } 
+        
+    } 
+    
+    infer_loop(META_LSTM_CASE,type);   
+    vTaskDelay(1); // to avoid watchdog trigger 
+   //   interpreter->ResetTempAllocations();
+
+    //free(tensor_arena);
+   // ESP_LOGI(TAG, "推理完成，系统正常运行");
+ 
+    return true;
+}
+ 
+
 bool img_inference(int type) {
-    auto &ctx= model_contexts[type];
+    auto &ctx= model_contexts[IMG_CASE];
     // int seq_len, int num_feats
     //tflite::MicroMutableOpResolver<24> micro_op_resolver;
     if(ctx.model==nullptr)
@@ -997,13 +1050,13 @@ bool img_inference(int type) {
         ctx.micro_op_resolver.AddConcatenation();  
         
         
-        if(    init_model(type)==false){
+        if( init_model(IMG_CASE)==false){
             ESP_LOGE(TAG,"Init image_inference Model Failed");
             return false;
         }
     }
      
-    infer_loop(type); 
+    infer_loop(IMG_CASE,type); 
      
     vTaskDelay(1); // to avoid watchdog trigger 
    //   interpreter->ResetTempAllocations();
@@ -1016,10 +1069,11 @@ bool img_inference(int type) {
 
 
 
-bool (*functionInferArray[4])(int type) = {
+bool (*functionInferArray[NUM_INFER_CASE])(int type) = {
     actor_critic_infer,
     ppo_inference, 
-    sarsa_inference,     
+    meta_lstm_inference, 
+    meta_inference,    
     img_inference
 };
  
@@ -1027,36 +1081,47 @@ bool (*functionInferArray[4])(int type) = {
 
 //void catch_tensor_dim(enum CaseType type) {
 void catch_tensor_dim(int type) {
-    
-    classifier_params.infer_case=INFER_CASE;
-    classifier_params.feature_dim = FEATURE_DIM;
-    classifier_params.num_classes = NUM_CLASSES;
-    classifier_params.seq_len = SEQ_LEN;
-    if (type == PPO_CASE) {
-        classifier_params.infer_case=PPO_CASE;
-        classifier_params.feature_dim = PPO_FEATURE_DIM;
-        classifier_params.num_classes = PPO_CLASSES;
-        classifier_params.seq_len = PPO_SEQ_LEN;
+    auto&ctx=model_contexts[type];
+    //ctx.classifier_params.infer_case=INFER_CASE;
+    //ctx.classifier_params.feature_dim = META_FEATURE_DIM;
+    //ctx.classifier_params.num_classes = META_CLASSES;
+    //ctx.classifier_params.seq_len = META_SEQ_LEN;
+
+    if (type == PPO_CASE|| type == NN_PPO_CASE) {
+        ctx.classifier_params.infer_case=PPO_CASE;
+        ctx.classifier_params.feature_dim = PPO_FEATURE_DIM;
+        ctx.classifier_params.num_classes = PPO_CLASSES;
+        ctx.classifier_params.seq_len = PPO_SEQ_LEN;
     }
-    if (type == META_CASE) {
-        classifier_params.infer_case=META_CASE;
-        classifier_params.feature_dim = META_FEATURE_DIM;
-        classifier_params.num_classes = META_CLASSES;
-        classifier_params.seq_len = META_SEQ_LEN;
+    if (type == META_CASE || type == META_LSTM_CASE) {
+        ctx.classifier_params.infer_case=META_CASE;
+        ctx.classifier_params.feature_dim = META_FEATURE_DIM;
+        ctx.classifier_params.num_classes = META_CLASSES;
+        ctx.classifier_params.seq_len = META_SEQ_LEN;
     }
     if (type == IMG_CASE) {
-        classifier_params.infer_case=IMG_CASE;
-        classifier_params.feature_dim = IMG_FEATURE_DIM;
-        classifier_params.num_classes = IMG_CLASSES;
-        classifier_params.seq_len = IMG_SEQ_LEN;
+        ctx.classifier_params.infer_case=IMG_CASE;
+        ctx.classifier_params.feature_dim = IMG_FEATURE_DIM;
+        ctx.classifier_params.num_classes = IMG_CLASSES;
+        ctx.classifier_params.seq_len = IMG_SEQ_LEN;
     }
     
 }
 
 
+//float itm_heat      =  0.01f;        
+// float itm_ac        = -0.005f;
+// float itm_humid     =  0.0002f;
+// float itm_dehumi    = -0.0005f;
+// float itm_waterpump = 1.0;
+// float itm_light     = 20.f;
+// float itm_co2       = 50.0f;
+// float itm_pump      = 1.1f;
 //extern void set_plant_action(const std::array<int, ACTION_CNT>& action);
 void set_plant_action(const std::array<int, ACTION_CNT>& action) {
     extern std::array<int, ACTION_CNT> plant_action ;
+    extern std::vector<float> reward_history;
+     
     plant_action = action;
 }
 //u_int8_t get_tensor_state(void);
@@ -1074,7 +1139,7 @@ bool pid_env_init(void)
     pid_run_input.env_target[ENV_LIGHT] =(plant_range_params.light_range.first + plant_range_params.light_range.second)/2.0;
     pid_run_input.env_target[ENV_CO2]   =(plant_range_params.co2_range.first   + plant_range_params.co2_range.second)/2.0; 
     pid_run_input.env_target[ENV_SOIL]  =(plant_range_params.water_range.first + plant_range_params.water_range.second)/2.0; 
-    if(pid_run_input.env_target[ENV_TEMP]==0||pid_run_input.env_target[ENV_HUMID]==0||pid_run_input.env_target[ENV_LIGHT]==0||pid_run_input.env_target[ENV_CO2]==0||pid_run_input.env_target[ENV_SOIL]==0)
+    if(pid_run_input.env_target[ENV_TEMP]==0||pid_run_input.env_target[ENV_HUMID]==0)
         return false;
     pid_run_input.dev_type[1] =loadType_heater ;
     pid_run_input.dev_type[2]= loadType_A_C;
@@ -1108,18 +1173,18 @@ bool pid_env_init(void)
 
 void pid_run(void) 
 {   
-     
+    if(read_all_sensor_trigger()==false)
+    {
+        bp_pid_dbg("Sensor Working Error \r\n");
+        return ;
+    }  
     if( pid_env_init() ==false)
     {
         bp_pid_dbg("pid_env_init Error \r\n");
         return  ;
     } 
     
-	if(read_all_sensor_trigger()==false)
-    {
-        bp_pid_dbg("Sensor Working Error \r\n");
-        return ;
-    } 
+	
     if(pid_run_rule( &pid_run_input )==true)
     {
         std::array<int,ACTION_CNT>  action;
@@ -1136,27 +1201,30 @@ void pid_run(void)
 }
 
 
-esp_err_t  lll_tensor_run(int type) 
+esp_err_t  lll_tensor_run(int type,int sub_type) 
 { 
+    auto&ctx=model_contexts[type];
     catch_tensor_dim(type); 
-    int ret=load_up_input_seq(classifier_params.infer_case,classifier_params.seq_len); 
-     
+    int ret=load_up_input_seq( ctx.classifier_params.infer_case,ctx.classifier_params.seq_len, ctx.classifier_params.feature_dim); 
+     ESP_LOGI(TAG, "Input tensor type=%d,seq_cnt=%d,seq_len=%d",type,ret,ctx.classifier_params.seq_len); 
     if(ret==0)
     {    
-        
-        if( false == functionInferArray[type](ACTOR_MODEL))   
+
+        if(   false == functionInferArray[type](sub_type))   
         {
             vTaskDelay(pdMS_TO_TICKS(10));
             return ESP_FAIL;  //kTfLiteOK
-        }  
-        if( false == functionInferArray[type](CRITIC_MODEL))   
-        {
-            vTaskDelay(pdMS_TO_TICKS(10));
-            return ESP_FAIL;  //kTfLiteOK
-        }    
-    } 
-        //ESP_LOGI(TAG, "Set up 2 input tensor %d",cnt);
+        }
         
+        // if( type== PPO_CASE && false == functionInferArray[type](ACTOR_MODEL) && false == functionInferArray[type](CRITIC_MODEL))   
+        // {
+        //     vTaskDelay(pdMS_TO_TICKS(10));
+        //     return ESP_FAIL;  //kTfLiteOK
+        // }  
+            
+     
+        //ESP_LOGI(TAG, "Input tensor type=%d,sub_type=%d",type,sub_type);
+    }    
         vTaskDelay(pdMS_TO_TICKS(1000));  // 60000 每60秒输出一次
       //  vTaskDelay(30000 / portTICK_PERIOD_MS);
     //}  

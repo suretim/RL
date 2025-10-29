@@ -24,7 +24,7 @@ import json
 # =============================
 # Hyperparameters
 # =============================
-DATA_GLOB = "../../../../lll_data/*.csv"
+DATA_GLOB = "../../../lll_data/*.csv"
 SEQ_LEN = 10
 FEATURE_DIM = 64
 BATCH_SIZE = 32

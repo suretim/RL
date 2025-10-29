@@ -61,7 +61,7 @@ public:
     uint32_t rng_seed = 12345;
     std::string plant_mode = "testing";
     int true_label= -1; 
-    
+    int img_health=-1;
     float rand_uniform() {
         // 简单 LCG 随机数生成器，返回 0~1
         rng_seed = 1664525 * rng_seed + 1013904223;
@@ -77,7 +77,9 @@ public:
     } 
      
     PlantHVACEnv() {
-       plant_limit_params = mode_params["limit"];  
+       plant_limit_params = mode_params["limit"];
+       plant_range_params = mode_params[plant_mode]; 
+  
     }
 private:
     HVACEncoder* encoder;
@@ -96,9 +98,11 @@ private:
     // float co2;
     // float vpd; // 蒸汽压差 (kPa)
     bool done;
-    int health;
+    int env_health;
     int t;
-    std::array<int,ACTION_CNT> prev_action; 
+    //std::array<int,ACTION_CNT> prev_action; 
+    std::vector<float> prev_action; 
+    
     SeqFetcher seq_fetcher; 
 
 public:
@@ -125,9 +129,9 @@ public:
     ~PlantHVACEnv();
 
     void set_seq_fetcher(SeqFetcher fetcher);
-
-    StepResult step(const std::array<int,ACTION_CNT>& action,
-                    const std::map<std::string,float>& params = {});
+ 
+    //StepResult step(const std::array<int,ACTION_CNT>& action, const std::map<std::string,float>& params = {});
+    StepResult step(const std::vector<float> &action, const std::map<std::string,float>& params = {});
 
     std::vector<float> get_state() const;
     void update_prototypes(const std::vector<std::vector<float>>& features,
@@ -145,14 +149,12 @@ public:
                 v_env_th.w_feed   =(mode_params["seeding"].water_range.first +mode_params["seeding"].water_range.second )/ 2.0f ;   //;     
                 v_env_th.l_feed   =(mode_params["seeding"].light_range.first +mode_params["seeding"].light_range.second )/ 2.0f ;   //; // 设定初始光照为300lux
                 v_env_th.c_feed   =(mode_params["seeding"].co2_range.first   +mode_params["seeding"].co2_range.second )/ 2.0f ;   //; // 设定初始CO2浓度为400ppm
-                v_env_th.p_feed   =(mode_params["seeding"].ph_range.first   +mode_params["seeding"].ph_range.second )/ 2.0f ;   //; // 设定初始CO2浓度为400ppm
+                v_env_th.p_feed   =(mode_params["seeding"].ph_range.first    +mode_params["seeding"].ph_range.second )/ 2.0f ;   //; // 设定初始CO2浓度为400ppm
                 v_env_th.v_target =(mode_params["seeding"].vpd_range.first   +mode_params["seeding"].vpd_range.second )/ 2.0f ;   //;  
-            }
-            
-            done = false;         // 重置任务结束标志
-            
-          
+            } 
+            done = false;         // 重置任务结束标志  
         };
+     
 private:
     std::vector<float> _get_state() const;
     int _get_state_cnt() const;

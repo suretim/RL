@@ -95,7 +95,7 @@ def train():
         f.write(f"names: {classes}\n")
     
     # 启动训练
-    cmd = f"python train_esp32.py --data {app.config['DATASET_FOLDER']}/data.yaml --epochs {epochs} --batch {batch} --imgsz {imgsz}"
+    cmd = f"python train_health.py --data {app.config['DATASET_FOLDER']}/data.yaml --epochs {epochs} --batch {batch} --imgsz {imgsz}"
     process = subprocess.Popen(cmd, 
         shell=True, 
         stdout=subprocess.PIPE, 

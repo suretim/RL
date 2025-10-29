@@ -88,27 +88,22 @@ def main():
     model = YOLO('yolov8n.yaml')
 
     # 训练配置（适配ESP32硬件限制）
+
     model.train(
         data=args.data,
         epochs=args.epochs,
         batch=args.batch,
-        imgsz=args.imgsz,       # 降低分辨率 160
-        device='cpu',           # 强制使用CPU
-        augment=False,          # 关闭数据增强
-        lr0=0.001,              # 更低学习率
+        imgsz=args.imgsz,
+        device='cpu',
+        augment=False,
+        lr0=0.001,
+        project='runs/detect',
+        name=f"train{args.imgsz}",
+        exist_ok=True,  # 如果目录存在则直接覆盖，不自动生成train2等
     )
-    
-    folder_names = [d for d in os.listdir("runs/detect") if d.startswith("train")]
-    numbers = []
-    for name in folder_names:
-        match = re.match(r'train(\d*)', name)  # 匹配'train'后可选数字
-        num = int(match.group(1)) if match and match.group(1) else 0
-        numbers.append(num)
 
-    # 获取最大值对应的文件夹名
-    max_num = max(numbers)
-    #target_folder = f"runs/detect/" + f"train{max_num}" if max_num > 0 else "train"
-    target_folder = f"runs/detect/" + f"train"
+    target_folder = f"runs/detect/" + f"train{args.imgsz}" if args.imgsz > 0 else "train"
+    #target_folder = f"runs/detect/train"
 
     model = YOLO(target_folder + f"/weights/best.pt")    
     model.export(
@@ -121,7 +116,7 @@ def main():
         keras=False,                        # 禁用 Keras 格式（避免混合精度）
         optimize=False,                     # 关闭自动优化（防止非整型操作插入）
     )
-
+    '''
     # 转换为C数组
     tflite_to_c_array(target_folder + f"/weights/best_saved_model/best_float32.tflite", args.imgsz, "fp32")
     current_path = os.path.abspath("model_" + str(args.imgsz) + "_fp32.h")
@@ -159,6 +154,6 @@ def main():
 
     current_path = os.path.abspath("model_" + str(args.imgsz) + "_int8.h")
     print(f"文件已保存到:", current_path)
-
+    '''
 if __name__ == '__main__':
     main()
